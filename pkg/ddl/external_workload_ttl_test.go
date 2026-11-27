@@ -152,7 +152,6 @@ func createTTLExternalWorkloadTestKit(t *testing.T, mgr *recordingExternalWorklo
 	vardef.SetSchemaLease(500 * time.Millisecond)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
-	domain.DisableDumpHistoricalStats4Test()
 
 	dom, err := session.BootstrapSessionWithExternalWorkloadManager(store, mgr)
 	require.NoError(t, err)

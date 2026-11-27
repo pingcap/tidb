@@ -589,11 +589,13 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 			}
 		}
 
-		tempValElem := tablecodec.TempIndexValueElem{Handle: h, KeyVer: tempKeyVer, Delete: true, Distinct: distinct}
+		fullHandle := h
 		if c.idxInfo.Global {
-			tempValElem.Global = true
-			tempValElem.Handle = kv.NewPartitionHandle(c.phyTblID, h)
+			if _, ok := fullHandle.(kv.PartitionHandle); !ok {
+				fullHandle = kv.NewPartitionHandle(c.phyTblID, h)
+			}
 		}
+		tempValElem := tablecodec.TempIndexValueElem{Handle: fullHandle, KeyVer: tempKeyVer, Delete: true, Distinct: distinct, Global: c.idxInfo.Global}
 		if distinct {
 			if len(key) > 0 {
 				okToDelete := true
@@ -608,9 +610,10 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 						if err != nil {
 							return err
 						}
-						// The handle passed in may be a `PartitionHandle`,
-						// so we can't directly do comparation with them.
-						if !h.Equal(oh) {
+						// Global index values always encode the partition ID (returning a `PartitionHandle`),
+						// while DML callers pass a bare handle. `PartitionHandle.Equal` compares partition IDs
+						// only when both sides are `PartitionHandle`s.
+						if !fullHandle.Equal(oh) {
 							okToDelete = false
 						}
 					}

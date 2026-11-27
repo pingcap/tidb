@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -167,6 +169,35 @@ func TestSum(t *testing.T) {
 	result = distinctSumFunc.GetResult(evalCtx)
 	needed = types.NewDecFromStringForTest("5050")
 	require.True(t, result.GetMysqlDecimal().Compare(needed) == 0)
+}
+
+func TestNewDistAggFuncSumInt(t *testing.T) {
+	ctx := mock.NewContext()
+	fieldTps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	pbExpr := &tipb.Expr{
+		Tp:          tipb.ExprType_SumInt,
+		AggFuncMode: AggFunctionModeToPB(CompleteMode),
+		Children: []*tipb.Expr{
+			{
+				Tp:  tipb.ExprType_ColumnRef,
+				Val: codec.EncodeInt(nil, 0),
+			},
+		},
+	}
+
+	agg, desc, err := NewDistAggFunc(pbExpr, fieldTps, ctx)
+	require.NoError(t, err)
+	require.Equal(t, ast.AggFuncSumInt, desc.Name)
+	sumIntAgg, ok := agg.(*sumIntFunction)
+	require.True(t, ok)
+
+	evalCtx := sumIntAgg.CreateContext(ctx)
+	for _, val := range []int64{1, 2, 3} {
+		err = sumIntAgg.Update(evalCtx, ctx.GetSessionVars().StmtCtx, chunk.MutRowFromDatums(types.MakeDatums(val)).ToRow())
+		require.NoError(t, err)
+	}
+	result := sumIntAgg.GetResult(evalCtx)
+	require.Equal(t, int64(6), result.GetInt64())
 }
 
 func TestCheckAggPushDownSumInt(t *testing.T) {

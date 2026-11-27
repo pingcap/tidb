@@ -1261,6 +1261,11 @@ error = '''
 A primary key index cannot be invisible
 '''
 
+["ddl:3552"]
+error = '''
+Access to system schema '%s' is rejected.
+'''
+
 ["ddl:3593"]
 error = '''
 You cannot use the window function '%s' in this context.'
@@ -2091,6 +2096,16 @@ error = '''
 Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
 '''
 
+["executor:8182"]
+error = '''
+materialized view advisory lock conflict: %s
+'''
+
+["executor:8183"]
+error = '''
+refresh materialized view %s.%s fast: input log baseline has changed; run COMPLETE refresh to rebuild it
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -2114,6 +2129,11 @@ Unknown background task name '%-.192s'
 ["executor:8274"]
 error = '''
 tidb_max_keys_read limit exceeded
+'''
+
+["executor:8277"]
+error = '''
+During the maintenance window, %s is currently unavailable. It will be available after maintenance finishes
 '''
 
 ["expression:1139"]
@@ -2499,6 +2519,11 @@ The used SELECT statements have a different number of columns
 ["planner:1227"]
 error = '''
 Access denied; you need (at least one of) the %-.128s privilege(s) for this operation
+'''
+
+["planner:1234"]
+error = '''
+Incorrect usage/placement of '%s'
 '''
 
 ["planner:1235"]
@@ -3034,6 +3059,11 @@ Unable to create or change a table without a primary key, when the system variab
 ["schema:3822"]
 error = '''
 Duplicate check constraint name '%s'.
+'''
+
+["schema:3989"]
+error = '''
+Schema '%s' is in read only mode.
 '''
 
 ["schema:4139"]

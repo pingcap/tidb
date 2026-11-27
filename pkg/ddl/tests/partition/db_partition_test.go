@@ -1441,6 +1441,14 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 
 		tk1 := testkit.NewTestKit(t, store)
 		tk1.MustExec("use test")
+		tk1.MustQuery(`explain format='brief' select * from test_global where b in (1,15)`).CheckContain("Batch_Point_Get")
+		assert.Equal(t, tk1.MustQuery(`select * from test_global where b = 15`).Rows(),
+			tk1.MustQuery(`select * from test_global where b in (15)`).Rows())
+		expected := testkit.Rows("1 1 1")
+		if job.SchemaState == model.StateWriteOnly {
+			expected = testkit.Rows("1 1 1", "15 15 15")
+		}
+		assert.Equal(t, expected, tk1.MustQuery(`select * from test_global where b in (1,15)`).Sort().Rows())
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			tk1.MustQuery(`select count(*) from test_global`).Check(testkit.Rows("5"))
@@ -1458,6 +1466,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tk1.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 			err := tk1.ExecToErr(`insert into test_global values (15,15,15)`)
 			assert.NoError(t, err)
+			assert.Equal(t, testkit.Rows("15 15 15"), tk1.MustQuery(`select * from test_global where b in (15)`).Rows())
 		}
 	})
 
@@ -1628,6 +1637,8 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 			tk1.MustExec("use test")
 
 			indexScanResult = tk1.MustQuery("select b from test_global use index(idx_b)").Sort()
+			tk1.MustQuery(`explain format='brief' select * from test_global where b in (1,11)`).CheckContain("Batch_Point_Get")
+			assert.Equal(t, testkit.Rows("11 11 11"), tk1.MustQuery(`select * from test_global where b in (1,11)`).Rows())
 		}
 	})
 
@@ -2055,6 +2066,58 @@ func TestExchangePartitionHook(t *testing.T) {
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
+}
+
+func TestExchangePartitionHookGeneratedAndAutoInc(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tkInsert := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	// 1. Generated column as partition key.
+	tk.MustExec(`create table pt_gen (a int, b int as (a + 10) stored) partition by range (b) (
+		partition p0 values less than (15),
+		partition p1 values less than (100)
+	)`)
+	tk.MustExec(`create table nt_gen (a int, b int as (a + 10) stored)`)
+	tk.MustExec("insert into nt_gen (a) values (1)")
+
+	var genChecked bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type == model.ActionExchangeTablePartition && job.SchemaState == model.StateWriteOnly && !genChecked {
+			genChecked = true
+			tkInsert.MustExec("use test")
+			tkInsert.MustGetErrCode("insert into nt_gen (a) values (10)", errno.ErrRowDoesNotMatchGivenPartitionSet)
+			tkInsert.MustGetErrCode("insert into nt_gen (a) select 10", errno.ErrRowDoesNotMatchGivenPartitionSet)
+		}
+	})
+	tk.MustExec("alter table pt_gen exchange partition p0 with table nt_gen")
+	require.True(t, genChecked)
+	tk.MustQuery("select a, b from pt_gen partition(p0)").Check(testkit.Rows("1 11"))
+
+	// 2. Auto-increment column as partition key (lazy auto-ID allocation path).
+	tk.MustExec(`create table pt_ai (id int primary key auto_increment) partition by range (id) (
+		partition p0 values less than (5),
+		partition p1 values less than MAXVALUE
+	)`)
+	tk.MustExec(`create table nt_ai (id int primary key auto_increment)`)
+	tk.MustExec("insert into nt_ai values (9)")
+	tk.MustExec("delete from nt_ai where id = 9")
+
+	var aiChecked bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type == model.ActionExchangeTablePartition && job.SchemaState == model.StateWriteOnly && !aiChecked {
+			aiChecked = true
+			tkInsert.MustExec("use test")
+			tkInsert.MustGetErrCode("insert into nt_ai () values ()", errno.ErrRowDoesNotMatchGivenPartitionSet)
+		}
+	})
+	tk.MustExec("alter table pt_ai exchange partition p0 with table nt_ai")
+	require.True(t, aiChecked)
+	tk.MustQuery("select id from pt_ai partition(p0)").Check(testkit.Rows())
 }
 
 func TestExchangePartitionAutoID(t *testing.T) {
@@ -3119,8 +3182,8 @@ func TestRemoveKeyPartitioning(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	// And also cached and lazy loaded
-	h.Clear()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	h.ClearForTest()
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemovePartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3167,8 +3230,8 @@ func TestRemoveListPartitioning(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	// And also cached and lazy loaded
-	h.Clear()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	h.ClearForTest()
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3215,8 +3278,8 @@ func TestRemoveListColumnPartitioning(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	// And also cached and lazy loaded
-	h.Clear()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	h.ClearForTest()
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3263,8 +3326,8 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	// And also cached and lazy loaded
-	h.Clear()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	h.ClearForTest()
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3409,6 +3472,36 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
+	t.Run("FIRST preserves request and restores query", func(t *testing.T) {
+		tk.MustExec(`create table t_first (id int) partition by range columns (id)
+interval (10) first partition less than (10) last partition less than (50) null partition maxvalue partition`)
+		tk.MustExec(`insert into t_first values (null), (5), (25), (45), (100)`)
+		for _, endpoint := range []int{35, 30} {
+			query := fmt.Sprintf("alter table test.t_first first partition less than (%d)", endpoint)
+			stmts, err := tk.Session().Parse(context.Background(), query)
+			require.NoError(t, err)
+			original, err := tk.Session().Parse(context.Background(), query)
+			require.NoError(t, err)
+			spec := stmts[0].(*ast.AlterTableStmt).Specs[0]
+			tk.Session().SetValue(sessionctx.QueryString, query)
+			err = domain.GetDomain(tk.Session()).DDLExecutor().AlterTable(context.Background(), tk.Session(), stmts[0].(*ast.AlterTableStmt))
+			if endpoint == 35 {
+				require.ErrorContains(t, err, "not matching FIRST + n INTERVALs")
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, original[0].(*ast.AlterTableStmt).Specs[0].Partition, spec.Partition)
+			require.Empty(t, spec.PartitionNames)
+			require.Equal(t, query, tk.Session().Value(sessionctx.QueryString))
+		}
+		definitions := external.GetTableByName(t, tk, "test", "t_first").Meta().Partition.Definitions
+		names := make([]string, 0, len(definitions))
+		for _, def := range definitions {
+			names = append(names, def.Name.O)
+		}
+		require.Equal(t, []string{"P_NULL", "P_LT_30", "P_LT_40", "P_LT_50", "P_MAXVALUE"}, names)
+		tk.MustQuery(`select id from t_first order by id`).Check(testkit.Rows("<nil>", "25", "45", "100"))
+	})
 	tk.MustExec(`create table t (id int, create_time datetime)
 		partition by range columns (create_time)
 		interval (1 day)

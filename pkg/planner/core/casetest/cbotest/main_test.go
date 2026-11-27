@@ -30,6 +30,7 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "analyze_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "clustered_index")
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),

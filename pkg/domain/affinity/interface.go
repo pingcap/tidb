@@ -16,8 +16,10 @@ package affinity
 
 import (
 	"context"
+	"net/http"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -53,7 +55,45 @@ func CreateGroupsIfNotExists(ctx context.Context, groups map[string][]pdhttp.Aff
 	if len(groups) == 0 {
 		return nil
 	}
-	return manager.CreateAffinityGroupsIfNotExists(ctx, groups)
+	return retryTransientError(ctx, func(reqCtx context.Context) error {
+		return manager.CreateAffinityGroupsIfNotExists(reqCtx, groups)
+	}, isRetryableError)
+}
+
+// retryTransientError retries idempotent PD requests without holding up a
+// cancelled job step. maxRetryTimes counts retries after the first request.
+func retryTransientError(ctx context.Context, operation func(context.Context) error, isRetryable func(error) bool) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for i := 0; ; i++ {
+		if err := ctx.Err(); err != nil {
+			return errors.Trace(err)
+		}
+		err := operation(ctx)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
+		if !isRetryable(err) || i == maxRetryTimes {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Trace(ctx.Err())
+		case <-time.After(retryInterval):
+		}
+	}
+}
+
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	code, ok := extractPDHTTPStatusCode(err)
+	return !ok || code >= http.StatusInternalServerError
 }
 
 // DeleteGroups removes affinity groups in PD with force=true.
@@ -70,15 +110,25 @@ func DeleteGroupsWithRetry(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	var err error
 	for i := 0; i <= maxRetryTimes; i++ {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		err = DeleteGroups(ctx, ids)
 		if err == nil {
 			return nil
 		}
 		if i != maxRetryTimes {
-			time.Sleep(retryInterval)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryInterval):
+			}
 		} else {
 			// Only log error on final retry failure
 			logutil.BgLogger().Error("Failed to delete affinity groups after retries", zap.Error(err), zap.Strings("groupIDs", ids))

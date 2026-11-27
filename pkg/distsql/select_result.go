@@ -908,6 +908,7 @@ func (r *selectResult) closeAnalyze() error {
 			r.scanDetailForRaw.TotalKeys,
 			r.scanDetailForRaw.ProcessedKeys,
 			r.scanDetailForRaw.ProcessedKeysSize,
+			r.scanDetailForRaw.TotalKeysSize,
 		); ok {
 			r.ctx.RuntimeStatsColl.RecordAnalyzeScanBytes(r.rootPlanID, scanBytes)
 		}

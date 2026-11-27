@@ -315,18 +315,22 @@ type backfillWorker struct {
 	backfiller
 	taskCh   chan *reorgBackfillTask
 	resultCh chan *backfillResult
-	ctx      context.Context
-	cancel   func()
-	wg       *sync.WaitGroup
+	workCtx  context.Context
+	// resultCtx covers execution and delivery of in-flight tasks. Worker retirement
+	// stops taking new tasks without interrupting a partially completed range.
+	resultCtx context.Context
+	cancel    func()
+	wg        *sync.WaitGroup
 }
 
-func newBackfillWorker(ctx context.Context, bf backfiller) *backfillWorker {
-	bfCtx, cancel := context.WithCancel(ctx)
+func newBackfillWorker(workCtx, resultCtx context.Context, bf backfiller) *backfillWorker {
+	workCtx, cancel := context.WithCancel(workCtx)
 	return &backfillWorker{
 		backfiller: bf,
 		taskCh:     make(chan *reorgBackfillTask, 1),
 		resultCh:   make(chan *backfillResult, 1),
-		ctx:        bfCtx,
+		workCtx:    workCtx,
+		resultCtx:  resultCtx,
 		cancel:     cancel,
 	}
 }
@@ -335,6 +339,9 @@ func (w *backfillWorker) String() string {
 	return fmt.Sprintf("backfill-worker %d, tp %s", w.GetCtx().id, w.backfiller.String())
 }
 
+// Close retires this worker by canceling only workCtx. During downscaling, the
+// executor keeps resultCtx active so in-flight tasks finish and report their results.
+// Forced executor shutdown cancels resultCtx before Close to unblock result sends.
 func (w *backfillWorker) Close() {
 	if w.cancel != nil {
 		w.cancel()
@@ -377,7 +384,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillData(w.ctx, handleRange)
+		taskCtx, err := bf.BackfillData(w.resultCtx, handleRange)
 		if err != nil {
 			result.err = err
 			return result
@@ -392,9 +399,14 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// small range reorganization.
 		// In the next round of reorganization, the target handle range may overlap with last committed
 		// small ranges. This will cause the `redo` action in reorganization.
-		// So for added count and warnings collection, it is recommended to collect the statistics in every
-		// successfully committed small ranges rather than fetching it in the total result.
-		rc.increaseRowCount(int64(taskCtx.addedCount))
+		// Collect progress and warnings after each committed batch rather than from the
+		// total task result.
+		rowCount := taskCtx.addedCount
+		if indexWorker, ok := bf.(*addIndexTxnWorker); ok && len(indexWorker.indexes) > 0 {
+			// scanCount includes one record per index, even when its predicate excludes the row.
+			rowCount = taskCtx.scanCount / len(indexWorker.indexes)
+		}
+		rc.increaseRowCount(int64(rowCount))
 		rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
 		accountBackfillTxnRU(rc, jobID, taskCtx.writtenBytes)
 
@@ -428,7 +440,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 func (w *backfillWorker) sendResult(result *backfillResult) {
 	select {
-	case <-w.ctx.Done():
+	case <-w.resultCtx.Done():
 	case w.resultCh <- result:
 	}
 }
@@ -446,8 +458,12 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		w.sendResult(&backfillResult{taskID: curTaskID, err: dbterror.ErrReorgPanic})
 	}, false)
 	for {
+		// Prefer retirement over queued work after the current task finishes.
+		if w.workCtx.Err() != nil {
+			return
+		}
 		select {
-		case <-w.ctx.Done():
+		case <-w.workCtx.Done():
 			logger.Info("backfill worker exit on context done")
 			return
 		case task, ok = <-w.taskCh:

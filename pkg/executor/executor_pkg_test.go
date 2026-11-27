@@ -24,11 +24,14 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/inference"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -42,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -55,6 +59,51 @@ var (
 	InspectionSummaryRules = inspectionSummaryRules
 	InspectionRules        = inspectionRules
 )
+
+func TestDecodeOldRowValToChunkWithExtraCommitTS(t *testing.T) {
+	sctx := mock.NewContext()
+	col := &model.ColumnInfo{ID: 1, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	tblInfo := &model.TableInfo{Columns: []*model.ColumnInfo{col}}
+	commitTSCol := model.NewExtraCommitTSColInfo()
+	fieldTypes := []*types.FieldType{&col.FieldType, &commitTSCol.FieldType}
+	schema := expression.NewSchema(
+		&expression.Column{ID: col.ID, RetType: fieldTypes[0]},
+		&expression.Column{ID: commitTSCol.ID, RetType: fieldTypes[1]},
+	)
+
+	for _, emptyRow := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty_row=%t", emptyRow), func(t *testing.T) {
+			values, colIDs := types.MakeDatums(42), []int64{col.ID}
+			if emptyRow {
+				values, colIDs = nil, nil
+			}
+			rowVal, err := tablecodec.EncodeOldRow(sctx.GetSessionVars().Location(), values, colIDs, nil, nil)
+			require.NoError(t, err)
+			chk := chunk.NewChunkWithCapacity(fieldTypes, 1)
+			require.NoError(t, DecodeRowValToChunk(sctx, schema, tblInfo, kv.IntHandle(1), rowVal, chk, nil))
+			require.Equal(t, 1, chk.NumRows())
+			row := chk.GetRow(0)
+			require.Equal(t, emptyRow, row.IsNull(0))
+			if !emptyRow {
+				require.Equal(t, int64(42), row.GetInt64(0))
+			}
+			// The synthetic column is absent from TableInfo and has a NULL default.
+			require.True(t, row.IsNull(1))
+		})
+	}
+}
+
+func TestHistTimeUsesLocation(t *testing.T) {
+	input := time.Date(2026, 6, 14, 12, 0, 0, 123456789, time.UTC)
+	loc := time.FixedZone("UTC+8", 8*60*60)
+
+	localTime := histTime(input, loc)
+	utcTime := histTime(input, time.UTC)
+	require.Equal(t, "2026-06-14 20:00:00.123456 +0800", localTime.Format("2006-01-02 15:04:05.000000 -0700"))
+	require.Equal(t, "2026-06-14 12:00:00.123456 +0000", utcTime.Format("2006-01-02 15:04:05.000000 -0700"))
+	require.Equal(t, 123456000, localTime.Nanosecond())
+	require.Equal(t, 123456000, utcTime.Nanosecond())
+}
 
 func newTestMViewCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
 	return tables.MockTableFromMeta(&model.TableInfo{
@@ -115,8 +164,8 @@ func TestMViewCompleteDeltaApplyMappingDiagnostics(t *testing.T) {
 		{"non_public", nonPublic, []int{0}, "MViewCompleteDeltaApply does not support target table with non-public writable columns"},
 		{"input_count", valid, nil, "MViewCompleteDeltaApply row input column mapping length 0 != target public column count 1"},
 		{"nil_column", nilCol, []int{0}, "MViewCompleteDeltaApply target writable column at offset 0 is nil"},
-		{"negative_offset", negativeOffset, []int{0}, "MViewCompleteDeltaApply target writable column `a` offset -1 out of range [0,1)"},
-		{"invalid_offset", invalidOffset, []int{0}, "MViewCompleteDeltaApply target writable column `a` offset 2 out of range [0,1)"},
+		{"negative_offset", negativeOffset, []int{0}, "MViewCompleteDeltaApply target writable column `a` offset -1 != writable ordinal 0"},
+		{"invalid_offset", invalidOffset, []int{0}, "MViewCompleteDeltaApply target writable column `a` offset 2 != writable ordinal 0"},
 	} {
 		t.Run("writable/"+tc.name, func(t *testing.T) {
 			_, err := buildMViewCompleteDeltaWritableInputColIDs(tc.target, tc.inputIDs)
@@ -236,6 +285,101 @@ func TestMViewRefreshSourceExecutorConcurrency(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestMarkMViewCompleteDeltaTouchedRowsByColumnStringUsesBinaryCompare(t *testing.T) {
+	testCases := []struct {
+		name      string
+		collation string
+		oldVal    string
+		newVal    string
+		touched   bool
+	}{
+		{
+			name:      "case-insensitive collation still compares bytes",
+			collation: "utf8mb4_general_ci",
+			oldVal:    "a",
+			newVal:    "A",
+			touched:   true,
+		},
+		{
+			name:      "binary collation keeps byte-sensitive change",
+			collation: "utf8mb4_bin",
+			oldVal:    "a",
+			newVal:    "A",
+			touched:   true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ft := types.NewFieldTypeWithCollation(mysql.TypeVarString, tc.collation, types.UnspecifiedLength)
+			input := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 1)
+			input.AppendString(0, tc.oldVal)
+			input.AppendString(1, tc.newVal)
+
+			updateTouchedBitmap := make([]uint8, 1)
+			err := executil.MarkTouchedRowsByColumn(
+				[]int{0},
+				updateTouchedBitmap,
+				1,
+				0,
+				input.Column(0),
+				input.Column(1),
+				ft,
+				true,
+				"test",
+			)
+			require.NoError(t, err)
+			require.Equal(t, tc.touched, updateTouchedBitmap[0] != 0)
+		})
+	}
+}
+
+func TestMarkMViewCompleteDeltaTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) {
+	enumFT := types.NewFieldType(mysql.TypeEnum)
+	enumFT.SetCharset("utf8mb4")
+	enumFT.SetCollate("utf8mb4_general_ci")
+	enumChk := chunk.NewChunkWithCapacity([]*types.FieldType{enumFT, enumFT}, 1)
+	enumChk.AppendEnum(0, types.Enum{Name: "x", Value: 1})
+	enumChk.AppendEnum(1, types.Enum{Name: "x", Value: 2})
+
+	enumBitmap := make([]uint8, 1)
+	err := executil.MarkTouchedRowsByColumn(
+		[]int{0},
+		enumBitmap,
+		1,
+		0,
+		enumChk.Column(0),
+		enumChk.Column(1),
+		enumFT,
+		true,
+		"test",
+	)
+	require.NoError(t, err)
+	require.Equal(t, []uint8{0}, enumBitmap)
+
+	setFT := types.NewFieldType(mysql.TypeSet)
+	setFT.SetCharset("utf8mb4")
+	setFT.SetCollate("utf8mb4_general_ci")
+	setChk := chunk.NewChunkWithCapacity([]*types.FieldType{setFT, setFT}, 1)
+	setChk.AppendSet(0, types.Set{Name: "a,b", Value: 3})
+	setChk.AppendSet(1, types.Set{Name: "a,b", Value: 7})
+
+	setBitmap := make([]uint8, 1)
+	err = executil.MarkTouchedRowsByColumn(
+		[]int{0},
+		setBitmap,
+		1,
+		0,
+		setChk.Column(0),
+		setChk.Column(1),
+		setFT,
+		true,
+		"test",
+	)
+	require.NoError(t, err)
+	require.Equal(t, []uint8{0}, setBitmap)
 }
 
 func TestMViewCompleteDeltaApplyRuntimeStatsString(t *testing.T) {
@@ -894,6 +1038,17 @@ func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 	gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
 	require.Len(t, gotKeys, 1)
 	require.Equal(t, expectedKey, []byte(gotKeys[0]))
+
+	// REPLACE passes the already selected physical partition to the lock helper.
+	for _, lockTable := range []table.Table{tbl, physicalTbl} {
+		sctx.GetSessionVars().TxnCtx.ResetUnchangedKeysForLock()
+		count, err = addUnchangedKeysForLockByRow(sctx, lockTable, h, row, lockRowKey)
+		require.NoError(t, err)
+		require.Equal(t, 1, count)
+		gotKeys = sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
+		require.Len(t, gotKeys, 1)
+		require.Equal(t, []byte(tablecodec.EncodeRowKeyWithHandle(physicalID, h)), []byte(gotKeys[0]))
+	}
 }
 
 func TestStrictNotNullCheckForInsert(t *testing.T) {
@@ -988,5 +1143,52 @@ func TestStrictNotNullCheckForInsert(t *testing.T) {
 		ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
 		require.Equal(t, c.expectBadNullLevel, ec.LevelMap()[errctx.ErrGroupBadNull], "%s: BadNull level", c.name)
 		require.Equal(t, c.expectNoDefaultLevel, ec.LevelMap()[errctx.ErrGroupNoDefault], "%s: NoDefault level", c.name)
+	}
+}
+
+func TestGetMPPServerID(t *testing.T) {
+	// A session without a Domain, like one of a cross-keyspace runtime, takes
+	// the server ID from the server info of the process.
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), t.Name(), func() uint64 { return 7 }, nil, nil, nil, nil, keyspace.CodecV1, true, nil)
+	require.NoError(t, err)
+	sctx := mock.NewContext()
+	require.Nil(t, domain.GetDomain(sctx))
+	serverID, err := getMPPServerID(sctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 7, serverID)
+}
+
+func TestBuildMViewCompleteDeltaWritableInputColIDsColumnOffsets(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		offsets [2]int
+		err     string
+	}{
+		{name: "dense", offsets: [2]int{0, 1}},
+		{name: "reordered", offsets: [2]int{1, 0}, err: "column `a` offset 1 != writable ordinal 0"},
+		{name: "gapped", offsets: [2]int{0, 2}, err: "column `b` offset 2 != writable ordinal 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tp := types.NewFieldType(mysql.TypeLonglong)
+			target := tables.MockTableFromMeta(&model.TableInfo{
+				ID:    1,
+				Name:  ast.NewCIStr("mv"),
+				State: model.StatePublic,
+				Columns: []*model.ColumnInfo{
+					{ID: 1, Name: ast.NewCIStr("a"), Offset: tc.offsets[0], FieldType: *tp, State: model.StatePublic},
+					{ID: 2, Name: ast.NewCIStr("b"), Offset: tc.offsets[1], FieldType: *tp, State: model.StatePublic},
+				},
+			})
+			require.Len(t, target.Cols(), 2)
+			require.Len(t, target.WritableCols(), 2)
+			mapping, err := buildMViewCompleteDeltaWritableInputColIDs(target, []int{4, 2})
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				require.Nil(t, mapping)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, []int{4, 2}, mapping)
+		})
 	}
 }

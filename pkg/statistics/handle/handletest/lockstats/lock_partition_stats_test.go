@@ -325,7 +325,7 @@ func TestReorganizePartitionShouldCleanUpLockInfo(t *testing.T) {
 
 	// GC stats.
 	ddlLease := time.Duration(0)
-	require.Nil(t, handle.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, handle.GC().GCStats(dom.InfoSchema(), ddlLease))
 
 	// Check the lock info is cleaned up.
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
@@ -361,7 +361,7 @@ func TestDropPartitionShouldCleanUpLockInfo(t *testing.T) {
 
 	// GC stats.
 	ddlLease := time.Duration(0)
-	require.Nil(t, handle.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, handle.GC().GCStats(dom.InfoSchema(), ddlLease))
 
 	// Check the lock info is cleaned up.
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
@@ -397,7 +397,7 @@ func TestTruncatePartitionShouldCleanUpLockInfo(t *testing.T) {
 
 	// GC stats.
 	ddlLease := time.Duration(0)
-	require.Nil(t, handle.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, handle.GC().GCStats(dom.InfoSchema(), ddlLease))
 
 	// Check the lock info is cleaned up.
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
@@ -434,7 +434,7 @@ func TestExchangePartitionShouldChangeNothing(t *testing.T) {
 
 	// GC stats.
 	ddlLease := time.Duration(0)
-	require.Nil(t, handle.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, handle.GC().GCStats(dom.InfoSchema(), ddlLease))
 
 	// Nothing changed.
 	rows = tk.MustQuery(selectTableLockSQL).Rows()

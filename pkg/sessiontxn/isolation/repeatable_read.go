@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
@@ -248,7 +249,7 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(ctx co
 		logutil.Logger(p.ctx).Info("single statement deadlock, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("lockTS", deadlock.LockTs),
-			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
+			zap.Stringer("lockKey", redact.Stringer(sessVars.EnableRedactLog, kv.Key(deadlock.LockKey))),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
 
 		// In fair locking mode, when statement retry happens, `retryFairLockingIfNeeded` should be

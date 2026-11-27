@@ -155,6 +155,9 @@ func (*OuterJoinEliminator) extractInnerJoinKeys(join *logicalop.LogicalJoin, in
 	innerNullEQKeys := intset.NewFastIntSet()
 	for _, eqCond := range join.EqualConditions {
 		innerKey := eqCond.GetArgs()[innerChildIdx].(*expression.Column)
+		if !expression.JoinKeyCollationCompatible(eqCond, innerKey) {
+			continue
+		}
 		joinKeys = append(joinKeys, innerKey)
 		if eqCond.FuncName.L == ast.NullEQ {
 			innerNullEQKeys.Insert(int(innerKey.UniqueID))
@@ -278,7 +281,7 @@ func (*OuterJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPl
 		return false, nil
 	}
 	for _, path := range ds.AllPossibleAccessPaths {
-		if path.IsIntHandlePath || !path.Index.Unique || len(path.IdxCols) == 0 {
+		if path.IsIntHandlePath || !path.Index.Unique || path.Index.HasCondition() || len(path.IdxCols) == 0 {
 			continue
 		}
 		joinKeysContainIndex := true

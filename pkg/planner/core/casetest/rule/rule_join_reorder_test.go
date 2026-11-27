@@ -45,6 +45,39 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name, cascades st
 	}
 }
 
+func TestJoinReorderProjectionRand(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table a(k double not null)")
+	tk.MustExec("create table b(id int not null)")
+	tk.MustExec("create table c(id int not null)")
+	tk.MustExec("insert into a values (1),(2)")
+	tk.MustExec("insert into b values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
+	tk.MustExec("insert into c select * from b")
+	tk.MustExec("analyze table a,b,c")
+	for _, advanced := range []string{"off", "on"} {
+		for _, threshold := range []string{"0", "10"} {
+			for _, throughProj := range []string{"off", "on"} {
+				t.Run("advanced="+advanced+"/threshold="+threshold+"/throughProj="+throughProj, func(t *testing.T) {
+					tk.MustExec("set tidb_opt_enable_advanced_join_reorder=" + advanced)
+					tk.MustExec("set tidb_opt_join_reorder_threshold=" + threshold)
+					tk.MustExec("set tidb_opt_join_reorder_through_proj=" + throughProj)
+					rows := tk.MustQuery(`select a.k, dt.r, dt.k from a join (
+						select r.id, r.r, r.r + 1 as k
+						from (select id, floor(rand(1) * 2) as r from b) r
+						join c on r.id = c.id
+					) dt on a.k = dt.k`).Rows()
+					require.Len(t, rows, 10)
+					for _, row := range rows {
+						require.Equal(t, row[0], row[2], "join equality violated: %v", row)
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestJoinReorderSuite(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")

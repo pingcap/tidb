@@ -27,12 +27,15 @@ import (
 	"github.com/pingcap/failpoint"
 	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
@@ -50,9 +53,12 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -67,6 +73,9 @@ const (
 	// decode overhead when estimating concurrency.
 	// This is an empirically chosen value and may not be optimal.
 	readerMemBudgetRatio = 0.3
+	// queryMemBudgetRatio is the share of subtask memory for the SELECT of a
+	// query import, leaving the rest to encoding and sort writers.
+	queryMemBudgetRatio = 0.25
 )
 
 // importStepExecutor is a executor for import step.
@@ -76,8 +85,9 @@ type importStepExecutor struct {
 	execute.NoopCollector
 
 	taskID        int64
-	taskMeta      *TaskMeta
+	taskMeta      *taskinfo.TaskMeta
 	tableImporter *importer.TableImporter
+	queryRuntime  sqlsvrapi.Runtime
 	store         tidbkv.Storage
 	sharedVars    sync.Map
 	logger        *zap.Logger
@@ -102,7 +112,7 @@ type importStepExecutor struct {
 func getTableImporter(
 	ctx context.Context,
 	taskID int64,
-	taskMeta *TaskMeta,
+	taskMeta *taskinfo.TaskMeta,
 	store tidbkv.Storage,
 	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
@@ -145,6 +155,13 @@ func getTableImporter(
 
 func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	s.logger.Info("init subtask env")
+	if s.taskMeta.Plan.QuerySource != nil {
+		nodeNewCollate := collate.NewCollationEnabled()
+		taskNewCollate := s.taskMeta.Plan.GetUseNewCollateOrDefault(nodeNewCollate)
+		if taskNewCollate != nodeNewCollate {
+			return errors.Errorf("import query needs new collation %t, but this node has %t", taskNewCollate, nodeNewCollate)
+		}
+	}
 	var tableImporter *importer.TableImporter
 	tableImporter, err = getTableImporter(ctx, s.taskID, s.taskMeta, s.store, s.logger)
 	if err != nil {
@@ -152,7 +169,7 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	}
 	// when creating the table importer, it's using plan.ThreadCnt, not the resource
 	// CPU, we should refactor it later, that requires refactors the local backend.
-	tableImporter.Backend().SetWorkerConcurrency(int(s.GetResource().CPU.Capacity()))
+	tableImporter.Ingestor().SetWorkerConcurrency(int(s.GetResource().CPU.Capacity()))
 	s.tableImporter = tableImporter
 	defer func() {
 		if err == nil {
@@ -329,8 +346,18 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	})
 
 	wctx := workerpool.NewContext(ctx)
-	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
-	for _, chunk := range subtaskMeta.Chunks {
+	chunks := subtaskMeta.Chunks
+	var selected chan importer.QueryChunk
+	if s.taskMeta.Plan.QuerySource != nil {
+		selected = make(chan importer.QueryChunk, 1)
+		s.tableImporter.SetSelectedChunkCh(selected)
+		chunks = make([]importer.Chunk, s.concurrency)
+		for i := range chunks {
+			chunks[i].Timestamp = s.taskMeta.Plan.QuerySource.EncodeTimestamp
+		}
+	}
+	tasks := make([]*importStepMinimalTask, 0, len(chunks))
+	for _, chunk := range chunks {
 		tasks = append(tasks, &importStepMinimalTask{
 			Plan:       s.taskMeta.Plan,
 			Chunk:      chunk,
@@ -343,7 +370,16 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, s.concurrency)
 	operator.Compose(sourceOp, op)
 
-	pipe := operator.NewAsyncPipeline(sourceOp, op)
+	ops := []operator.Operator{sourceOp, op}
+	if s.taskMeta.Plan.QuerySource != nil {
+		ops = append(ops, &importQueryOperator{
+			ctx:      wctx,
+			eg:       util.NewErrorGroupWithRecover(),
+			exec:     s,
+			selected: selected,
+		})
+	}
+	pipe := operator.NewAsyncPipeline(ops...)
 	if err := pipe.Execute(); err != nil {
 		return err
 	}
@@ -357,6 +393,65 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	return s.onFinished(ctx, subtask, objStore)
+}
+
+type importQueryOperator struct {
+	ctx      *workerpool.Context
+	eg       *util.ErrorGroupWithRecover
+	exec     *importStepExecutor
+	selected chan<- importer.QueryChunk
+}
+
+func (o *importQueryOperator) Open() error {
+	o.eg.Go(func() error {
+		err := o.exec.readQuery(o.ctx, o.selected)
+		if err != nil {
+			// Stop the encode workers before they see the end of the output.
+			o.ctx.OnError(err)
+		}
+		close(o.selected)
+		return err
+	})
+	return nil
+}
+
+func (o *importQueryOperator) Close() error {
+	return o.eg.Wait()
+}
+
+func (*importQueryOperator) String() string {
+	return "importQueryOperator"
+}
+
+func (s *importStepExecutor) readQuery(
+	ctx context.Context,
+	selected chan<- importer.QueryChunk,
+) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = util.GetRecoverError(r)
+		}
+	}()
+	pool := s.queryRuntime.SysSessionPool()
+	resource, err := pool.Get()
+	if err != nil {
+		return err
+	}
+
+	se := resource.(sessionctx.Context)
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
+
+	defer func() {
+		pool.Destroy(resource)
+		_, details, _ := execdetails.GetExecDetailsFromContext(ctx)
+		if n := details.UnpackedBytesReceivedKVTotal + details.UnpackedBytesReceivedMPPTotal; n > 0 {
+			s.GetMeterRecorder().IncClusterReadBytes(uint64(n))
+		}
+	}()
+
+	return executor.RunImportQuery(
+		ctx, se, s.taskMeta.Plan.QuerySource, s.taskMeta.Stmt, s.tableImporter.GetFieldCount(),
+		int64(float64(s.GetResource().Mem.Capacity())*queryMemBudgetRatio), selected)
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -445,7 +540,7 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 type mergeSortStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	task     *proto.TaskBase
-	taskMeta *TaskMeta
+	taskMeta *taskinfo.TaskMeta
 	logger   *zap.Logger
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
@@ -654,7 +749,7 @@ type writeAndIngestStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 
 	taskID        int64
-	taskMeta      *TaskMeta
+	taskMeta      *taskinfo.TaskMeta
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
 	store         tidbkv.Storage
@@ -670,7 +765,7 @@ func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	tableImporter.Backend().SetWorkerConcurrency(int(e.GetResource().CPU.Capacity()))
+	tableImporter.Ingestor().SetWorkerConcurrency(int(e.GetResource().CPU.Capacity()))
 	e.tableImporter = tableImporter
 	return nil
 }
@@ -710,8 +805,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
-	_, engineUUID := backend.MakeUUID("", subtask.ID)
-	localBackend := e.tableImporter.Backend()
+	ingestor := e.tableImporter.Ingestor()
 	// compatible with old version task meta
 	jobKeys := sm.RangeJobKeys
 	if jobKeys == nil {
@@ -731,34 +825,42 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		kvGroup:  sm.KVGroup,
 		meterRec: meterRec,
 	}
-	localBackend.SetCollector(collector)
+	ingestor.SetCollector(collector)
 
-	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
-		External: &backend.ExternalEngineConfig{
-			ExtStore:      objStore,
-			DataFiles:     sm.DataFiles,
-			StatFiles:     sm.StatFiles,
-			StartKey:      sm.StartKey,
-			EndKey:        sm.EndKey,
-			JobKeys:       jobKeys,
-			SplitKeys:     sm.RangeSplitKeys,
-			TotalFileSize: int64(sm.TotalKVSize),
-			TotalKVCount:  0,
-			CheckHotspot:  false,
-			MemCapacity:   e.GetResource().Mem.Capacity(),
-			OnDup:         onDup,
-			FilePrefix:    subtaskPrefix(e.taskID, subtask.ID),
-		},
-		TS: sm.TS,
-	}, engineUUID)
-	if err != nil {
-		return err
+	ts := sm.TS
+	if ts == 0 {
+		// subtask meta generated by an old version TiDB doesn't have TS.
+		ver, err2 := e.store.CurrentVersion(tidbkv.GlobalTxnScope)
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		ts = ver.Ver
 	}
-	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	eng := globalsort.NewExternalEngine(ctx, &globalsort.EngineConfig{
+		ExtStore:      objStore,
+		DataFiles:     sm.DataFiles,
+		StatFiles:     sm.StatFiles,
+		StartKey:      sm.StartKey,
+		EndKey:        sm.EndKey,
+		JobKeys:       jobKeys,
+		SplitKeys:     sm.RangeSplitKeys,
+		TotalFileSize: int64(sm.TotalKVSize),
+		TotalKVCount:  0,
+		CheckHotspot:  false,
+		MemCapacity:   e.GetResource().Mem.Capacity(),
+		OnDup:         onDup,
+		FilePrefix:    subtaskPrefix(e.taskID, subtask.ID),
+	}, int(e.GetResource().CPU.Capacity()), ts)
+	defer func() {
+		if err := eng.Close(); err != nil {
+			e.logger.Warn("failed to close engine", zap.Error(err))
+		}
+	}()
+	err = ingestor.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.onFinished(ctx, subtask, objStore)
+	return e.onFinished(ctx, subtask, objStore, eng.ConflictInfo())
 }
 
 func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -770,19 +872,15 @@ func (e *writeAndIngestStepExecutor) ResetSummary() {
 	e.summary.Reset()
 }
 
-func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, objStore storeapi.Storage) error {
+func (e *writeAndIngestStepExecutor) onFinished(
+	ctx context.Context,
+	subtask *proto.Subtask,
+	objStore storeapi.Storage,
+	conflictInfo engineapi.ConflictInfo,
+) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
-	}
-
-	// only data kv group has loaded row count
-	_, engineUUID := backend.MakeUUID("", subtask.ID)
-	localBackend := e.tableImporter.Backend()
-	conflictInfo := localBackend.GetExternalEngineConflictInfo(engineUUID)
-	err := localBackend.CleanupEngine(ctx, engineUUID)
-	if err != nil {
-		e.logger.Warn("failed to cleanup engine", zap.Error(err))
 	}
 
 	// If no conflict KV is recorded, we skip rewriting the external subtask meta
@@ -815,7 +913,7 @@ type postProcessStepExecutor struct {
 	taskID       int64
 	store        tidbkv.Storage
 	taskTbl      taskexecutor.TaskTable
-	taskMeta     *TaskMeta
+	taskMeta     *taskinfo.TaskMeta
 	taskKeyspace string
 	logger       *zap.Logger
 }
@@ -828,7 +926,7 @@ func NewPostProcessStepExecutor(
 	taskID int64,
 	store tidbkv.Storage,
 	taskTbl taskexecutor.TaskTable,
-	taskMeta *TaskMeta,
+	taskMeta *taskinfo.TaskMeta,
 	taskKeyspace string,
 	logger *zap.Logger,
 ) execute.StepExecutor {
@@ -893,7 +991,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 }
 
 func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
-	taskMeta := TaskMeta{}
+	taskMeta := taskinfo.TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -907,13 +1005,14 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 
 	store := e.TaskRuntime.Store()
 	switch task.Step {
-	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 		return &importStepExecutor{
 			taskID:       task.ID,
 			taskMeta:     &taskMeta,
 			logger:       logger,
 			store:        store,
 			indicesGenKV: indicesGenKV,
+			queryRuntime: e.TaskRuntime,
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{

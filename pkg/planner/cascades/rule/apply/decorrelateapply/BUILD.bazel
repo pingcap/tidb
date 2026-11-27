@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "decorrelateapply",
@@ -16,27 +16,5 @@ go_library(
         "//pkg/planner/util/coreusage",
         "//pkg/util/intest",
         "//pkg/util/plancodec",
-    ],
-)
-
-go_test(
-    name = "decorrelateapply_test",
-    timeout = "short",
-    srcs = ["xf_decorrelate_apply_test.go"],
-    flaky = True,
-    deps = [
-        ":decorrelateapply",
-        "//pkg/expression",
-        "//pkg/parser/ast",
-        "//pkg/planner/cascades",
-        "//pkg/planner/cascades/base",
-        "//pkg/planner/cascades/memo",
-        "//pkg/planner/core/base",
-        "//pkg/planner/core/operator/logicalop",
-        "//pkg/types",
-        "//pkg/util/mock",
-        "//pkg/util/plancodec",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
     ],
 )

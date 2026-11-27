@@ -29,11 +29,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/configtypes"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
@@ -388,7 +391,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	if path == "" {
 		selectPlan = &physicalop.PhysicalSelection{}
 	}
-	plan, err := importer.NewImportPlan(ctx, tk.Session(), &plannercore.ImportInto{
+	plan, err := executor.NewImportPlan(ctx, tk.Session(), &plannercore.ImportInto{
 		Path:   path,
 		Format: &format,
 		Table: &resolve.TableNameW{
@@ -410,13 +413,15 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 }
 
 func TestProcessChunkWith(t *testing.T) {
+	t.Cleanup(tidb.RestoreFunc())
+	tidb.UpdateGlobal(func(c *tidb.Config) { c.TempDir = t.TempDir() })
+
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	tidbCfg := tidb.GetGlobalConfig()
-	tidbCfg.TempDir = t.TempDir()
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int)")
@@ -438,7 +443,7 @@ func TestProcessChunkWith(t *testing.T) {
 			{Name: "skip_rows", Value: expression.NewInt64Const(1)}})
 		defer func() {
 			ti.LoadDataController.Close()
-			ti.Backend().CloseEngineMgr()
+			ti.Backend().Close()
 		}()
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -461,7 +466,7 @@ func TestProcessChunkWith(t *testing.T) {
 		ti := getTableImporter(ctx, t, store, "t", "", importer.DataFormatCSV, nil)
 		defer func() {
 			ti.LoadDataController.Close()
-			ti.Backend().CloseEngineMgr()
+			ti.Backend().Close()
 		}()
 		chkCh := make(chan importer.QueryChunk, 3)
 		fields := make([]*types.FieldType, 0, 3)
@@ -524,11 +529,13 @@ func TestProcessChunkWith(t *testing.T) {
 }
 
 func TestPopulateChunks(t *testing.T) {
+	t.Cleanup(tidb.RestoreFunc())
+	tidb.UpdateGlobal(func(c *tidb.Config) { c.TempDir = t.TempDir() })
+
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalImportInto)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tidbCfg := tidb.GetGlobalConfig()
-	tidbCfg.TempDir = t.TempDir()
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int)")
@@ -541,7 +548,7 @@ func TestPopulateChunks(t *testing.T) {
 	ti := getTableImporter(ctx, t, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir), importer.DataFormatCSV, []*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
 	defer func() {
 		ti.LoadDataController.Close()
-		ti.Backend().CloseEngineMgr()
+		ti.Backend().Close()
 	}()
 	require.NoError(t, ti.InitDataFiles(ctx))
 	engines, err := ti.PopulateChunks(ctx)
@@ -572,4 +579,49 @@ func TestCalResourceParams(t *testing.T) {
 	require.Equal(t, 8, c.ThreadCnt)
 	require.Equal(t, 2, c.MaxNodeCnt)
 	require.Equal(t, 124, c.DistSQLScanConcurrency)
+}
+
+func TestShouldUseAsyncPrepare(t *testing.T) {
+	localSortPlan := &importer.Plan{}
+	globalSortPlan := &importer.Plan{CloudStorageURI: "s3://bucket/path"}
+	queryPlan := &importer.Plan{CloudStorageURI: "s3://bucket/path", QuerySource: &importer.QuerySource{}}
+
+	require.False(t, importer.ShouldUseAsyncPrepare(nil))
+	require.False(t, importer.ShouldUseAsyncPrepare(localSortPlan))
+
+	if kerneltype.IsClassic() {
+		require.False(t, importer.ShouldUseAsyncPrepare(globalSortPlan))
+		return
+	}
+
+	originalMode := deploymode.Get()
+	originalConfig := tidb.GetGlobalConfig()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+		tidb.StoreGlobalConfig(originalConfig)
+	})
+
+	tests := []struct {
+		name              string
+		mode              deploymode.Mode
+		maxImportDataSize configtypes.ByteSize
+		want              bool
+	}{
+		{name: "premium", mode: deploymode.Premium, want: true},
+		{name: "premium reserved", mode: deploymode.PremiumReserved, want: true},
+		{name: "starter without import size limit", mode: deploymode.Starter, want: false},
+		{name: "starter with import size limit", mode: deploymode.Starter, maxImportDataSize: 1, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, deploymode.Set(tt.mode))
+			tidb.UpdateGlobal(func(conf *tidb.Config) {
+				conf.DeployMode = tt.mode
+				conf.StarterParams.MaxImportDataSize = tt.maxImportDataSize
+			})
+			require.Equal(t, tt.want, importer.ShouldUseAsyncPrepare(globalSortPlan))
+			// Query imports have no source files to discover.
+			require.False(t, importer.ShouldUseAsyncPrepare(queryPlan))
+		})
+	}
 }

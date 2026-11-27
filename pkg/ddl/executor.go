@@ -99,6 +99,8 @@ const (
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
 	tiflashCheckPendingTablesRetry = 7
+	// "1" means the database is read-only, "0" or "default" means read-write.
+	databaseReadOnly = "1"
 )
 
 var errCheckConstraintIsOff = errors.NewNoStackError(vardef.TiDBEnableCheckConstraint + " is off")
@@ -136,6 +138,7 @@ type Executor interface {
 		oldMViewID int64,
 		shadowTableID int64,
 		buildReadTSO uint64,
+		buildSources []model.MViewRefreshSource,
 		expectedOldMViewRevision *uint64,
 		expectedLastSuccessReadTSO uint64,
 		expectedLastSuccessReadTSONull bool,
@@ -322,6 +325,11 @@ func (e *executor) CreateSchemaWithInfo(
 	dbInfo *model.DBInfo,
 	onExist OnExist,
 ) error {
+	if dbInfo.ReadOnly {
+		if err := checkSchemaReadOnlyCompatibility(e.ctx); err != nil {
+			return err
+		}
+	}
 	is := e.infoCache.GetLatest()
 	_, ok := is.SchemaByName(dbInfo.Name)
 	if ok {
@@ -458,6 +466,45 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 			Policy: placementPolicyRef.Name.L,
 			Mode:   model.SharedInvolving,
 		})
+	}
+	err = e.doDDLJob2(ctx, job, args)
+	return errors.Trace(err)
+}
+
+func (e *executor) modifySchemaReadOnlyState(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, readOnly bool) (err error) {
+	dbName := stmt.Name
+	if metadef.IsMemOrSysDB(dbName.L) {
+		return dbterror.ErrAccessSystemDBRejected.GenWithStackByArgs(dbName.L)
+	}
+	if readOnly {
+		if err := checkSchemaReadOnlyCompatibility(e.ctx); err != nil {
+			return err
+		}
+	}
+	is := e.infoCache.GetLatest()
+	dbInfo, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+	}
+	// Even an apparently redundant request must serialize with a pending
+	// transition: its flag is published before existing transactions drain.
+	// Do the DDL job.
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       dbInfo.ID,
+		SchemaName:     dbInfo.Name.L,
+		Type:           model.ActionModifySchemaReadOnly,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.ModifySchemaArgs{
+		ReadOnly:   readOnly,
+		DDLStartTS: ctx.GetSessionVars().TxnCtx.StartTS,
 	}
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
@@ -759,10 +806,11 @@ func checkMultiSchemaSpecs(_ sessionctx.Context, specs []*ast.DatabaseOption) er
 func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
-		toCharset, toCollate     string
-		isAlterCharsetAndCollate bool
-		placementPolicyRef       *model.PolicyRefInfo
-		tiflashReplica           *ast.TiFlashReplicaSpec
+		toCharset, toCollate           string
+		isAlterCharsetAndCollate       bool
+		placementPolicyRef             *model.PolicyRefInfo
+		tiflashReplica                 *ast.TiFlashReplicaSpec
+		modifyReadOnlyOption, readOnly bool
 	)
 
 	err = checkMultiSchemaSpecs(sctx, stmt.Options)
@@ -795,6 +843,11 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 			placementPolicyRef = &model.PolicyRefInfo{Name: ast.NewCIStr(val.Value)}
 		case ast.DatabaseSetTiFlashReplica:
 			tiflashReplica = val.TiFlashReplica
+		case ast.DatabaseOptionReadOnly:
+			modifyReadOnlyOption = true
+			if val.Value == databaseReadOnly {
+				readOnly = true
+			}
 		}
 	}
 
@@ -813,6 +866,11 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 			return err
 		}
 	}
+	if modifyReadOnlyOption {
+		if err = e.modifySchemaReadOnlyState(sctx, stmt, readOnly); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -825,7 +883,7 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 		}
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
-	if isReservedSchemaObjInNextGen(old.ID) {
+	if isSystemSchemaInNextGen(old.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop '%s' database", old.Name.L))
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
@@ -1542,10 +1600,18 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 		))
 	}
+	if schema.ReadOnly && !privilege.HasExplicitReplicaWriterAdmin(ctx) {
+		return infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(schema.Name.O)
+	}
 	// Check not exist table with same name.
 	if ok := is.TableExists(schema.Name, tbInfo.Name); ok {
 		return infoschema.ErrTableExists.GenWithStackByArgs(tbInfo.Name)
 	}
+	snapshotMeta := meta.NewReader(e.store.GetSnapshot(kv.NewVersion(recoverTableInfo.SnapshotTS)))
+	if err := checkRecoverTableForeignKeys(is, schema.Name.L, recoverTableInfo, snapshotMeta); err != nil {
+		return err
+	}
+	failpoint.InjectCall("afterCheckRecoverTableForeignKeys", recoverTableInfo)
 
 	// for "flashback table xxx to yyy"
 	// Note: this case only allow change table name, schema remains the same.
@@ -1995,6 +2061,15 @@ func checkProtectedMaterializedViewShadowConstraint(
 	if allowInternalMViewShadowBypass(sv) {
 		return nil
 	}
+	if op == "DROP TABLE" {
+		// The DDL owner runs this check again before dropping the table.
+		if isMaterializedViewShadowTableExpired(tblInfo.Name.L, time.Now()) {
+			return nil
+		}
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"DROP TABLE on materialized view shadow table younger than 7 days or with an invalid creation timestamp",
+		)
+	}
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 		fmt.Sprintf("%s on materialized view shadow table", op),
 	)
@@ -2026,6 +2101,27 @@ func CheckIndexOperationMaterializedViewConstraints(sv *variable.SessionVars, tb
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
 	return checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op)
+}
+
+func checkMaterializedViewGroupKeyIndexConstraints(tblInfo *model.TableInfo, indexName ast.CIStr, op string) error {
+	if tblInfo.MaterializedView == nil {
+		return nil
+	}
+	// Additional UNIQUE/PRIMARY indexes on MVs are disallowed, so the only such
+	// index is the auto-created group key. Integer clustered PKs have no IndexInfo.
+	if index := tblInfo.FindIndexByName(indexName.L); index != nil {
+		if !index.Unique && !index.Primary {
+			return nil
+		}
+		indexName = index.Name
+	} else if tblInfo.PKIsHandle && indexName.L == strings.ToLower(mysql.PrimaryKeyName) {
+		indexName = ast.NewCIStr(mysql.PrimaryKeyName)
+	} else {
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+		fmt.Sprintf("%s on automatically created index %s of materialized view %s", op, indexName.O, tblInfo.Name.O),
+	)
 }
 
 func checkBaseTableDependentMViewMinMaxIndexConstraints(
@@ -2897,7 +2993,7 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	meta := t.Meta().Clone()
-	if isReservedSchemaObjInNextGen(meta.ID) {
+	if isSystemTableInNextGen(schema.Name.L, meta.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Change system table '%s.%s' to partitioned table", schema.Name.L, meta.Name.L))
 	}
 	if t.Meta().Affinity != nil {
@@ -3001,9 +3097,11 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkReorgPartitionDefs(ctx, model.ActionReorganizePartition, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+	definitions, err := checkAndNormalizeReorgPartitionDefinitions(ctx.GetExprCtx(), model.ActionReorganizePartition, meta, partInfo, firstPartIdx, lastPartIdx, idMap)
+	if err != nil {
 		return errors.Trace(err)
 	}
+	partInfo.Definitions = definitions
 	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
 		return errors.Trace(err)
 	}
@@ -3110,11 +3208,15 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	return errors.Trace(err)
 }
 
-func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) error {
+// checkAndNormalizeReorgPartitionDefinitions checks the final layout without changing
+// current or requested metadata, and returns the normalized replacement definitions.
+func checkAndNormalizeReorgPartitionDefinitions(ctx expression.BuildContext, action model.ActionType, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) ([]model.PartitionDefinition, error) {
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	pi := tblInfo.Partition
-	clonedMeta := tblInfo.Clone()
+	clonedMeta := *tblInfo
+	clonedPartition := *pi
+	clonedMeta.Partition = &clonedPartition
 	switch action {
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		clonedMeta.Partition = partInfo
@@ -3123,67 +3225,65 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 		clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
 		clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
 	default:
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
-	}
-	if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), clonedMeta); err != nil {
-		return errors.Trace(err)
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
 	}
 	definitionsOffset := 0
 	if action == model.ActionReorganizePartition {
 		definitionsOffset = firstPartIdx
 	}
-	if err := updatePartInfoDefinitionsFromFinalDefinitions(clonedMeta, partInfo, definitionsOffset); err != nil {
-		return errors.Trace(err)
+	definitions, err := checkAndNormalizePartitionDefinitions(ctx, &clonedMeta, definitionsOffset, len(partInfo.Definitions))
+	if err != nil {
+		return nil, err
 	}
 	if action == model.ActionReorganizePartition {
 		if pi.Type == ast.PartitionTypeRange {
 			if lastPartIdx == len(pi.Definitions)-1 {
 				// Last partition dropped, OK to change the end range
 				// Also includes MAXVALUE
-				return nil
+				return definitions, nil
 			}
 			// Check if the replaced end range is the same as before
-			lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
+			lastAddingPartition := definitions[len(definitions)-1]
 			lastOldPartition := pi.Definitions[lastPartIdx]
 			if len(pi.Columns) > 0 {
-				newGtOld, err := checkTwoRangeColumns(ctx.GetExprCtx(), &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+				newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
 				if err != nil {
-					return errors.Trace(err)
+					return nil, errors.Trace(err)
 				}
 				if newGtOld {
-					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+					return nil, errors.Trace(dbterror.ErrRangeNotIncreasing)
 				}
-				oldGtNew, err := checkTwoRangeColumns(ctx.GetExprCtx(), &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+				oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
 				if err != nil {
-					return errors.Trace(err)
+					return nil, errors.Trace(err)
 				}
 				if oldGtNew {
-					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+					return nil, errors.Trace(dbterror.ErrRangeNotIncreasing)
 				}
-				return nil
+				return definitions, nil
 			}
 
-			isUnsigned := isPartExprUnsigned(ctx.GetExprCtx().GetEvalCtx(), tblInfo)
-			currentRangeValue, _, err := getRangeValue(ctx.GetExprCtx(), pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
+			isUnsigned := isPartExprUnsigned(ctx.GetEvalCtx(), tblInfo)
+			currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
 			if err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
-			newRangeValue, _, err := getRangeValue(ctx.GetExprCtx(), partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
+			newRangeValue, _, err := getRangeValue(ctx, definitions[len(definitions)-1].LessThan[0], isUnsigned)
 			if err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 
 			if currentRangeValue != newRangeValue {
-				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				return nil, errors.Trace(dbterror.ErrRangeNotIncreasing)
 			}
 		}
 	} else {
 		if len(pi.Definitions) != (lastPartIdx - firstPartIdx + 1) {
 			// if not ActionReorganizePartition, require all partitions to be changed.
-			return errors.Trace(dbterror.ErrAlterOperationNotSupported)
+			return nil, errors.Trace(dbterror.ErrAlterOperationNotSupported)
 		}
 	}
-	return nil
+	return definitions, nil
 }
 
 // CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
@@ -3347,6 +3447,7 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
+	partitionNames := spec.PartitionNames
 	if spec.Tp == ast.AlterTableDropFirstPartition {
 		intervalOptions := getPartitionIntervalFromTable(ctx.GetExprCtx(), meta)
 		if intervalOptions == nil {
@@ -3357,8 +3458,9 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"FIRST PARTITION, table info already contains partition definitions")
 		}
-		spec.Partition.Interval = intervalOptions
-		err = GeneratePartDefsFromInterval(ctx.GetExprCtx(), spec.Tp, meta, spec.Partition)
+		options := *spec.Partition
+		options.Interval = intervalOptions
+		definitions, err := generatePartDefsFromInterval(ctx.GetExprCtx(), spec.Tp, meta, &options)
 		if err != nil {
 			return err
 		}
@@ -3366,27 +3468,28 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 		if intervalOptions.NullPart {
 			pNullOffset = 1
 		}
-		if len(spec.Partition.Definitions) == 0 ||
-			len(spec.Partition.Definitions) >= len(meta.Partition.Definitions)-pNullOffset {
+		if len(definitions) == 0 ||
+			len(definitions) >= len(meta.Partition.Definitions)-pNullOffset {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"FIRST PARTITION, number of partitions does not match")
 		}
-		if len(spec.PartitionNames) != 0 || len(spec.Partition.Definitions) <= 1 {
+		if len(partitionNames) != 0 || len(definitions) <= 1 {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"FIRST PARTITION, given value does not generate a list of partition names to be dropped")
 		}
-		for i := range spec.Partition.Definitions {
-			spec.PartitionNames = append(spec.PartitionNames, meta.Partition.Definitions[i+pNullOffset].Name)
+		partitionNames = make([]ast.CIStr, 0, len(definitions))
+		for i := range definitions {
+			partitionNames = append(partitionNames, meta.Partition.Definitions[i+pNullOffset].Name)
 		}
 		// Use the last generated partition as First, i.e. do not drop the last name in the slice
-		spec.PartitionNames = spec.PartitionNames[:len(spec.PartitionNames)-1]
+		partitionNames = partitionNames[:len(partitionNames)-1]
 
 		query, ok := ctx.Value(sessionctx.QueryString).(string)
 		if ok {
-			partNames := make([]string, 0, len(spec.PartitionNames))
+			partNames := make([]string, 0, len(partitionNames))
 			sqlMode := ctx.GetSessionVars().SQLMode
-			for i := range spec.PartitionNames {
-				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
+			for i := range partitionNames {
+				partNames = append(partNames, stringutil.Escape(partitionNames[i].O, sqlMode))
 			}
 			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
 			syntacticStart := strings.Index(query, syntacticSugar)
@@ -3400,8 +3503,8 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 			ctx.SetValue(sessionctx.QueryString, newQuery)
 		}
 	}
-	partNames := make([]string, len(spec.PartitionNames))
-	for i, partCIName := range spec.PartitionNames {
+	partNames := make([]string, len(partitionNames))
+	for i, partCIName := range partitionNames {
 		partNames[i] = partCIName.L
 	}
 	err = CheckDropTablePartition(meta, partNames)
@@ -3632,7 +3735,8 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	ntMeta := nt.Meta()
-	if metadef.IsReservedID(ntMeta.ID) {
+	// Classic also uses reserved IDs for DDL system tables.
+	if metadef.IsReservedID(ntMeta.ID) || isSystemTableInNextGen(ntSchema.Name.L, ntMeta.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.L))
 	}
 	err = checkExchangePartition(ptMeta, ntMeta)
@@ -3808,6 +3912,13 @@ func checkVisibleColumnCnt(t table.Table, addCnt, dropCnt int) error {
 	return dbterror.ErrCantRemoveAllFields
 }
 
+func isCharsetAllowingDirectCollationChange(origCharset, toCharset string) bool {
+	return (origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
+		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
+		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) ||
+		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8MB4)
+}
+
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
 // needRewriteCollationData is used when trying to modify the collation of a column, it is true when the column is with
 // index because index of a string column is collation-aware.
@@ -3820,10 +3931,7 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 		return dbterror.ErrUnsupportedModifyCollation.GenWithStackByArgs(origCollate, toCollate)
 	}
 
-	if (origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
-		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
-		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) ||
-		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8MB4) {
+	if isCharsetAllowingDirectCollationChange(origCharset, toCharset) {
 		// TiDB only allow utf8/latin1 to be changed to utf8mb4, or changing the collation when the charset is utf8/utf8mb4/latin1.
 		return nil
 	}
@@ -4766,8 +4874,8 @@ var systemTables = map[string]struct{}{
 	"gc_delete_range_done": {},
 }
 
-func isUndroppableTable(schema, table string, tableInfo *model.TableInfo) bool {
-	if isReservedSchemaObjInNextGen(tableInfo.ID) {
+func isUndroppableTable(schema, table string) bool {
+	if isSystemTableInNextGen(schema, table) {
 		return true
 	}
 	if schema == mysql.WorkloadSchema {
@@ -4828,6 +4936,9 @@ func (e *executor) dropTableObject(
 					return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
 				}
 			}
+			if fkCheck {
+				objects = orderDropTableObjectsByForeignKey(is, objects)
+			}
 		}
 		switch tableObjectType {
 		case materializedViewObject:
@@ -4868,7 +4979,7 @@ func (e *executor) dropTableObject(
 
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
-		if isUndroppableTable(tn.Schema.L, tn.Name.L, tableInfo.Meta()) {
+		if isUndroppableTable(tn.Schema.L, tn.Name.L) {
 			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop tidb system table '%s.%s'", tn.Schema.L, tn.Name.L))
 		}
 		switch tableObjectType {
@@ -4931,7 +5042,9 @@ func (e *executor) dropTableObject(
 			SQLMode:             ctx.GetSessionVars().SQLMode,
 		}
 		args := &model.DropTableArgs{
-			Identifiers: objectIdents,
+			// The owner may ignore a self-reference, but it must not assume that
+			// later objects in this statement have already been dropped.
+			Identifiers: []ast.Ident{fullti},
 			FKCheck:     fkCheck,
 		}
 
@@ -4942,6 +5055,7 @@ func (e *executor) dropTableObject(
 		} else if err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.InjectCall("afterDropTableObject", tableInfo.Meta().Name.L)
 
 		// unlock table after drop
 		if tableObjectType == viewObject || tableObjectType == sequenceObject {
@@ -4964,6 +5078,74 @@ func (e *executor) dropTableObject(
 		}
 	}
 	return nil
+}
+
+// orderDropTableObjectsByForeignKey orders children before their referenced
+// parents. Each table is dropped by an independent DDL job, so this prevents a
+// referring child from being renamed between an earlier parent job and its own
+// later job. Cycles retain their input order and are rejected by the owner-side
+// foreign-key check unless foreign_key_checks is disabled.
+func orderDropTableObjectsByForeignKey(is infoschema.InfoSchema, objects []*ast.TableName) []*ast.TableName {
+	objectIndex := make(map[schemaAndTable]int, len(objects))
+	for i, object := range objects {
+		objectIndex[schemaAndTable{schema: object.Schema.L, table: object.Name.L}] = i
+	}
+
+	children := make([][]int, len(objects))
+	indegree := make([]int, len(objects))
+	edges := make(map[[2]int]struct{})
+	for childIdx, child := range objects {
+		childTable, err := is.TableByName(context.Background(), child.Schema, child.Name)
+		if err != nil {
+			continue
+		}
+		for _, fk := range childTable.Meta().ForeignKeys {
+			if fk.Version < model.FKVersion1 {
+				continue
+			}
+			parentSchema := fk.RefSchema.L
+			if parentSchema == "" {
+				parentSchema = child.Schema.L
+			}
+			parentIdx, ok := objectIndex[schemaAndTable{schema: parentSchema, table: fk.RefTable.L}]
+			if !ok || childIdx == parentIdx {
+				continue
+			}
+			edge := [2]int{childIdx, parentIdx}
+			if _, ok := edges[edge]; ok {
+				continue
+			}
+			edges[edge] = struct{}{}
+			children[childIdx] = append(children[childIdx], parentIdx)
+			indegree[parentIdx]++
+		}
+	}
+
+	ordered := make([]*ast.TableName, 0, len(objects))
+	processed := make([]bool, len(objects))
+	for len(ordered) < len(objects) {
+		selected := -1
+		for i := range objects {
+			if !processed[i] && indegree[i] == 0 {
+				selected = i
+				break
+			}
+		}
+		if selected < 0 {
+			for i, object := range objects {
+				if !processed[i] {
+					ordered = append(ordered, object)
+				}
+			}
+			break
+		}
+		processed[selected] = true
+		ordered = append(ordered, objects[selected])
+		for _, parentIdx := range children[selected] {
+			indegree[parentIdx]--
+		}
+	}
+	return ordered
 }
 
 func buildDropTableInvolvingSchemaInfo(
@@ -5110,7 +5292,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
-	if isReservedSchemaObjInNextGen(tblInfo.ID) {
+	if isSystemTableInNextGen(schema.Name.L, tblInfo.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Truncate system table '%s.%s'", schema.Name.L, tblInfo.Name.L))
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
@@ -5195,7 +5377,7 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if err = dbutil.CheckTableModeIsNormal(tbl.Meta().Name, tbl.Meta().Mode); err != nil {
 			return err
 		}
-		if isReservedSchemaObjInNextGen(tbl.Meta().ID) {
+		if isSystemTableInNextGen(schemas[0].Name.L, tbl.Meta().Name.L) {
 			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdent.Name.L))
 		}
 	}
@@ -5251,7 +5433,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			if err = dbutil.CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
 				return err
 			}
-			if isReservedSchemaObjInNextGen(t.Meta().ID) {
+			// Classify this pair by its source name. TableByID returns the pre-statement
+			// snapshot, so an earlier pair can pair schemas[0] with a different table name.
+			if isSystemTableInNextGen(schemas[0].Name.L, oldIdents[i].Name.L) {
 				return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdents[i].Name.L))
 			}
 		}
@@ -5433,6 +5617,9 @@ func checkCreateGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexNa
 
 func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
+	if indexOption != nil && indexOption.Condition != nil {
+		return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("create an primary key with partial index is not supported")
+	}
 	if indexOption != nil && indexOption.PrimaryKeyTp == ast.PrimaryKeyTypeClustered {
 		return dbterror.ErrUnsupportedModifyPrimaryKey.GenWithStack("Adding clustered primary key is not supported. " +
 			"Please consider adding NONCLUSTERED primary key instead")
@@ -5729,24 +5916,27 @@ func (e *executor) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt
 }
 
 // addHypoIndexIntoCtx adds this index as a hypo-index into this ctx.
-func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName ast.CIStr, indexInfo *model.IndexInfo) error {
+func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName ast.CIStr, indexInfo *model.IndexInfo, hiddenCols []*model.ColumnInfo) error {
 	sctx := ctx.GetSessionVars()
 	indexName := indexInfo.Name
 
 	if sctx.HypoIndexes == nil {
-		sctx.HypoIndexes = make(map[string]map[string]map[string]*model.IndexInfo)
+		sctx.HypoIndexes = make(map[string]map[string]map[string]*model.HypoIndexInfo)
 	}
 	if sctx.HypoIndexes[schemaName.L] == nil {
-		sctx.HypoIndexes[schemaName.L] = make(map[string]map[string]*model.IndexInfo)
+		sctx.HypoIndexes[schemaName.L] = make(map[string]map[string]*model.HypoIndexInfo)
 	}
 	if sctx.HypoIndexes[schemaName.L][tableName.L] == nil {
-		sctx.HypoIndexes[schemaName.L][tableName.L] = make(map[string]*model.IndexInfo)
+		sctx.HypoIndexes[schemaName.L][tableName.L] = make(map[string]*model.HypoIndexInfo)
 	}
 	if _, exist := sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L]; exist {
 		return errors.Trace(errors.Errorf("conflict hypo index name %s", indexName.L))
 	}
 
-	sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L] = indexInfo
+	sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L] = &model.HypoIndexInfo{
+		IndexInfo:     indexInfo,
+		HiddenColumns: hiddenCols,
+	}
 	return nil
 }
 
@@ -5820,12 +6010,22 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	if isHypo { // for hypo-index
-		indexInfo, err := BuildIndexInfo(metaBuildCtx, tblInfo, indexName, false, unique, model.ColumnarIndexTypeNA,
+		hypoTblInfo := tblInfo
+		if len(hiddenCols) > 0 {
+			hypoTblInfo = tblInfo.Clone()
+			hypoTblInfo.Columns = finalColumns
+			for i, col := range hiddenCols {
+				col.ID = tblInfo.MaxColumnID + int64(i) + 1
+				col.Offset = len(tblInfo.Columns) + i
+				col.State = model.StatePublic
+			}
+		}
+		indexInfo, err := BuildIndexInfo(metaBuildCtx, hypoTblInfo, indexName, false, unique, model.ColumnarIndexTypeNA,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err
 		}
-		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
+		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo, hiddenCols)
 	}
 
 	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)
@@ -6215,6 +6415,9 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast
 		return e.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExist)
 	}
 
+	if err := checkMaterializedViewGroupKeyIndexConstraints(t.Meta(), indexName, "DROP INDEX"); err != nil {
+		return errors.Trace(err)
+	}
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 
 	isPK, err := CheckIsDropPrimaryKey(indexName, indexInfo, t)
@@ -6387,6 +6590,7 @@ func validateTableAffinity(tblInfo *model.TableInfo, affinity *model.TableAffini
 // BuildAddedPartitionInfo build alter table add partition info
 func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	numParts := uint64(0)
+	partDefs := spec.PartDefinitions
 	switch meta.Partition.Type {
 	case ast.PartitionTypeNone:
 		// OK
@@ -6401,11 +6605,11 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 
 	case ast.PartitionTypeRange:
 		if spec.Tp == ast.AlterTableAddLastPartition {
-			err := buildAddedPartitionDefs(ctx, meta, spec)
+			var err error
+			partDefs, err = buildAddedPartitionDefs(ctx, meta, spec)
 			if err != nil {
 				return nil, err
 			}
-			spec.PartDefinitions = spec.Partition.Definitions
 		} else {
 			if len(spec.PartDefinitions) == 0 {
 				return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
@@ -6441,7 +6645,7 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 		Enable:  meta.Partition.Enable,
 	}
 
-	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta, numParts)
+	defs, err := buildPartitionDefinitionsInfo(ctx, partDefs, meta, numParts)
 	if err != nil {
 		return nil, err
 	}
@@ -6451,22 +6655,22 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 	return part, nil
 }
 
-func buildAddedPartitionDefs(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) error {
+func buildAddedPartitionDefs(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) ([]*ast.PartitionDefinition, error) {
 	partInterval := getPartitionIntervalFromTable(ctx, meta)
 	if partInterval == nil {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 			"LAST PARTITION, does not seem like an INTERVAL partitioned table")
 	}
 	if partInterval.MaxValPart {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
 	}
-
-	spec.Partition.Interval = partInterval
 
 	if len(spec.PartDefinitions) > 0 {
-		return errors.Trace(dbterror.ErrUnsupportedAddPartition)
+		return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
 	}
-	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
+	options := *spec.Partition
+	options.Interval = partInterval
+	return generatePartDefsFromInterval(ctx, spec.Tp, meta, &options)
 }
 
 // LockTables uses to execute lock tables statement.
@@ -6523,6 +6727,10 @@ func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) 
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involveSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
+	}
+	// Check admission before recording provisional session locks.
+	if err := checkUserDDLJobAllowed(ctx, job.Type); err != nil {
+		return err
 	}
 	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
 	ctx.AddTableLock(lockTables)
@@ -7930,10 +8138,27 @@ func isRetryableDDLCancelErr(err error) bool {
 		!dbterror.ErrDDLJobNotFound.Equal(err)
 }
 
+func checkUserDDLJobAllowed(ctx sessionctx.Context, jobType model.ActionType) error {
+	// Releasing existing locks, including session-close cleanup, must remain
+	// available during maintenance so other sessions are not left blocked.
+	if jobType == model.ActionUnlockTable {
+		return nil
+	}
+	if kerneltype.IsNextGen() && config.GetGlobalConfig().MaintenanceMode && !ctx.GetSessionVars().InRestrictedSQL {
+		return exeerrors.ErrMaintenanceMode.GenWithStackByArgs("DDL")
+	}
+	return nil
+}
+
 // DoDDLJobWrapper submit DDL job and wait it finishes.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
+	// Check maintenance admission before submitting persistent DDL jobs. Local
+	// temporary-table DDL bypasses job submission and remains available.
+	if err := checkUserDDLJobAllowed(ctx, jobW.Type); err != nil {
+		return err
+	}
 	if traceCtx := ctx.GetTraceCtx(); traceCtx != nil {
 		r := tracing.StartRegion(traceCtx, "ddl.DoDDLJobWrapper")
 		defer r.End()
@@ -7955,6 +8180,26 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
+	// A job can wait behind a read-only transition after its SQL passed
+	// preprocessing. Persist the submitter's bypass decision for the owner.
+	job.CheckSchemaReadOnly = job.Type != model.ActionModifySchemaReadOnly &&
+		job.Type != model.ActionCreateSchema && job.Type != model.ActionUpdateTiFlashReplicaStatus &&
+		job.Type != model.ActionUnlockTable &&
+		!privilege.HasExplicitReplicaWriterAdmin(ctx)
+	if job.CheckSchemaReadOnly {
+		job.CheckSchemaReadOnly = false
+		for _, target := range job.GetInvolvingSchemaInfo() {
+			if target.Mode == model.ExclusiveInvolving && target.Database != model.InvolvingNone &&
+				!privilege.CanWriteReadOnlySchema(ctx, target.Database) {
+				job.CheckSchemaReadOnly = true
+				break
+			}
+		}
+	}
+	if args, ok := jobW.JobArgs.(*model.AlterTableModeArgs); ok && job.Type == model.ActionAlterTableMode && args.TableMode == model.TableModeNormal {
+		// Completing an authorized import only publishes operational metadata.
+		job.CheckSchemaReadOnly = false
+	}
 
 	if traceevent.IsEnabled(tracing.DDLJob) && ctx.GetTraceCtx() != nil {
 		traceevent.TraceEvent(ctx.GetTraceCtx(), tracing.DDLJob, "ddlDelieverJobTask",
@@ -8127,6 +8372,11 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
+			if historyJob.Type == model.ActionModifySchemaReadOnly && historyJob.BinlogInfo.SchemaVersion == 0 && historyJob.BinlogInfo.DBInfo != nil {
+				dbInfo := historyJob.BinlogInfo.DBInfo
+				ctx.GetSessionVars().StmtCtx.AppendNote(fmt.Errorf("database %s is already in the %s state", dbInfo.Name.O,
+					map[bool]string{true: "read-only", false: "read-write"}[dbInfo.ReadOnly]))
+			}
 			// Judge whether there are some warnings when executing DDL under the certain SQL mode.
 			if historyJob.ReorgMeta != nil && len(historyJob.ReorgMeta.Warnings) != 0 {
 				if len(historyJob.ReorgMeta.Warnings) != len(historyJob.ReorgMeta.WarningsCount) {
@@ -8363,11 +8613,18 @@ func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIS
 	return nil
 }
 
-func isReservedSchemaObjInNextGen(id int64) bool {
+func isSystemSchemaInNextGen(schemaName string) bool {
 	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
 		failpoint.Return(false)
 	})
-	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
+	return kerneltype.IsNextGen() && (metadef.IsSystemDB(schemaName) || schemaName == mysql.SysDB)
+}
+
+func isSystemTableInNextGen(schema, table string) bool {
+	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
+		failpoint.Return(false)
+	})
+	return kerneltype.IsNextGen() && metadef.IsBuiltinSystemTable(schema, table)
 }
 
 // AlterTableSetRegionSplitPolicy sets persistent region split policy for table

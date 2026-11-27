@@ -62,14 +62,14 @@ func TestAutoAnalyzeForMissingPartition(t *testing.T) {
 	tk.MustExec("analyze table t partition p1")
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
 	originalVal2 := tk.MustQuery("select @@tidb_auto_analyze_ratio").Rows()[0][0].(string)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
-	require.True(t, h.HandleAutoAnalyze())
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.True(t, h.AutoAnalyze().HandleAutoAnalyze())
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)

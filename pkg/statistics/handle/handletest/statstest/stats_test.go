@@ -183,20 +183,20 @@ func TestStatsCacheProcess(t *testing.T) {
 	statsTbl := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.Pseudo)
 	require.Zero(t, statsTbl.Version)
-	currentVersion := do.StatsHandle().MaxTableStatsVersion()
+	currentVersion := do.StatsHandle().Cache().MaxTableStatsVersion()
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.NotZero(t, statsTbl.Version)
-	require.Equal(t, currentVersion, do.StatsHandle().MaxTableStatsVersion())
-	newVersion := do.StatsHandle().GetNextCheckVersionWithOffset()
+	require.Equal(t, currentVersion, do.StatsHandle().Cache().MaxTableStatsVersion())
+	newVersion := do.StatsHandle().Cache().GetNextCheckVersionWithOffset()
 	require.Equal(t, currentVersion, newVersion, "analyze should not move forward the stats cache version")
 
 	// Insert more rows
 	testKit.MustExec("insert into t values(2, 3)")
 	testKit.MustExec("flush stats_delta *.*")
-	require.NoError(t, do.StatsHandle().Update(context.Background(), is))
-	newVersion = do.StatsHandle().MaxTableStatsVersion()
+	require.NoError(t, do.StatsHandle().Cache().Update(context.Background(), is))
+	newVersion = do.StatsHandle().Cache().MaxTableStatsVersion()
 	require.NotEqual(t, currentVersion, newVersion, "update with no table should move forward the stats cache version")
 }
 
@@ -231,8 +231,8 @@ func TestStatsCache(t *testing.T) {
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	do.StatsHandle().ClearForTest()
+	err = do.StatsHandle().Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -241,8 +241,8 @@ func TestStatsCache(t *testing.T) {
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
 
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	do.StatsHandle().ClearForTest()
+	err = do.StatsHandle().Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -285,8 +285,8 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	do.StatsHandle().ClearForTest()
+	err = do.StatsHandle().Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -297,8 +297,8 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
 
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	do.StatsHandle().ClearForTest()
+	err = do.StatsHandle().Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -324,8 +324,8 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	statsTbl1 := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	do.StatsHandle().ClearForTest()
+	err = do.StatsHandle().Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl2 := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl2.Pseudo)
@@ -347,8 +347,8 @@ func testInitStatsMemTrace(t *testing.T) {
 	}
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	h.Clear()
-	require.Equal(t, h.MemConsumed(), int64(0))
+	h.ClearForTest()
+	require.Equal(t, h.Cache().MemConsumed(), int64(0))
 	require.NoError(t, h.InitStats(context.Background(), is))
 
 	var memCostTot int64
@@ -358,14 +358,14 @@ func testInitStatsMemTrace(t *testing.T) {
 		tStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 		memCostTot += tStats.MemoryUsage().TotalMemUsage
 	}
-	tables := h.StatsCache.Values()
+	tables := h.Cache().Values()
 	for _, tt := range tables {
-		tbl, ok := h.StatsCache.Get(tt.PhysicalID)
+		tbl, ok := h.Cache().Get(tt.PhysicalID)
 		require.True(t, ok)
 		require.Equal(t, tbl.PhysicalID, tt.PhysicalID)
 	}
 
-	require.Equal(t, h.MemConsumed(), memCostTot)
+	require.Equal(t, h.Cache().MemConsumed(), memCostTot)
 }
 
 func TestInitStatsMemTraceWithLite(t *testing.T) {
@@ -435,7 +435,7 @@ func TestInitStats(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 
@@ -527,7 +527,7 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 
@@ -677,9 +677,9 @@ func TestInitStats51358(t *testing.T) {
 	is := dom.InfoSchema()
 	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
 	// `Lease` is not 0, so here we just change it.
-	h.SetLease(time.Millisecond)
+	h.SetLeaseForTest(time.Millisecond)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil"))
@@ -718,9 +718,9 @@ func initStatsVer2(t *testing.T) {
 	require.NoError(t, err)
 	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
 	// `Lease` is not 0, so here we just change it.
-	h.SetLease(time.Millisecond)
+	h.SetLeaseForTest(time.Millisecond)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	table0 := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.Equal(t, 5, table0.ColNum())
@@ -730,11 +730,11 @@ func initStatsVer2(t *testing.T) {
 	require.True(t, !table0.GetCol(4).IsStatsInitialized())
 	require.True(t, table0.GetCol(5).IsStatsInitialized())
 	require.Equal(t, 2, table0.IdxNum())
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	table1 := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	internal.AssertTableEqual(t, table0, table1)
-	h.SetLease(0)
+	h.SetLeaseForTest(0)
 }
 
 func TestInitStatsIssue41938(t *testing.T) {
@@ -748,10 +748,10 @@ func TestInitStatsIssue41938(t *testing.T) {
 	tk.MustExec("analyze table t1 with 0 topn")
 	h := dom.StatsHandle()
 	// `InitStats` is only called when `Lease` is not 0, so here we just change it.
-	h.SetLease(time.Millisecond)
-	h.Clear()
+	h.SetLeaseForTest(time.Millisecond)
+	h.ClearForTest()
 	require.NoError(t, h.InitStats(context.Background(), dom.InfoSchema()))
-	h.SetLease(0)
+	h.SetLeaseForTest(0)
 }
 
 func TestDumpStatsDeltaInBatch(t *testing.T) {
@@ -795,7 +795,7 @@ func TestInitStatsForTableWithTopNButNoBuckets(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	tableStats2 := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.True(t, tableStats2.IsAnalyzed())
@@ -851,7 +851,7 @@ func TestInitStatsMemoryFullBlocksBucketsButKeepsTopN(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/mockBucketsLoadMemoryLimit"))
 	}()
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	tableStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.True(t, tableStats.IsAnalyzed())

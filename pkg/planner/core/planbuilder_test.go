@@ -1534,3 +1534,40 @@ func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 	require.True(t, ok)
 	check(clonedForCache)
 }
+
+func TestStmtMayHaveSchemaReadOnlyTarget(t *testing.T) {
+	// A prepared statement skips the per-execution database read-only check
+	// only when this returns false, so it must hold for every statement that
+	// writes or locks, wherever the write or the lock is nested.
+	cases := []struct {
+		sql  string
+		want bool
+	}{
+		{"select a from t where a = ?", false},
+		{"select a from t where a in (select b from s) union select 1", false},
+		{"with c as (select a from t) select * from c join s on c.a = s.b", false},
+		{"select a from t for update", true},
+		{"select a from t lock in share mode", true},
+		{"select a from t where a in (select b from s for update)", true},
+		{"with c as (select a from t for update) select * from c", true},
+		{"insert into t values (?)", true},
+		{"insert into t select b from s", true},
+		{"replace into t values (?)", true},
+		{"update t set a = ? where a = ?", true},
+		{"delete from t where a = ?", true},
+		{"delete t from t join s on t.a = s.b", true},
+		{"explain analyze insert into t values (1)", true},
+		{"create table t1 (a int)", true},
+		{"alter table t add column b int", true},
+		{"truncate table t", true},
+		{"drop table t", true},
+		{"alter database d read only = 0", true},
+		{"load data infile 'x' into table t", true},
+	}
+	p := parser.New()
+	for _, tc := range cases {
+		stmt, err := p.ParseOneStmt(tc.sql, "", "")
+		require.NoError(t, err, tc.sql)
+		require.Equal(t, tc.want, stmtMayHaveSchemaReadOnlyTarget(stmt), tc.sql)
+	}
+}

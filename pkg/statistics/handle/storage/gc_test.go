@@ -41,22 +41,22 @@ func TestGCStats(t *testing.T) {
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("12"))
 	h := dom.StatsHandle()
 	ddlLease := time.Duration(0)
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, h.GC().GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("3"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("9"))
 
 	testKit.MustExec("alter table t drop index idx_a")
 	testKit.MustExec("alter table t drop column a")
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, h.GC().GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("1"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("3"))
 
 	testKit.MustExec("drop table t")
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, h.GC().GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("1"))
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, h.GC().GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
 }
 
@@ -78,23 +78,23 @@ func TestGCPartition(t *testing.T) {
 		h := dom.StatsHandle()
 		ddlLease := time.Duration(0)
 		testKit.MustExec("alter table t drop index idx")
-		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+		require.Nil(t, h.GC().GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
 		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("10"))
 
 		testKit.MustExec("alter table t drop column b")
-		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+		require.Nil(t, h.GC().GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("2"))
 		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("5"))
 
 		testKit.MustExec("drop table t")
-		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+		require.Nil(t, h.GC().GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("3"))
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
 		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
 		// FIXME(#68076): The remaining row is the logical table's meta-only stats row. The
 		// normal GC version-window scan does not revisit it after the table is dropped.
-		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+		require.Nil(t, h.GC().GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("1"))
 	})
 }
@@ -112,11 +112,11 @@ func TestGCColumnStatsUsage(t *testing.T) {
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("3"))
 	h := dom.StatsHandle()
 	ddlLease := time.Duration(0)
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, h.GC().GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("2"))
 	testKit.MustExec("drop table t")
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("2"))
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, h.GC().GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("0"))
 }
 
@@ -129,7 +129,7 @@ func TestDeleteAnalyzeJobs(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	rows := testKit.MustQuery("show analyze status").Rows()
 	require.Equal(t, 1, len(rows))
-	require.NoError(t, dom.StatsHandle().DeleteAnalyzeJobs(time.Now().Add(time.Second)))
+	require.NoError(t, dom.StatsHandle().AutoAnalyze().DeleteAnalyzeJobs(time.Now().Add(time.Second)))
 	rows = testKit.MustQuery("show analyze status").Rows()
 	require.Equal(t, 0, len(rows))
 }
@@ -152,7 +152,7 @@ func TestExtremCaseOfGC(t *testing.T) {
 	require.Len(t, rs.Rows(), 2)
 	h := dom.StatsHandle()
 	failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/storage/injectGCStatsLastTSOffset", `return(0)`)
-	h.GCStats(dom.InfoSchema(), time.Second*3)
+	h.GC().GCStats(dom.InfoSchema(), time.Second*3)
 	rs = testKit.MustQuery("select * from mysql.stats_meta where table_id = ?", tid)
 	require.Len(t, rs.Rows(), 1)
 	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/storage/injectGCStatsLastTSOffset")

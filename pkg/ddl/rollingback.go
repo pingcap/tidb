@@ -15,11 +15,16 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -98,6 +103,12 @@ func convertAddIdxJob2RollbackJob(
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, occuredErr error) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		// This job has not published any index metadata. A same-named index
+		// may belong to an earlier job and must not be rolled back here.
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
@@ -353,6 +364,16 @@ func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model
 		return ver, nil
 	}
 	pi := tblInfo.Partition
+	if tblInfo.Affinity != nil && tblInfo.Affinity.Level == ast.TableAffinityLevelPartition {
+		// PD may have created groups before the replacement IDs reached table metadata.
+		args, deleteErr := model.GetTruncateTableArgs(job)
+		if deleteErr == nil && len(args.NewPartitionIDs) != 0 {
+			deleteErr = deleteTableAffinityGroupsWithTimeout(jobCtx, tblInfo, partitionDefinitionsFromIDs(args.NewPartitionIDs))
+		}
+		if deleteErr != nil {
+			logutil.DDLLogger().Warn("failed to delete replacement partition affinity groups during rollback", zap.Error(deleteErr), zap.Int64("tableID", tblInfo.ID))
+		}
+	}
 	if len(pi.NewPartitionIDs) != 0 || pi.DDLAction != model.ActionNone || pi.DDLState != model.StateNone {
 		// Rollback the changes, note that no new partitions has been used yet!
 		// so only metadata rollback and we can cancel the DDL
@@ -420,6 +441,31 @@ func rollbackReorganizePartitionWithErr(jobCtx *jobContext, job *model.Job, othe
 	return convertReorgPartitionJob2RollbackJob(jobCtx, job, otherwiseErr, tblInfo)
 }
 
+// restoreOriginalPartitionDefinitions rebuilds the original partition list in
+// OriginalPartitionIDsOrder. LIST partitions may be nonadjacent, so the current
+// and dropping definitions alone cannot determine where to restore each partition.
+// Walking only the original IDs also excludes newly added replacement partitions.
+// RANGE/HASH/KEY have consecutive replacements, but use the same restoration logic.
+// Match by physical ID because replacement partitions may reuse original names.
+func restoreOriginalPartitionDefinitions(originalIDs []int64, current, dropping []model.PartitionDefinition) ([]model.PartitionDefinition, error) {
+	definitionsByID := make(map[int64]model.PartitionDefinition, len(current)+len(dropping))
+	for _, definition := range current {
+		definitionsByID[definition.ID] = definition
+	}
+	for _, definition := range dropping {
+		definitionsByID[definition.ID] = definition
+	}
+	restored := make([]model.PartitionDefinition, 0, len(originalIDs))
+	for _, id := range originalIDs {
+		definition, ok := definitionsByID[id]
+		if !ok {
+			return nil, errors.Errorf("Internal error, failed to find original partition definitions: missing partition ID %d", id)
+		}
+		restored = append(restored, definition)
+	}
+	return clonePartitionDefinitions(restored), nil
+}
+
 func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
 	pi := tblInfo.Partition
 	addingDefinitions := pi.AddingDefinitions
@@ -428,21 +474,19 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 		partNames = append(partNames, pd.Name.L)
 	}
 	for _, indexInfo := range tblInfo.Indices {
-		isNew, ok := pi.DDLChangedIndex[indexInfo.ID]
-		if !ok {
-			// non-changed index
-			continue
-		}
-		if !isNew {
+		switch getPartitionIndexRole(pi, indexInfo.ID) {
+		case partitionIndexOld:
 			if pi.DDLState == model.StateDeleteReorganization {
 				// Revert the non-public state
 				indexInfo.State = model.StatePublic
 			}
-		} else if indexInfo.State != model.StateDeleteOnly {
-			// A copy may be public in delete reorganization, so it keeps taking writes for one more
-			// schema version. rollbackLikeDropPartition then moves it to delete only and removes it.
-			// A copy still in delete only never took writes and stays as is.
-			indexInfo.State = model.StateWriteOnly
+		case partitionIndexNew:
+			if indexInfo.State != model.StateDeleteOnly {
+				// A copy may be public in delete reorganization, so it keeps taking writes for one more
+				// schema version. rollbackLikeDropPartition then moves it to delete only and removes it.
+				// A copy still in delete only never took writes and stays as is.
+				indexInfo.State = model.StateWriteOnly
+			}
 		}
 	}
 	if pi.DDLState == model.StateDeleteReorganization {
@@ -452,39 +496,9 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 		// Remove the AddingDefinitions
 		// Add back the DroppingDefinitions
 		if job.Type == model.ActionReorganizePartition {
-			// Reassemble the list of partitions in the OriginalPartitionIDsOrder
-			// Special handling, since for LIST partitioning,
-			// only pi.OriginalPartitionIDsOrder shows how to merge back the DroppingDefinitions.
-			// Implicitly it will also filter away AddingPartitions.
-			// pi.Definitions and pi.DroppingDefinitions contain the original partitions
-			// in the original order, but where the DroppingDefinitions should be placed,
-			// can only be known through pi.OriginalPartitionIDsOrder.
-			// RANGE/HASH/KEY would have consecutive added/dropped partitions, but use
-			// the same code to avoid confusion.
-			defPos := 0
-			dropPos := 0
-			newDefs := make([]model.PartitionDefinition, 0, len(pi.OriginalPartitionIDsOrder))
-			for _, id := range pi.OriginalPartitionIDsOrder {
-				if defPos < len(pi.Definitions) && pi.Definitions[defPos].ID == id {
-					newDefs = append(newDefs, pi.Definitions[defPos])
-					defPos++
-					continue
-				}
-				if dropPos < len(pi.DroppingDefinitions) && id == pi.DroppingDefinitions[dropPos].ID {
-					newDefs = append(newDefs, pi.DroppingDefinitions[dropPos])
-					dropPos++
-					continue
-				}
-				for {
-					defPos++
-					if defPos < len(pi.Definitions) && pi.Definitions[defPos].ID == id {
-						newDefs = append(newDefs, pi.Definitions[defPos])
-						break
-					}
-				}
-			}
-			if len(newDefs) != len(pi.OriginalPartitionIDsOrder) {
-				return ver, errors.Trace(errors.New("Internal error, failed to find original partition definitions"))
+			newDefs, err := restoreOriginalPartitionDefinitions(pi.OriginalPartitionIDsOrder, pi.Definitions, pi.DroppingDefinitions)
+			if err != nil {
+				return ver, errors.Trace(err)
 			}
 			pi.Definitions = newDefs
 		} else {
@@ -610,6 +624,151 @@ func rollingbackTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, er
 	return cancelOnlyNotHandledJob(job, model.StateNone)
 }
 
+// deleteAffinityGroupsOfCancelledJob deletes the affinity groups that a
+// cancelled job may have created in PD. Rolling back the DDL transaction does
+// not undo PD changes, so groups created by an earlier attempt, or by the
+// current attempt before PD returned an error, remain after the cancellation.
+// It reads the metadata through the transaction that persists the cancellation
+// and only deletes groups that this metadata does not use. It is best effort.
+func deleteAffinityGroupsOfCancelledJob(jobCtx *jobContext, job *model.Job) {
+	var err error
+	switch job.Type {
+	case model.ActionCreateTable, model.ActionCreateMaterializedViewShadow:
+		var args *model.CreateTableArgs
+		if args, err = model.GetCreateTableArgs(job); err == nil {
+			err = deleteAffinityGroupsOfTablesNotCreated(jobCtx, job, []*model.TableInfo{args.TableInfo})
+		}
+	case model.ActionCreateTables:
+		var args *model.BatchCreateTableArgs
+		if args, err = model.GetBatchCreateTableArgs(job); err == nil {
+			tables := make([]*model.TableInfo, 0, len(args.Tables))
+			for _, tblArgs := range args.Tables {
+				tables = append(tables, tblArgs.TableInfo)
+			}
+			err = deleteAffinityGroupsOfTablesNotCreated(jobCtx, job, tables)
+		}
+	case model.ActionAlterTableAffinity:
+		err = deleteAlterTableAffinityNewGroups(jobCtx, job)
+	case model.ActionTruncateTable:
+		err = deleteTruncateTableReplacementAffinityGroups(jobCtx, job)
+	case model.ActionTruncateTablePartition:
+		err = deleteTruncatePartitionReplacementAffinityGroups(jobCtx, job)
+	default:
+		return
+	}
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to delete affinity groups of the cancelled job",
+			zap.Int64("jobID", job.ID), zap.Stringer("type", job.Type), zap.Error(err))
+	}
+}
+
+// getTableOfCancelledJob returns the job's table as the cancellation persists
+// it, or nil if the table does not exist.
+func getTableOfCancelledJob(jobCtx *jobContext, job *model.Job) (*model.TableInfo, error) {
+	tblInfo, err := jobCtx.metaMut.GetTable(job.SchemaID, job.TableID)
+	if meta.ErrDBNotExists.Equal(err) {
+		return nil, nil
+	}
+	return tblInfo, errors.Trace(err)
+}
+
+// deleteAffinityGroupsOfTablesNotCreated deletes the groups of the tables that
+// a cancelled CREATE TABLE job leaves out of the metadata.
+func deleteAffinityGroupsOfTablesNotCreated(jobCtx *jobContext, job *model.Job, tables []*model.TableInfo) error {
+	codec := jobCtx.store.GetCodec()
+	ids := make([]string, 0, len(tables))
+	for _, tblInfo := range tables {
+		if tblInfo == nil || tblInfo.Affinity == nil {
+			continue
+		}
+		// CREATE TABLE with foreign keys persists the table before its last step,
+		// so a cancelled job can keep the table and its groups.
+		exists, err := jobCtx.metaMut.CheckTableExists(job.SchemaID, tblInfo.ID)
+		if err != nil && !meta.ErrDBNotExists.Equal(err) {
+			return errors.Trace(err)
+		}
+		if exists {
+			continue
+		}
+		groups, err := buildAffinityGroupDefinitions(codec, tblInfo, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ids = append(ids, collectAffinityGroupIDs(groups)...)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(jobCtx.ctx, affinityCleanupTimeout)
+	defer cancel()
+	logutil.DDLLogger().Info("deleting affinity groups of tables the cancelled job did not create",
+		zap.Int64("jobID", job.ID), zap.Strings("groupIDs", ids))
+	return affinity.DeleteGroupsWithRetry(ctx, ids)
+}
+
+// deleteAlterTableAffinityNewGroups deletes the groups of the new level of a
+// cancelled ALTER TABLE ... AFFINITY job. Groups of an unchanged level are the
+// table's current groups and stay.
+func deleteAlterTableAffinityNewGroups(jobCtx *jobContext, job *model.Job) error {
+	args, err := model.GetAlterTableAffinityArgs(job)
+	if err != nil || args.Affinity == nil {
+		return errors.Trace(err)
+	}
+	tblInfo, err := getTableOfCancelledJob(jobCtx, job)
+	if err != nil || tblInfo == nil {
+		return errors.Trace(err)
+	}
+	if tblInfo.Affinity != nil && tblInfo.Affinity.Level == args.Affinity.Level {
+		return nil
+	}
+	newTblInfo := &model.TableInfo{ID: tblInfo.ID, Name: tblInfo.Name, Affinity: args.Affinity, Partition: tblInfo.Partition}
+	return deleteTableAffinityGroupsWithTimeout(jobCtx, newTblInfo, nil)
+}
+
+// deleteTruncateTableReplacementAffinityGroups deletes the groups of the
+// replacement table of a cancelled TRUNCATE TABLE job. Only the job arguments
+// retain the replacement IDs.
+func deleteTruncateTableReplacementAffinityGroups(jobCtx *jobContext, job *model.Job) error {
+	// The original table is still in the metadata, so the replacement IDs are unused.
+	tblInfo, err := getTableOfCancelledJob(jobCtx, job)
+	if err != nil || tblInfo == nil || tblInfo.Affinity == nil {
+		return errors.Trace(err)
+	}
+	args, err := model.GetTruncateTableArgs(job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	replacement := &model.TableInfo{ID: args.NewTableID, Name: tblInfo.Name, Affinity: tblInfo.Affinity}
+	return deleteTableAffinityGroupsWithTimeout(jobCtx, replacement, partitionDefinitionsFromIDs(args.NewPartitionIDs))
+}
+
+func deleteTruncatePartitionReplacementAffinityGroups(jobCtx *jobContext, job *model.Job) error {
+	tblInfo, err := getTableOfCancelledJob(jobCtx, job)
+	if err != nil || tblInfo == nil || tblInfo.Affinity == nil || tblInfo.Affinity.Level != ast.TableAffinityLevelPartition {
+		return errors.Trace(err)
+	}
+	args, err := model.GetTruncateTableArgs(job)
+	if err != nil || len(args.NewPartitionIDs) == 0 {
+		return errors.Trace(err)
+	}
+
+	// A previous step may already have committed some replacement partitions.
+	committedIDs := make(map[int64]struct{}, len(tblInfo.Partition.Definitions))
+	for _, def := range tblInfo.Partition.Definitions {
+		committedIDs[def.ID] = struct{}{}
+	}
+	var unused []model.PartitionDefinition
+	for _, id := range args.NewPartitionIDs {
+		if _, committed := committedIDs[id]; !committed {
+			unused = append(unused, model.PartitionDefinition{ID: id})
+		}
+	}
+	if len(unused) == 0 {
+		return nil
+	}
+	return deleteTableAffinityGroupsWithTimeout(jobCtx, tblInfo, unused)
+}
+
 func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -669,6 +828,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingBackDropConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = rollingBackAlterConstraint(jobCtx, job)
+	case model.ActionModifySchemaReadOnly:
+		ver, err = rollbackModifySchemaReadOnly(jobCtx, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
@@ -775,4 +936,35 @@ func rollingBackAlterConstraint(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	return ver, errors.Trace(err)
+}
+
+func rollbackModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	// The execution path records progress before writing database metadata.
+	// A cancelled queued job must not undo a preceding job's successful change.
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	dbInfo, err := jobCtx.metaMut.GetDatabase(job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	dbInfo.ReadOnly = !args.ReadOnly
+	if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateRollbackDone
+	job.SchemaState = model.StateNone
+	if job.Error == nil {
+		job.Error = toTError(dbterror.ErrCancelledDDLJob)
+	}
+	return ver, nil
 }

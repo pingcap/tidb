@@ -16,6 +16,7 @@ package mviewdeltamergeagg
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -23,9 +24,12 @@ import (
 	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -34,24 +38,70 @@ import (
 )
 
 func TestMergeRuntimeStats(t *testing.T) {
-	stats := newMergeRuntimeStats(2)
-	stats.readerTime = time.Second
-	stats.writerTime = 2 * time.Second
-	stats.mergeWorkerTime[0] = 3 * time.Second
-	stats.writerDetail = mergeWriterStats{chunks: 1, rowOps: 2, insertRows: 1, noopRows: 1}
+	stats := newMergeRuntimeStats(3)
+	stats.readerTime = 15 * time.Millisecond
+	stats.writerTime = 8 * time.Millisecond
+	stats.mergeWorkerTime = []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 0}
 
-	clone := stats.Clone().(*mergeRuntimeStats)
+	s := stats.String()
+	require.Contains(t, s, "mview_delta_merge_agg")
+	require.Contains(t, s, "total:3")
+	require.Contains(t, s, "active:2")
+	require.Contains(t, s, "min:10ms")
+	require.Contains(t, s, "max:20ms")
+	require.Contains(t, s, "avg:15ms")
+	require.Contains(t, s, "reader:15ms")
+	require.Contains(t, s, "writer:{time:8ms")
+	require.Contains(t, s, "chunks:0")
+	require.Contains(t, s, "row_ops:0")
+
+	stats = newMergeRuntimeStats(2)
+	stats.readerTime = 3 * time.Millisecond
+	stats.writerTime = 4 * time.Millisecond
+	stats.mergeWorkerTime = []time.Duration{5 * time.Millisecond, 7 * time.Millisecond}
+	stats.writerDetail = mergeWriterStats{
+		chunks:     1,
+		rowOps:     11,
+		noopRows:   1,
+		insertRows: 3,
+		updateRows: 5,
+		deleteRows: 2,
+	}
+	other := newMergeRuntimeStats(3)
+	other.readerTime = 2 * time.Millisecond
+	other.writerTime = time.Millisecond
+	other.mergeWorkerTime = []time.Duration{time.Millisecond, 2 * time.Millisecond, 9 * time.Millisecond}
+	other.writerDetail = mergeWriterStats{
+		chunks:     2,
+		rowOps:     9,
+		noopRows:   2,
+		insertRows: 1,
+		updateRows: 4,
+		deleteRows: 2,
+	}
+	stats.Merge(other)
+	require.Equal(t, 5*time.Millisecond, stats.readerTime)
+	require.Equal(t, 5*time.Millisecond, stats.writerTime)
+	require.Equal(t, []time.Duration{
+		6 * time.Millisecond,
+		9 * time.Millisecond,
+		9 * time.Millisecond,
+	}, stats.mergeWorkerTime)
+	require.Equal(t, int64(3), stats.writerDetail.chunks)
+	require.Equal(t, int64(20), stats.writerDetail.rowOps)
+	require.Equal(t, int64(3), stats.writerDetail.noopRows)
+	require.Equal(t, int64(4), stats.writerDetail.insertRows)
+	require.Equal(t, int64(9), stats.writerDetail.updateRows)
+	require.Equal(t, int64(4), stats.writerDetail.deleteRows)
+
+	clone, ok := stats.Clone().(*mergeRuntimeStats)
+	require.True(t, ok)
+	require.Equal(t, stats.readerTime, clone.readerTime)
+	require.Equal(t, stats.writerTime, clone.writerTime)
+	require.Equal(t, stats.mergeWorkerTime, clone.mergeWorkerTime)
+	require.Equal(t, stats.writerDetail, clone.writerDetail)
 	require.Equal(t, stats.String(), clone.String())
 	require.Equal(t, execdetails.TpMViewDeltaMergeAggRuntimeStats, clone.Tp())
-
-	other := newMergeRuntimeStats(2)
-	other.readerTime = time.Second
-	other.mergeWorkerTime[1] = 4 * time.Second
-	other.writerDetail = mergeWriterStats{chunks: 2, rowOps: 3, updateRows: 2}
-	stats.Merge(other)
-	require.Equal(t, 2*time.Second, stats.readerTime)
-	require.Equal(t, int64(3), stats.writerDetail.chunks)
-	require.Contains(t, stats.String(), "active:2")
 }
 
 func TestEncodeChunkKeyRows(t *testing.T) {
@@ -847,6 +897,98 @@ func TestRejectMinMaxForStage1(t *testing.T) {
 	}
 	err = mergeExec.Open(context.Background())
 	require.ErrorContains(t, err, "requires MinMaxRecompute metadata")
+}
+
+func TestMinMaxBitMerge(t *testing.T) {
+	for _, field := range []struct {
+		name      string
+		flen      int
+		low, high uint64
+	}{
+		{name: "bit1", flen: 1, low: 0, high: 1},
+		{name: "bit8", flen: 8, low: 127, high: 128},
+		{name: "bit16", flen: 16, low: 255, high: 256},
+		{name: "bit64", flen: 64, low: math.MaxInt64, high: 1 << 63},
+	} {
+		t.Run(field.name, func(t *testing.T) {
+			for _, aggName := range []string{ast.AggFuncMin, ast.AggFuncMax} {
+				t.Run(aggName, func(t *testing.T) {
+					sctx := mock.NewContext()
+					ftBit := types.NewFieldType(mysql.TypeBit)
+					ftBit.SetFlen(field.flen)
+					ftBit.SetCollate("binary")
+					ftBit.AddFlag(mysql.UnsignedFlag)
+					ftInt := types.NewFieldType(mysql.TypeLonglong)
+					fts := []*types.FieldType{ftBit, ftInt, ftBit, ftInt, ftBit, ftInt}
+					byteSize := (field.flen + 7) / 8
+					low := types.NewBinaryLiteralFromUint(field.low, byteSize)
+					high := types.NewBinaryLiteralFromUint(field.high, byteSize)
+					maxValue := types.NewBinaryLiteralFromUint(math.MaxUint64>>(64-field.flen), byteSize)
+					rows := []struct {
+						old, added, removed []byte
+						count               int64
+					}{
+						{old: low, added: high, count: 2},
+						{old: high, added: low, count: 2},
+						{added: high, count: 1},
+						{old: high, removed: high, count: 1}, // Recompute the removed extremum.
+						{count: 1},                           // An all-NULL group.
+						{old: low},                           // A deleted group.
+						{old: low, count: 2},
+						{old: high, added: maxValue, count: 2},
+					}
+					input := chunk.NewChunkWithCapacity(fts, len(rows))
+					for _, row := range rows {
+						for i, value := range [][]byte{row.added, row.removed, row.old} {
+							if value == nil {
+								input.AppendNull(2 * i)
+								if i < 2 {
+									input.AppendInt64(2*i+1, 0)
+								}
+							} else {
+								input.AppendBytes(2*i, value)
+								if i < 2 {
+									input.AppendInt64(2*i+1, 1)
+								}
+							}
+						}
+						input.AppendInt64(5, row.count)
+					}
+					desc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), aggName,
+						[]expression.Expression{&expression.Column{Index: 0, RetType: ftBit}}, false)
+					require.NoError(t, err)
+					e := &Exec{
+						BaseExecutor:     exec.NewBaseExecutor(sctx, nil, 0),
+						AggMappings:      []Mapping{{ColID: []int{5}}},
+						DeltaAggColCount: 4,
+					}
+					merger, err := e.buildMinMaxMerger(0, Mapping{
+						AggFunc: desc, ColID: []int{4}, DependencyColID: []int{0, 1, 2, 3},
+					}, map[int]int{5: 0}, fts)
+					require.NoError(t, err)
+					workerData := &mergeWorkerData{minMaxMappingIdxToRows: make([][]int, 1)}
+					output := make([]*chunk.Column, 1)
+					require.NotPanics(t, func() {
+						require.NoError(t, merger.mergeChunk(input, []*chunk.Column{input.Column(5)}, output, workerData))
+					})
+					require.Equal(t, []int{3}, workerData.minMaxMappingIdxToRows[0])
+					want := [][]byte{low, low, high, nil, nil, nil, low, high}
+					if aggName == ast.AggFuncMax {
+						want[0], want[1], want[7] = high, high, maxValue
+					}
+					for rowIdx, value := range want {
+						var datum types.Datum
+						chunkRowColDatum(output[0], rowIdx, ftBit, &datum)
+						if value == nil {
+							require.True(t, datum.IsNull(), "row %d", rowIdx)
+						} else {
+							require.Equal(t, value, datum.GetBytes(), "row %d", rowIdx)
+						}
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestMaxFastPathAndSingleRowRecompute(t *testing.T) {
@@ -1950,6 +2092,217 @@ func TestMarkUpdateTouchedRowsByColumnStringCollation(t *testing.T) {
 	require.Equal(t, []uint8{1, 1, 0, 1}, updateTouchedBitmap)
 }
 
+func TestMarkUpdateTouchedRowsByColumnDecimalValueComparison(t *testing.T) {
+	ft := types.NewFieldType(mysql.TypeNewDecimal)
+	ft.SetFlen(32)
+	ft.SetDecimal(0)
+
+	// Stored values and aggregate results can use different internal precisions.
+	compact := types.NewDecFromStringForTest("50")
+	encoded, err := compact.ToBin(ft.GetFlen(), ft.GetDecimal())
+	require.NoError(t, err)
+	padded := new(types.MyDecimal)
+	_, err = padded.FromBin(encoded, ft.GetFlen(), ft.GetDecimal())
+	require.NoError(t, err)
+	require.Zero(t, padded.Compare(compact))
+	require.NotEqual(t, padded.GetDigitsInt(), compact.GetDigitsInt())
+
+	rows := [][2]*types.MyDecimal{
+		{padded, compact},
+		{compact, padded},
+		{compact, compact},
+		{padded, padded},
+		{padded, types.NewDecFromStringForTest("51")},
+		{nil, nil},
+		{nil, compact},
+		{compact, nil},
+	}
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, len(rows))
+	for _, row := range rows {
+		for colIdx, value := range row {
+			if value == nil {
+				chk.AppendNull(colIdx)
+			} else {
+				chk.AppendMyDecimal(colIdx, value)
+			}
+		}
+	}
+	updateTouchedBitmap := make([]uint8, len(rows))
+	err = executil.MarkTouchedRowsByColumn(
+		[]int{0, 1, 2, 3, 4, 5, 6, 7},
+		updateTouchedBitmap,
+		1,
+		0,
+		chk.Column(0),
+		chk.Column(1),
+		ft,
+		false,
+		"aggregate change",
+	)
+	require.NoError(t, err)
+	require.Equal(t, []uint8{0, 0, 0, 0, 1, 0, 1, 1}, updateTouchedBitmap)
+}
+
+func TestMarkUpdateTouchedRowsByColumnFloatValueComparison(t *testing.T) {
+	negativeZero := math.Copysign(0, -1)
+	rows := []struct {
+		oldValue, newValue float64
+		oldNull, newNull   bool
+	}{
+		{oldValue: 0, newValue: negativeZero},
+		{oldValue: 1, newValue: 9},
+		{oldValue: negativeZero, newValue: 0},
+		{oldValue: 2, newValue: 3},
+		{oldValue: 4, newValue: 4},
+		{oldValue: 5, newValue: 5, oldNull: true, newNull: true},
+		{oldValue: 6, newValue: 7, oldNull: true},
+		{oldValue: 7, newValue: 8, newNull: true},
+	}
+	for _, field := range []struct {
+		name string
+		tp   byte
+	}{
+		{name: "float", tp: mysql.TypeFloat},
+		{name: "double", tp: mysql.TypeDouble},
+	} {
+		t.Run(field.name, func(t *testing.T) {
+			for _, nullability := range []struct {
+				name    string
+				notNull bool
+			}{
+				{name: "nullable"},
+				{name: "not null", notNull: true},
+			} {
+				t.Run(nullability.name, func(t *testing.T) {
+					ft := types.NewFieldType(field.tp)
+					if nullability.notNull {
+						ft.AddFlag(mysql.NotNullFlag)
+					}
+					chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, len(rows))
+					for _, row := range rows {
+						for colIdx, value := range []struct {
+							value  float64
+							isNull bool
+						}{
+							{value: row.oldValue, isNull: row.oldNull},
+							{value: row.newValue, isNull: row.newNull},
+						} {
+							if value.isNull && !nullability.notNull {
+								chk.AppendNull(colIdx)
+							} else if field.tp == mysql.TypeFloat {
+								chk.AppendFloat32(colIdx, float32(value.value))
+							} else {
+								chk.AppendFloat64(colIdx, value.value)
+							}
+						}
+					}
+					for _, layout := range []struct {
+						name     string
+						stride   int
+						bitPos   int
+						expected []uint8
+					}{
+						{name: "one byte", stride: 1, bitPos: 3, expected: []uint8{0x48, 0x40, 0x48, 0x40, 0x40, 0x48}},
+						{name: "two bytes", stride: 2, bitPos: 11, expected: []uint8{0x40, 0x48, 0x40, 0x40, 0x40, 0x48, 0x40, 0x40, 0x40, 0x40, 0x40, 0x48}},
+					} {
+						t.Run(layout.name, func(t *testing.T) {
+							updateRows := []int{7, 0, 3, 2, 5, 6}
+							bitmap := make([]uint8, len(updateRows)*layout.stride)
+							for i := range bitmap {
+								bitmap[i] = 0x40
+							}
+							err := executil.MarkTouchedRowsByColumn(updateRows, bitmap, layout.stride, layout.bitPos,
+								chk.Column(0), chk.Column(1), ft, nullability.notNull, "aggregate change")
+							require.NoError(t, err)
+							require.Equal(t, layout.expected, bitmap)
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestMarkUpdateTouchedRowsByColumnBitValueComparison(t *testing.T) {
+	for _, field := range []struct {
+		name               string
+		flen               int
+		oldValue, newValue []byte
+	}{
+		{name: "bit8", flen: 8, oldValue: []byte{2}, newValue: []byte{3}},
+		{name: "bit64", flen: 64, oldValue: []byte{0x80, 0, 0, 0, 0, 0, 0, 2}, newValue: []byte{0x80, 0, 0, 0, 0, 0, 0, 3}},
+	} {
+		t.Run(field.name, func(t *testing.T) {
+			for _, nullability := range []struct {
+				name    string
+				notNull bool
+			}{
+				{name: "nullable"},
+				{name: "not null", notNull: true},
+			} {
+				t.Run(nullability.name, func(t *testing.T) {
+					ft := types.NewFieldType(mysql.TypeBit)
+					ft.SetFlen(field.flen)
+					rows := [][2][]byte{
+						{nil, nil},
+						{field.oldValue, field.newValue},
+						{field.oldValue, field.oldValue},
+						{nil, field.oldValue},
+						{field.oldValue, nil},
+						{nil, nil},
+						{field.oldValue, field.newValue},
+					}
+					want := []uint8{0, 1, 0, 1, 1, 0, 1}
+					if nullability.notNull {
+						ft.AddFlag(mysql.NotNullFlag)
+						rows = [][2][]byte{
+							{field.oldValue, field.newValue},
+							{field.oldValue, field.oldValue},
+							{field.newValue, field.newValue},
+							{field.newValue, field.oldValue},
+						}
+						want = []uint8{1, 0, 0, 1}
+					}
+					chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, len(rows))
+					updateRows := make([]int, len(rows))
+					for rowIdx, row := range rows {
+						updateRows[rowIdx] = rowIdx
+						for colIdx, value := range row {
+							if value == nil {
+								chk.AppendNull(colIdx)
+							} else {
+								chk.AppendBytes(colIdx, value)
+							}
+						}
+					}
+					bitmap := make([]uint8, len(rows))
+					err := executil.MarkTouchedRowsByColumn(updateRows, bitmap, 1, 0,
+						chk.Column(0), chk.Column(1), ft, nullability.notNull, "aggregate change")
+					require.NoError(t, err)
+					require.Equal(t, want, bitmap)
+				})
+			}
+		})
+	}
+	t.Run("fixed integer projection", func(t *testing.T) {
+		ft := types.NewFieldType(mysql.TypeBit)
+		ft.SetFlen(64)
+		ft.AddFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
+		physicalType := types.NewFieldType(mysql.TypeLonglong)
+		physicalType.AddFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
+		chk := chunk.NewChunkWithCapacity([]*types.FieldType{physicalType, physicalType}, 3)
+		for _, row := range [][2]uint64{{0, 0}, {1 << 63, 1 << 63}, {1 << 63, 1<<63 + 1}} {
+			chk.AppendUint64(0, row[0])
+			chk.AppendUint64(1, row[1])
+		}
+		bitmap := make([]uint8, 3)
+		err := executil.MarkTouchedRowsByColumn([]int{0, 1, 2}, bitmap, 1, 0,
+			chk.Column(0), chk.Column(1), ft, true, "aggregate change")
+		require.NoError(t, err)
+		require.Equal(t, []uint8{0, 0, 1}, bitmap)
+	})
+}
+
 func TestMarkUpdateTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) {
 	enumFT := types.NewFieldType(mysql.TypeEnum)
 	enumFT.SetCharset("utf8mb4")
@@ -1994,4 +2347,48 @@ func TestMarkUpdateTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) 
 	)
 	require.NoError(t, err)
 	require.Equal(t, []uint8{0}, setBitmap)
+}
+
+func TestTableResultWriterColumnOffsets(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		offsets [2]int
+		err     string
+	}{
+		{name: "dense", offsets: [2]int{0, 1}},
+		{name: "reordered", offsets: [2]int{1, 0}, err: "column `a` offset 1 != writable ordinal 0"},
+		{name: "gapped", offsets: [2]int{0, 2}, err: "column `b` offset 2 != writable ordinal 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sctx := mock.NewContext()
+			tp := types.NewFieldType(mysql.TypeLonglong)
+			target := tables.MockTableFromMeta(&model.TableInfo{
+				ID:    1,
+				Name:  ast.NewCIStr("mv"),
+				State: model.StatePublic,
+				Columns: []*model.ColumnInfo{
+					{ID: 1, Name: ast.NewCIStr("a"), Offset: tc.offsets[0], FieldType: *tp, State: model.StatePublic},
+					{ID: 2, Name: ast.NewCIStr("b"), Offset: tc.offsets[1], FieldType: *tp, State: model.StatePublic},
+				},
+			})
+			require.Len(t, target.Cols(), 2)
+			require.Len(t, target.WritableCols(), 2)
+			source := newMockSource(sctx, []*types.FieldType{tp, tp, tp}, nil)
+			e := &Exec{
+				BaseExecutor:     exec.NewBaseExecutor(sctx, nil, 0, source),
+				DeltaAggColCount: 1,
+				TargetTable:      target,
+				TargetHandleCols: plannerutil.NewIntHandleCols(&expression.Column{Index: 1, RetType: tp}),
+				aggOutputColIDs:  []int{2},
+			}
+			writer, err := e.buildTableResultWriter()
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				require.Nil(t, writer)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, writer)
+		})
+	}
 }

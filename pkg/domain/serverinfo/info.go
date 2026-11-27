@@ -80,6 +80,9 @@ type StaticInfo struct {
 	// RPC target, such as standalone BR. Missing/false means the node can serve
 	// TiDB-type RPC requests, which keeps compatibility with older server info.
 	DisableRPC bool `json:"disable_rpc,omitempty"`
+	// SchemaReadOnly advertises that this node preserves and enforces DBInfo.ReadOnly.
+	// Older nodes omit it and must prevent activation during a rolling upgrade.
+	SchemaReadOnly bool `json:"schema_read_only,omitempty"`
 }
 
 // IsAssumed checks if the StaticInfo is assumed to be in a keyspace other than its own.

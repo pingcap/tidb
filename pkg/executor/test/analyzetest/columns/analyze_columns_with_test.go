@@ -58,7 +58,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
 				tk.MustExec("select * from t where a > 1")
-				require.NoError(t, h.DumpColStatsUsageToKV())
+				require.NoError(t, h.Usage().DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 				require.Equal(t, 1, len(rows))
 				require.Equal(t, "a", rows[0][3])
@@ -75,9 +75,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
 				testkit.Rows("test t  a 0 1 2",
-					"test t  a 0 2 2",
-					"test t  c 0 1 1",
-					"test t  c 0 2 1"))
+					"test t  a 0 2 2"))
 			tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
 				testkit.Rows("0 1 6 1 8 2 1",
 					"0 2 0 0 0 0 0", // column b is not analyzed
@@ -87,8 +85,8 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
 				testkit.Rows("test t  a 0 0 3 1 3 5 0",
 					"test t  a 0 1 4 1 6 6 0",
-					"test t  c 0 0 4 1 3 6 0",
-					"test t  c 0 1 7 1 7 9 0"))
+					"test t  c 0 0 5 1 1 5 0",
+					"test t  c 0 1 9 1 6 9 0"))
 		}(val)
 	}
 }
@@ -126,7 +124,7 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
 				tk.MustExec("select * from t where c > 1")
-				require.NoError(t, h.DumpColStatsUsageToKV())
+				require.NoError(t, h.Usage().DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 				require.Equal(t, 1, len(rows))
 				require.Equal(t, "c", rows[0][3])
@@ -203,7 +201,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
 				tk.MustExec("select * from t where c > 1")
-				require.NoError(t, h.DumpColStatsUsageToKV())
+				require.NoError(t, h.Usage().DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 				require.Equal(t, 1, len(rows))
 				require.Equal(t, "c", rows[0][3])
@@ -220,9 +218,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 				testkit.Rows("0 9"))
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
-				testkit.Rows("test t  PRIMARY 1 (1, 1) 1",
-					"test t  PRIMARY 1 (2, 2) 1",
-					"test t  b 0 1 1",
+				testkit.Rows("test t  b 0 1 1",
 					"test t  b 0 2 1",
 					"test t  c 0 6 4",
 					"test t  c 0 7 2",
@@ -236,8 +232,8 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 					"1 1 9 0 18 2 0"))
 			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
-				testkit.Rows("test t  PRIMARY 1 0 4 1 (3, 3) (6, 6) 0",
-					"test t  PRIMARY 1 1 7 1 (7, 7) (9, 9) 0",
+				testkit.Rows("test t  PRIMARY 1 0 5 1 (1, 1) (5, 5) 0",
+					"test t  PRIMARY 1 1 9 1 (6, 6) (9, 9) 0",
 					"test t  b 0 0 4 1 3 6 0",
 					"test t  b 0 1 7 1 7 9 0",
 					"test t  c 0 0 2 1 8 9 0",
@@ -285,7 +281,7 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
 				tk.MustExec("select * from t where a < 1")
-				require.NoError(t, h.DumpColStatsUsageToKV())
+				require.NoError(t, h.Usage().DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 				require.Equal(t, 1, len(rows))
 				require.Equal(t, []any{"test", "t", "global", "a"}, rows[0][:4])
@@ -411,7 +407,7 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
 				tk.MustExec("select * from t where a < 1")
-				require.NoError(t, h.DumpColStatsUsageToKV())
+				require.NoError(t, h.Usage().DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 				require.Equal(t, 1, len(rows))
 				require.Equal(t, []any{"test", "t", "global", "a"}, rows[0][:4])
@@ -517,7 +513,7 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
 				tk.MustExec("select * from t where b > 1")
-				require.NoError(t, h.DumpColStatsUsageToKV())
+				require.NoError(t, h.Usage().DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 				require.Equal(t, 1, len(rows))
 				require.Equal(t, "b", rows[0][3])

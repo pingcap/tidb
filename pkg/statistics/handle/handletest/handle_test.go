@@ -17,22 +17,23 @@ package handletest
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -86,8 +87,8 @@ func TestColumnIDs(t *testing.T) {
 	// Drop a column and the offset changed,
 	testKit.MustExec("alter table t drop column c1")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	do.StatsHandle().ClearForTest()
+	err = do.StatsHandle().Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -135,8 +136,8 @@ func TestVersion(t *testing.T) {
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
 
-	require.NoError(t, h.Update(context.Background(), is))
-	require.Equal(t, 2*unit, h.MaxTableStatsVersion())
+	require.NoError(t, h.Cache().Update(context.Background(), is))
+	require.Equal(t, 2*unit, h.Cache().MaxTableStatsVersion())
 	statsTbl1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 
@@ -148,8 +149,8 @@ func TestVersion(t *testing.T) {
 	tableInfo2 := tbl2.Meta()
 	// A smaller version write, and we can still read it.
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", unit, tableInfo2.ID)
-	require.NoError(t, h.Update(context.Background(), is))
-	require.Equal(t, 2*unit, h.MaxTableStatsVersion())
+	require.NoError(t, h.Cache().Update(context.Background(), is))
+	require.Equal(t, 2*unit, h.Cache().MaxTableStatsVersion())
 	statsTbl2 := h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 
@@ -157,8 +158,8 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("analyze table t1")
 	offset := 3 * unit
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+4, tableInfo1.ID)
-	require.NoError(t, h.Update(context.Background(), is))
-	require.Equal(t, offset+uint64(4), h.MaxTableStatsVersion())
+	require.NoError(t, h.Cache().Update(context.Background(), is))
+	require.Equal(t, offset+uint64(4), h.Cache().MaxTableStatsVersion())
 	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(1), statsTbl1.RealtimeCount)
 
@@ -166,8 +167,8 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("analyze table t2")
 	// A smaller version write, and we can still read it.
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+3, tableInfo2.ID)
-	require.NoError(t, h.Update(context.Background(), is))
-	require.Equal(t, offset+uint64(4), h.MaxTableStatsVersion())
+	require.NoError(t, h.Cache().Update(context.Background(), is))
+	require.Equal(t, offset+uint64(4), h.Cache().MaxTableStatsVersion())
 	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.Equal(t, int64(1), statsTbl2.RealtimeCount)
 
@@ -175,8 +176,8 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("analyze table t2")
 	// A smaller version write, and we cannot read it. Because at this time, lastThree Version is 4.
 	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
-	require.NoError(t, h.Update(context.Background(), is))
-	require.Equal(t, offset+uint64(4), h.MaxTableStatsVersion())
+	require.NoError(t, h.Cache().Update(context.Background(), is))
+	require.Equal(t, offset+uint64(4), h.Cache().MaxTableStatsVersion())
 	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.Equal(t, int64(1), statsTbl2.RealtimeCount)
 
@@ -184,20 +185,20 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("alter table t2 add column c3 int")
 	testKit.MustExec("analyze table t2 all columns")
 	// load it with old schema.
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Nil(t, statsTbl2.GetCol(int64(3)))
 	// Next time DDL updated.
 	is = do.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Nil(t, statsTbl2.GetCol(int64(3)))
 	tbl2, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tableInfo2 = tbl2.Meta()
-	statsTbl2, err = h.TableStatsFromStorage(tableInfo2, tableInfo2.ID, true, 0)
+	statsTbl2, err = h.Cache().TableStatsFromStorage(tableInfo2, tableInfo2.ID, true, 0)
 	require.NoError(t, err)
 	require.NotNil(t, statsTbl2.GetCol(int64(3)))
 }
@@ -225,7 +226,7 @@ func TestLoadHist(t *testing.T) {
 		testKit.MustExec("insert into t values('bb','sdfga')")
 	}
 	testKit.MustExec("flush stats_delta *.*")
-	err = h.Update(context.Background(), do.InfoSchema())
+	err = h.Cache().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	newStatsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// The stats table is updated.
@@ -243,7 +244,7 @@ func TestLoadHist(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	newStatsTbl2 := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, newStatsTbl2 == newStatsTbl)
 	// The histograms is not updated.
@@ -482,7 +483,7 @@ func TestDuplicateFMSketch(t *testing.T) {
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("9"))
 
 	tk.MustExec("alter table t drop column b")
-	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), time.Duration(0)))
+	require.NoError(t, dom.StatsHandle().GC().GCStats(dom.InfoSchema(), time.Duration(0)))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
 }
 
@@ -504,7 +505,7 @@ func TestIndexFMSketch(t *testing.T) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("15"))
 	tk.MustExec("drop table if exists t")
-	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), 0))
+	require.NoError(t, dom.StatsHandle().GC().GCStats(dom.InfoSchema(), 0))
 
 	// clustered index
 	tk.MustExec("drop table if exists t")
@@ -515,7 +516,7 @@ func TestIndexFMSketch(t *testing.T) {
 	// Clustered primary key also records fm_sketch for the primary index in v2.
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("9"))
 	tk.MustExec("drop table if exists t")
-	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), 0))
+	require.NoError(t, dom.StatsHandle().GC().GCStats(dom.InfoSchema(), 0))
 
 	// test NDV
 	checkNDV := func(rows, ndv int) {
@@ -539,7 +540,7 @@ func TestIndexFMSketch(t *testing.T) {
 	tk.MustExec("insert into t values (2), (5)")
 	checkNDV(6, 2)
 	tk.MustExec("drop table if exists t")
-	require.NoError(t, dom.StatsHandle().GCStats(dom.InfoSchema(), 0))
+	require.NoError(t, dom.StatsHandle().GC().GCStats(dom.InfoSchema(), 0))
 
 	// clustered index
 	tk.MustExec("set @@tidb_enable_clustered_index=ON")
@@ -565,7 +566,7 @@ func TestLoadHistogramWithCollate(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	_, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
+	_, err = h.Cache().TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
 	require.NoError(t, err)
 }
 
@@ -586,7 +587,7 @@ func TestStatsCacheUpdateSkip(t *testing.T) {
 	tableInfo := tbl.Meta()
 	statsTbl1 := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl1.Pseudo)
-	h.Update(context.Background(), is)
+	h.Cache().Update(context.Background(), is)
 	statsTbl2 := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, statsTbl2, statsTbl1)
 }
@@ -614,7 +615,7 @@ func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.
 
 		tk.MustExec("insert into t values(1),(2),(3)")
 		tk.MustExec("flush stats_delta *.*")
-		err = h.Update(context.Background(), dom.InfoSchema())
+		err = h.Cache().Update(context.Background(), dom.InfoSchema())
 		require.NoError(t, err)
 		tk.MustExec("analyze table t")
 		tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
@@ -629,7 +630,7 @@ func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.
 
 		tk.MustExec("insert into t values(4),(5),(6)")
 		tk.MustExec("flush stats_delta *.*")
-		err = h.Update(context.Background(), dom.InfoSchema())
+		err = h.Cache().Update(context.Background(), dom.InfoSchema())
 		require.NoError(t, err)
 
 		// Simulate that the analyze would start before and finish after the second insert.
@@ -692,65 +693,9 @@ func TestFlushPendingStatsDeltaBeforeAnalyze(t *testing.T) {
 	))
 }
 
-func TestRecordHistoricalStatsToStorage(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10))")
-	tk.MustExec("insert into t value(1, 'aaa'), (3, 'aab'), (5, 'bba'), (2, 'bbb'), (4, 'cca'), (6, 'ccc')")
-	// mark column stats as needed
-	tk.MustExec("select * from t where a = 3")
-	tk.MustExec("select * from t where b = 'bbb'")
-	tk.MustExec("alter table t add index single(a)")
-	tk.MustExec("alter table t add index multi(a, b)")
-	tk.MustExec("analyze table t with 2 topn")
-
-	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	version, err := dom.StatsHandle().RecordHistoricalStatsToStorage("t", tableInfo.Meta(), tableInfo.Meta().ID, false)
-	require.NoError(t, err)
-
-	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where version = '%d'", version)).Rows()
-	num, _ := strconv.Atoi(rows[0][0].(string))
-	require.GreaterOrEqual(t, num, 1)
-}
-
-func TestEvictedColumnLoadedStatus(t *testing.T) {
-	t.Skip("skip this test because it is useless")
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	dom.StatsHandle().SetLease(0)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.Nil(t, err)
-	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.True(t, col.IsStatsInitialized())
-		return false
-	})
-
-	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
-	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.True(t, col.IsStatsInitialized())
-		return false
-	})
-}
-
 func TestUninitializedStatsStatus(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	dom.StatsHandle().SetLease(0)
+	dom.StatsHandle().SetLeaseForTest(0)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -761,7 +706,7 @@ func TestUninitializedStatsStatus(t *testing.T) {
 	tk.MustExec("insert into t values (1,2,2), (3,4,4), (5,6,6), (7,8,8), (9,10,10)")
 	tk.MustExec("flush stats_delta *.*")
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -845,9 +790,9 @@ func TestInitStatsLite(t *testing.T) {
 
 	h := dom.StatsHandle()
 	// set lease > 0 to trigger on-demand stats load.
-	h.SetLease(time.Millisecond)
+	h.SetLeaseForTest(time.Millisecond)
 	defer func() {
-		h.SetLease(0)
+		h.SetLeaseForTest(0)
 	}()
 
 	is := dom.InfoSchema()
@@ -863,7 +808,7 @@ func TestInitStatsLite(t *testing.T) {
 	statsTbl0 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	checkAllEvicted(t, statsTbl0)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStatsLite(context.Background(), is))
 	statsTbl1 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	checkAllEvicted(t, statsTbl1)
@@ -881,7 +826,7 @@ func TestInitStatsLite(t *testing.T) {
 	// async stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 	tk.MustExec("explain select * from t where b > 1")
-	require.NoError(t, h.LoadNeededHistograms(is))
+	require.NoError(t, h.Storage().LoadNeededHistograms(is))
 	statsTbl2 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	colBStats1 := statsTbl2.GetCol(colBID)
 	colCStats := statsTbl2.GetCol(colCID)
@@ -933,9 +878,9 @@ func TestInitStatsLiteRecordsSynthesizedColumnStats(t *testing.T) {
 	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
 	ctx := context.Background()
 	tk.MustExec("alter table t add column b int default 10")
-	addColEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionAddColumn)
+	addColEvent := statstestutil.FindEvent(h.DDL().DDLEventCh(), model.ActionAddColumn)
 	require.NoError(t, statstestutil.HandleDDLEventWithTxn(h, addColEvent))
-	require.NoError(t, h.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(ctx, dom.InfoSchema()))
 
 	tbl, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -954,7 +899,7 @@ func TestInitStatsLiteRecordsSynthesizedColumnStats(t *testing.T) {
 	require.Nil(t, statsTbl.GetCol(colBID).TopN)
 	require.Equal(t, statsTbl.GetCol(colBID).Histogram.Len(), 1)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStatsLite(ctx, dom.InfoSchema(), tblInfo.ID))
 
 	statsTblLite := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
@@ -1021,14 +966,28 @@ func TestStatsCacheUpdateTimeout(t *testing.T) {
 	globalStats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Equal(t, 6, int(globalStats.RealtimeCount))
 	require.Equal(t, 2, int(globalStats.ModifyCount))
+
+	// A panic in the per-table loop is returned as an error.
+	panicCache, err := cache.New(h.Pool(), h, panicOnTableInfoByID{})
+	require.NoError(t, err)
+	defer panicCache.Close()
+	require.ErrorContains(t, panicCache.Update(context.Background(), dom.InfoSchema()), "panic in StatsCacheImpl.Update")
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout"))
 	}()
-	require.Error(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Error(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	globalStats2 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Equal(t, 6, int(globalStats2.RealtimeCount))
 	require.Equal(t, 2, int(globalStats2.ModifyCount))
+}
+
+// panicOnTableInfoByID panics in the per-table loop of Cache.Update.
+type panicOnTableInfoByID struct{}
+
+func (panicOnTableInfoByID) TableInfoByID(infoschema.InfoSchema, int64) (table.Table, bool) {
+	panic("mock panic in TableInfoByID")
 }
 
 func TestLoadStatsForBitColumn(t *testing.T) {
@@ -1063,7 +1022,7 @@ func TestLoadStatsForBitColumn(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("analyze table %s all columns with 0 topn;", tableName))
 
 		h := dom.StatsHandle()
-		_, err = h.TableStatsFromStorage(tbl.Meta(), tbl.Meta().ID, true, 0)
+		_, err = h.Cache().TableStatsFromStorage(tbl.Meta(), tbl.Meta().ID, true, 0)
 		require.NoError(t, err)
 
 		tk.MustQuery(
@@ -1086,14 +1045,14 @@ func TestStatsCacheShouldNotCacheSystemTable(t *testing.T) {
 	tk.MustExec("analyze table t")
 
 	h := dom.StatsHandle()
-	require.Equal(t, 1, h.Len())
+	require.Equal(t, 1, h.Cache().Len())
 
 	// These commands should list all tables and must not pollute the stats cache.
 	tk.MustExec("show stats_meta")
 	tk.MustExec("show stats_healthy")
-	require.Equal(t, 1, h.Len())
+	require.Equal(t, 1, h.Cache().Len())
 	require.NotZero(t, h.GetSystemDBIDCacheLenForTest())
-	h.Clear()
+	h.ClearForTest()
 	require.Zero(t, h.GetSystemDBIDCacheLenForTest())
 }
 
@@ -1107,20 +1066,20 @@ func TestStatsCacheShouldNotCacheTemporaryTable(t *testing.T) {
 	tk.MustExec("select * from t")
 
 	h := dom.StatsHandle()
-	require.Equal(t, 0, h.Len())
+	require.Equal(t, 0, h.Cache().Len())
 
 	// Global temporary tables.
 	tk.MustExec("create global temporary table gt(a int) on commit delete rows")
 	tk.MustExec("insert into gt values(1),(2),(3)")
 	tk.MustExec("select * from gt")
 
-	require.Equal(t, 0, h.Len())
+	require.Equal(t, 0, h.Cache().Len())
 
 	// Analyze tables.
 	tk.MustExec("analyze table t")
-	require.Equal(t, 1, h.Len())
+	require.Equal(t, 1, h.Cache().Len())
 	tk.MustExec("analyze table gt")
-	require.Equal(t, 2, h.Len())
+	require.Equal(t, 2, h.Cache().Len())
 }
 
 func TestPrunedIndexesNoAsyncStatsLoad(t *testing.T) {
@@ -1150,9 +1109,9 @@ func TestPrunedIndexesNoAsyncStatsLoad(t *testing.T) {
 	tk.MustExec("insert into t values (1,1,1,1,1,1,1,1,1,1,1,1,1),(2,2,2,2,2,2,2,2,2,2,2,2,2),(3,3,3,3,3,3,3,3,3,3,3,3,3),(4,4,4,4,4,4,4,4,4,4,4,4,4)")
 
 	h := dom.StatsHandle()
-	h.SetLease(time.Millisecond)
+	h.SetLeaseForTest(time.Millisecond)
 	defer func() {
-		h.SetLease(0)
+		h.SetLeaseForTest(0)
 	}()
 
 	is := dom.InfoSchema()
@@ -1172,7 +1131,7 @@ func TestPrunedIndexesNoAsyncStatsLoad(t *testing.T) {
 	tblStats0 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	checkAllEvicted(t, tblStats0)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 
 	// After InitStatsLite, check stats are evicted
@@ -1186,7 +1145,7 @@ func TestPrunedIndexesNoAsyncStatsLoad(t *testing.T) {
 
 	// Run a query that only uses column 'a'
 	tk.MustExec("explain select * from t where a > 1")
-	require.NoError(t, h.LoadNeededHistograms(is))
+	require.NoError(t, h.Storage().LoadNeededHistograms(is))
 
 	// Check which indexes have stats loaded
 	tblStats2 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
@@ -1250,9 +1209,9 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitioned(t *testing.T) {
 	tk.MustExec("insert into tp values (1,1,1,1,1,1,1,1,1,1,1,1,1),(2,2,2,2,2,2,2,2,2,2,2,2,2),(3,3,3,3,3,3,3,3,3,3,3,3,3),(4,4,4,4,4,4,4,4,4,4,4,4,4)")
 
 	h := dom.StatsHandle()
-	h.SetLease(time.Millisecond)
+	h.SetLeaseForTest(time.Millisecond)
 	defer func() {
-		h.SetLease(0)
+		h.SetLeaseForTest(0)
 	}()
 
 	is := dom.InfoSchema()
@@ -1272,7 +1231,7 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitioned(t *testing.T) {
 	globalStats0 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	checkAllEvicted(t, globalStats0)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 
 	// After InitStatsLite, check global stats are evicted
@@ -1286,7 +1245,7 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitioned(t *testing.T) {
 
 	// Run a query that only uses column 'a'
 	tk.MustExec("explain select * from tp where a > 1")
-	require.NoError(t, h.LoadNeededHistograms(is))
+	require.NoError(t, h.Storage().LoadNeededHistograms(is))
 
 	// Check which indexes have stats loaded (using global stats in dynamic mode)
 	globalStats2 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
@@ -1347,9 +1306,9 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitionedStatic(t *testing.T) {
 	) PARTITION BY HASH(a) PARTITIONS 4`)
 	tk.MustExec("insert into tp values (1,1,1,1,1,1,1,1,1,1,1,1,1),(2,2,2,2,2,2,2,2,2,2,2,2,2),(3,3,3,3,3,3,3,3,3,3,3,3,3),(4,4,4,4,4,4,4,4,4,4,4,4,4)")
 	h := dom.StatsHandle()
-	h.SetLease(time.Millisecond)
+	h.SetLeaseForTest(time.Millisecond)
 	defer func() {
-		h.SetLease(0)
+		h.SetLeaseForTest(0)
 	}()
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
@@ -1373,7 +1332,7 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitionedStatic(t *testing.T) {
 		partStats := h.GetPhysicalTableStats(pid, tblInfo)
 		checkAllEvicted(t, partStats)
 	}
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 	// After InitStatsLite, check partition stats are evicted
 	for _, pid := range partitionIDs {
@@ -1386,7 +1345,7 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitionedStatic(t *testing.T) {
 	tk.MustExec("set @@tidb_opt_index_prune_threshold = 1")
 	// Run a query that only uses column 'a'
 	tk.MustExec("explain select * from tp where a > 1")
-	require.NoError(t, h.LoadNeededHistograms(is))
+	require.NoError(t, h.Storage().LoadNeededHistograms(is))
 	// In static mode, check partition stats
 	// Note: In static mode, each partition is processed separately, so the pruning behavior
 	// may differ from dynamic mode. The key verification is that indexes not containing 'a'

@@ -149,10 +149,10 @@ func TestHintForIntersectionIndexMerge(t *testing.T) {
 
 		err := statstestutil.HandleNextDDLEventWithTxn(handle)
 		require.NoError(t, err)
-		require.Nil(t, handle.Update(context.Background(), dom.InfoSchema()))
+		require.Nil(t, handle.Cache().Update(context.Background(), dom.InfoSchema()))
 		testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 		testKit.MustExec("analyze table t1,t2,t3,t4")
-		require.Nil(t, handle.Update(context.Background(), dom.InfoSchema()))
+		require.Nil(t, handle.Cache().Update(context.Background(), dom.InfoSchema()))
 
 		var (
 			input  []string

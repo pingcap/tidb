@@ -22,20 +22,24 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-// NewReader read compressed data.
-// only for test now.
-func NewReader(compressType CompressType, cfg DecompressConfig, r io.Reader) (io.Reader, error) {
+// NewReader creates a decoder that must be closed by the caller.
+// Closing the decoder does not close r.
+func NewReader(compressType CompressType, cfg DecompressConfig, r io.Reader) (io.ReadCloser, error) {
 	switch compressType {
 	case Gzip:
 		return gzip.NewReader(r)
 	case Snappy:
-		return snappy.NewReader(r), nil
+		return io.NopCloser(snappy.NewReader(r)), nil
 	case Zstd:
 		options := []zstd.DOption{}
 		if cfg.ZStdDecodeConcurrency > 0 {
 			options = append(options, zstd.WithDecoderConcurrency(cfg.ZStdDecodeConcurrency))
 		}
-		return zstd.NewReader(r, options...)
+		decoder, err := zstd.NewReader(r, options...)
+		if err != nil {
+			return nil, err
+		}
+		return decoder.IOReadCloser(), nil
 	default:
 		return nil, nil
 	}

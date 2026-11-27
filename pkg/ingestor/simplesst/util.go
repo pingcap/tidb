@@ -262,17 +262,37 @@ func GetAllFileNames(
 	store storeapi.Storage,
 	nonPartitionedDirs ...string,
 ) ([]string, error) {
+	var data []string
+	err := WalkFiles(ctx, store, func(path string) error {
+		data = append(data, path)
+		return nil
+	}, nonPartitionedDirs...)
+	if err != nil {
+		return nil, err
+	}
+	// in case the external storage does not guarantee the order of walk
+	sort.Strings(data)
+	return data, nil
+}
+
+// WalkFiles calls fn for each file with the given non-partitioned dirs.
+// See GetAllFileNames for the directory layout. Files are visited in storage walk
+// order, and an error from fn stops the walk.
+func WalkFiles(
+	ctx context.Context,
+	store storeapi.Storage,
+	fn func(path string) error,
+	nonPartitionedDirs ...string,
+) error {
 	if len(nonPartitionedDirs) == 0 {
-		return nil, nil
+		return nil
 	}
 	nonPartitionedDirSet := make(map[string]struct{}, len(nonPartitionedDirs))
 	for _, dir := range nonPartitionedDirs {
 		nonPartitionedDirSet[dir] = struct{}{}
 	}
 
-	var data []string
-
-	err := store.WalkDir(ctx,
+	return store.WalkDir(ctx,
 		&storeapi.WalkOption{},
 		func(path string, size int64) error {
 			// extract the first dir
@@ -284,8 +304,7 @@ func GetAllFileNames(
 
 			firstDir := bs[:firstIdx]
 			if _, ok := nonPartitionedDirSet[string(firstDir)]; ok {
-				data = append(data, path)
-				return nil
+				return fn(path)
 			}
 
 			if !IsValidPartition(firstDir) {
@@ -298,14 +317,8 @@ func GetAllFileNames(
 			secondDir := path[firstIdx+1 : firstIdx+1+secondIdx]
 
 			if _, ok := nonPartitionedDirSet[secondDir]; ok {
-				data = append(data, path)
+				return fn(path)
 			}
 			return nil
 		})
-	if err != nil {
-		return nil, err
-	}
-	// in case the external storage does not guarantee the order of walk
-	sort.Strings(data)
-	return data, nil
 }

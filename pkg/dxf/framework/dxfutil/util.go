@@ -58,7 +58,7 @@ func AcquireTaskRuntime(
 
 func releaseTaskRuntime(runtime sqlsvrapi.Runtime) {
 	if hdl, ok := runtime.(sqlsvrapi.KSRuntimeHandle); ok {
-		hdl.Release()
+		hdl.Release(false)
 	}
 }
 

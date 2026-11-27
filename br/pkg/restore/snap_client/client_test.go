@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"net"
 	"slices"
 	"sort"
 	"strconv"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -46,10 +48,17 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	"go.uber.org/goleak"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 var mc *mock.Cluster
@@ -120,8 +129,9 @@ func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	sourceDB := &metautil.Database{Info: &model.DBInfo{
-		ID:   100,
-		Name: ast.NewCIStr("route_source"),
+		ID:       100,
+		Name:     ast.NewCIStr("route_source"),
+		ReadOnly: true,
 	}}
 	targetDB := sourceDB.Info.Clone()
 	targetDB.Name = ast.NewCIStr("route_target")
@@ -129,6 +139,10 @@ func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
 		Source: sourceDB,
 		Target: targetDB,
 	}}))
+
+	createdDB, ok := m.Domain.InfoSchema().SchemaByName(targetDB.Name)
+	require.True(t, ok)
+	require.True(t, createdDB.ReadOnly, "restore must preserve the source database read-only state")
 
 	timestampField := types.NewFieldType(mysql.TypeTimestamp)
 	source := &metautil.Table{
@@ -174,6 +188,32 @@ func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
 	require.Equal(t, "source_table", source.Info.Name.O)
 	require.True(t, source.Info.TTLInfo.Enable)
 	require.True(t, targetInfo.TTLInfo.Enable)
+	sourceSequence := &metautil.Table{DB: sourceDB.Info, Info: &model.TableInfo{
+		ID: 102, Name: ast.NewCIStr("source_sequence"), State: model.StatePublic,
+		Sequence: &model.SequenceInfo{Start: 1, MinValue: 1, MaxValue: 1000, Increment: 1}, AutoIncID: 41,
+	}}
+	targetSequence := sourceSequence.Info.Clone()
+	targetSequence.Name = ast.NewCIStr("target_sequence")
+	_, err = client.AllocTableIDs(ctx, []*metautil.Table{sourceSequence}, false, false, nil)
+	require.NoError(t, err)
+	_, err = client.CreateTablesWithPlan(ctx, []*restoreutils.TableRestorePlan{{Source: sourceSequence, TargetDB: targetDB, TargetInfo: targetSequence}}, 0)
+	require.NoError(t, err)
+	reader := testkit.NewTestKit(t, m.Storage)
+	reader.MustGetErrCode("insert into route_target.target_table values (now())", 3989)
+	require.ErrorContains(t, reader.QueryToErr("select nextval(route_target.target_sequence)"), "read only mode")
+	restoreSession, err := gluetidb.New().CreateSession(m.Storage)
+	require.NoError(t, err)
+	defer restoreSession.Close()
+	// Internal sessions do not inherit a restore operation's scoped authorization.
+	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	rs, err := restoreSession.GetSessionCtx().GetSQLExecutor().ExecuteInternal(internalCtx, "do setval(route_target.target_sequence, 99)")
+	if err == nil && rs != nil {
+		err = rs.Next(internalCtx, rs.NewChunk(nil))
+		require.NoError(t, rs.Close())
+	}
+	require.ErrorContains(t, err, "read only mode")
+	reader.MustExec("alter database route_target read only = 0")
+	reader.MustQuery("select nextval(route_target.target_sequence)").Check(testkit.Rows("42"))
 }
 
 func getStartedMockedCluster(t *testing.T) *mock.Cluster {
@@ -777,4 +817,98 @@ func TestGetMinUserTableID(t *testing.T) {
 		generateMetautilTable("test2", 5, 6),
 	})
 	require.Equal(t, int64(2), minUserTableID)
+}
+
+type mockImportPDClient struct {
+	pd.Client
+	stores []*metapb.Store
+}
+
+func (m *mockImportPDClient) WithCallerComponent(caller.Component) pd.Client {
+	return m
+}
+
+func (m *mockImportPDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
+	return m.stores, nil
+}
+
+func (m *mockImportPDClient) GetStore(_ context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
+	for _, store := range m.stores {
+		if store.GetId() == storeID {
+			return store, nil
+		}
+	}
+	return nil, errors.Errorf("store %d not found", storeID)
+}
+
+type fakeImportSSTServer struct {
+	import_sstpb.UnimplementedImportSSTServer
+}
+
+func (*fakeImportSSTServer) MultiIngest(context.Context, *import_sstpb.MultiIngestRequest) (*import_sstpb.IngestResponse, error) {
+	return &import_sstpb.IngestResponse{}, nil
+}
+
+func (*fakeImportSSTServer) BatchDownload(context.Context, *import_sstpb.DownloadRequest) (*import_sstpb.DownloadResponse, error) {
+	return &import_sstpb.DownloadResponse{}, nil
+}
+
+func TestSnapClientCloseClosesImporterWithoutRestorer(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	srv := grpc.NewServer()
+	import_sstpb.RegisterImportSSTServer(srv, &fakeImportSSTServer{})
+	serveDone := make(chan struct{})
+	go func() {
+		defer close(serveDone)
+		_ = srv.Serve(lis)
+	}()
+	defer func() {
+		srv.Stop()
+		<-serveDone
+	}()
+
+	baseline := goleak.IgnoreCurrent()
+
+	addr := lis.Addr().String()
+	pdCli := &mockImportPDClient{
+		Client: mc.PDClient,
+		stores: []*metapb.Store{
+			{Id: 1, Address: addr},
+			{Id: 2, Address: addr},
+			{Id: 3, Address: addr},
+		},
+	}
+
+	keepaliveCfg := keepalive.ClientParameters{
+		Time:                10 * time.Second,
+		Timeout:             3 * time.Second,
+		PermitWithoutStream: true,
+	}
+	client := snapclient.NewRestoreClient(pdCli, nil, nil, keepaliveCfg)
+	client.SetConcurrencyPerStore(1)
+
+	err = client.LoadSchemaIfNeededAndInitClient(
+		context.Background(),
+		&backuppb.BackupMeta{IsRawKv: true},
+		&backuppb.StorageBackend{},
+		nil,
+		false,
+		nil,
+		nil,
+		false,
+		true,
+		false,
+	)
+	require.NoError(t, err)
+
+	// Closing SnapClient before GetRestorer initializes rc.restorer must still close
+	// rc.importer and its cached gRPC connections (e.g., checkpoint resume jumping straight
+	// to index repair without restoring SST files). Calling Close again must also be safe.
+	client.Close()
+	client.Close()
+	srv.Stop()
+	<-serveDone
+
+	require.NoError(t, goleak.Find(baseline))
 }

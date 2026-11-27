@@ -169,6 +169,8 @@ const (
 	TiDBMViewRefreshAlertTableID = ReservedGlobalIDUpperBound - 67
 	// TiDBMLogPurgeHistTableID is the table ID of `tidb_mlog_purge_hist`.
 	TiDBMLogPurgeHistTableID = ReservedGlobalIDUpperBound - 68
+	// TiDBMViewFastRefreshSourceInfoTableID is the table ID of `tidb_mview_fast_refresh_source_info`.
+	TiDBMViewFastRefreshSourceInfoTableID = ReservedGlobalIDUpperBound - 69
 )
 
 // IsReservedID checks if the given ID is a reserved global ID.

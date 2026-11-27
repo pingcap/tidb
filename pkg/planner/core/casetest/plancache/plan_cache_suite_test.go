@@ -1936,6 +1936,38 @@ func TestPlanCacheDirtyTables(t *testing.T) {
 			tk.MustExec(`drop table t1, t2`)
 		}
 	}
+
+	t.Run("rename_table", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set session transaction_isolation = 'REPEATABLE-READ'")
+		tk.MustExec("set session tidb_enable_prepared_plan_cache = 1")
+		tk.MustExec("create table t (a int)")
+		tk.MustExec("create table t_new (a int)")
+		tk.MustExec("insert into t values (1)")
+		tk.MustExec("insert into t_new values (2)")
+		tk.MustExec("prepare s from 'select a from t where a < ? order by a'")
+		tk.MustExec("set @a = 10")
+		tk.MustQuery("execute s using @a").Check(testkit.Rows("1"))
+		tk.MustQuery("execute s using @a").Check(testkit.Rows("1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL.MustExec("use test")
+		tkDDL.MustExec("rename table t to t_old")
+		tkDDL.MustExec("rename table t_new to t")
+
+		tk.MustExec("begin")
+		tk.MustQuery("execute s using @a").Check(testkit.Rows("2"))
+		tk.MustQuery("execute s using @a").Check(testkit.Rows("2"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("insert into t values (3)")
+		tk.MustQuery("execute s using @a").Check(testkit.Rows("2", "3"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		tk.MustQuery("execute s using @a").Check(testkit.Rows("2", "3"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("rollback")
+	})
 }
 
 func TestInstancePlanCacheAcrossSession(t *testing.T) {
@@ -1959,6 +1991,73 @@ func TestInstancePlanCacheAcrossSession(t *testing.T) {
 	tk2.MustExecWithContext(ctx, `set @a=4`)
 	tk2.MustQueryWithContext(ctx, `execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`, `3`))
 	tk2.MustQueryWithContext(ctx, `select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	t.Run("sql-calc-found-rows", testSQLCalcFoundRowsConcurrentInstanceCache)
+}
+
+func testSQLCalcFoundRowsConcurrentInstanceCache(t *testing.T) {
+	ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyEnableInstancePlanCache{}, true)
+	store := testkit.CreateMockStore(t)
+	setup := testkit.NewTestKit(t, store)
+	setup.MustExec("use test")
+	setup.MustExec("create table cache_found_rows(id int primary key)")
+	setup.MustExec("insert into cache_found_rows values(1),(2),(3),(4),(5)")
+	for _, tc := range []struct{ name, sql string }{
+		{"ordinary", "select SQL_CALC_FOUND_ROWS id from cache_found_rows where id>=? order by id limit 1"},
+		{"inline-cte", "with c as (select id from cache_found_rows where id>=?) select SQL_CALC_FOUND_ROWS id from c order by id limit 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sessions := []*testkit.TestKit{testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)}
+			for i, tk := range sessions {
+				tk.MustExecWithContext(ctx, "use test")
+				tk.MustExecWithContext(ctx, "set tidb_enable_prepared_plan_cache=ON")
+				tk.MustExecWithContext(ctx, "set tidb_enable_plan_cache_for_subquery=ON")
+				tk.MustExecWithContext(ctx, "prepare st from '"+tc.sql+"'")
+				tk.MustExecWithContext(ctx, "set @cut=1")
+				tk.MustQueryWithContext(ctx, "execute st using @cut").Check(testkit.Rows("1"))
+				// The second session must reuse the first session's cached plan.
+				tk.MustQueryWithContext(ctx, "select found_rows(),@@last_plan_from_cache").Check(testkit.Rows(fmt.Sprintf("5 %d", i)))
+			}
+			start := make(chan struct{})
+			results := make(chan error, len(sessions))
+			for i, tk := range sessions {
+				go func() {
+					<-start
+					run := func(sql string) ([][]string, error) {
+						rs, err := tk.ExecWithContext(ctx, sql)
+						if err != nil || rs == nil {
+							return nil, err
+						}
+						return session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+					}
+					for step := range 30 {
+						cut := 1 + i*2 + step%2
+						if _, err := run(fmt.Sprintf("set @cut=%d", cut)); err != nil {
+							results <- err
+							return
+						}
+						rows, err := run("execute st using @cut")
+						if err != nil || fmt.Sprint(rows) != fmt.Sprint(testkit.Rows(fmt.Sprint(cut))) {
+							results <- fmt.Errorf("session %d cut=%d data=%v error=%v", i, cut, rows, err)
+							return
+						}
+						actual, err := run("select found_rows(),@@last_plan_from_cache")
+						want := testkit.Rows(fmt.Sprintf("%d 1", 6-cut))
+						if err != nil || fmt.Sprint(actual) != fmt.Sprint(want) {
+							results <- fmt.Errorf("session %d cut=%d total/cache=%v want=%v error=%v", i, cut, actual, want, err)
+							return
+						}
+					}
+					results <- nil
+				}()
+			}
+			close(start)
+			var runErr error
+			for range sessions {
+				runErr = errors.Join(runErr, <-results)
+			}
+			require.NoError(t, runErr)
+		})
+	}
 }
 
 func runPreparedPlanCacheForUpdateInTxn(t *testing.T, tk *testkit.TestKit) {

@@ -208,10 +208,18 @@ func (f *AnalysisJobFactory) CalculateChangePercentage(tblStats *statistics.Tabl
 // CalculateTableSize calculates the size of the table.
 func (*AnalysisJobFactory) CalculateTableSize(tblStats *statistics.Table) float64 {
 	tblCnt := float64(tblStats.RealtimeCount)
-	colCnt := float64(tblStats.ColAndIdxExistenceMap.ColNum())
-	intest.Assert(colCnt != 0, "Column count should not be 0")
-
-	return tblCnt * colCnt
+	intest.Assert(tblCnt >= 0, "Table count should not be negative")
+	intest.Assert(tblStats.ColAndIdxExistenceMap != nil, "ColAndIdxExistenceMap should not be nil")
+	if tblStats.ColAndIdxExistenceMap == nil {
+		return tblCnt
+	}
+	// The map is empty if the stats were loaded before the DDL event wrote the column records.
+	// Fall back to row count only, so that the size does not need table info.
+	colCnt := tblStats.ColAndIdxExistenceMap.ColNum()
+	if colCnt == 0 {
+		return tblCnt
+	}
+	return tblCnt * float64(colCnt)
 }
 
 // GetTableLastAnalyzeDuration gets the last analyze duration of the table.
@@ -276,8 +284,13 @@ func (f *AnalysisJobFactory) CalculateIndicatorsForPartitions(
 	totalSize := 0.0
 	count := 0.0
 	partitionIDs = make(map[int64]struct{}, len(partitionStats))
-	cols := float64(globalStats.ColAndIdxExistenceMap.ColNum())
-	intest.Assert(cols != 0, "Column count should not be 0")
+	intest.Assert(globalStats.ColAndIdxExistenceMap != nil, "ColAndIdxExistenceMap should not be nil")
+	// The map is empty if the stats were loaded before the DDL event wrote the column records.
+	// Fall back to row count only, so that the size does not need table info.
+	cols := 1.0
+	if m := globalStats.ColAndIdxExistenceMap; m != nil && m.ColNum() != 0 {
+		cols = float64(m.ColNum())
+	}
 	totalLastAnalyzeDuration := time.Duration(0)
 
 	for pIDAndName, tblStats := range partitionStats {
@@ -360,13 +373,13 @@ func NewPartitionIDAndName(name string, id int64) PartitionIDAndName {
 
 // GetPartitionStats gets the partition stats.
 func GetPartitionStats(
-	statsHandle statstypes.StatsHandle,
+	tableStats statstypes.NonPseudoPhysicalTableStatsGetter,
 	defs []model.PartitionDefinition,
 ) map[PartitionIDAndName]*statistics.Table {
 	partitionStats := make(map[PartitionIDAndName]*statistics.Table, len(defs))
 
 	for _, def := range defs {
-		stats, found := statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
+		stats, found := tableStats.GetNonPseudoPhysicalTableStats(def.ID)
 		// Ignore the partition if it's not ready to analyze.
 		if !found || !stats.IsEligibleForAnalysis() {
 			continue

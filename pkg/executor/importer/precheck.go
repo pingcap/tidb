@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -81,7 +82,8 @@ func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionct
 	}
 
 	conn := se.GetSQLExecutor()
-	if e.DataSourceType == DataSourceTypeFile {
+	// Only imports that create an import job can conflict with an active one.
+	if e.DataSourceType == DataSourceTypeFile || kerneltype.IsNextGen() {
 		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)
 		if err != nil {
 			return errors.Trace(err)
@@ -89,10 +91,10 @@ func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionct
 		if cnt > 0 {
 			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there is active job on the target table already")
 		}
-		if checkTotalFileSize {
-			if err := e.CheckImportDataSize(); err != nil {
-				return err
-			}
+	}
+	if checkTotalFileSize && e.DataSourceType == DataSourceTypeFile {
+		if err := e.CheckImportDataSize(); err != nil {
+			return err
 		}
 	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {

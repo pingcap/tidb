@@ -1966,7 +1966,7 @@ func (r *SQLDigestTextRetriever) updateDigestInfo(queryResult map[string]string)
 func (r *SQLDigestTextRetriever) unresolvedDigests() []any {
 	keys := make([]string, 0, len(r.SQLDigestsMap))
 	for digest, text := range r.SQLDigestsMap {
-		if len(text) == 0 {
+		if len(digest) > 0 && len(text) == 0 {
 			keys = append(keys, digest)
 		}
 	}
@@ -1981,8 +1981,8 @@ func (r *SQLDigestTextRetriever) unresolvedDigests() []any {
 // hasUnresolvedDigests reports whether any digest still needs a SQL text, without the
 // slice allocation and sorting of unresolvedDigests.
 func (r *SQLDigestTextRetriever) hasUnresolvedDigests() bool {
-	for _, text := range r.SQLDigestsMap {
-		if len(text) == 0 {
+	for digest, text := range r.SQLDigestsMap {
+		if len(digest) > 0 && len(text) == 0 {
 			return true
 		}
 	}
@@ -2392,6 +2392,16 @@ func IsColOpCol(sf *ScalarFunction) (_, _ *Column, _ bool) {
 		return col1, col2, ok1 && ok2
 	}
 	return nil, nil, false
+}
+
+// JoinKeyCollationCompatible reports whether equality under the join condition
+// can use the column's collation to establish uniqueness.
+func JoinKeyCollationCompatible(eq *ScalarFunction, col *Column) bool {
+	if !collate.NewCollationEnabled() || col.RetType.EvalType() != types.ETString {
+		return true
+	}
+	_, comparisonCollation := eq.CharsetAndCollation()
+	return collate.CompatibleCollate(comparisonCollation, col.RetType.GetCollate())
 }
 
 // ExtractColumnsFromColOpCol is to extract columns from col op col condition.

@@ -245,7 +245,7 @@ func newCrossKeyspaceStartCase(t *testing.T, taskID int64, taskKey string) *cros
 
 func (tc *crossKeyspaceStartCase) expectRuntimeAcquiredAndReleased() *sqlsvrapimock.MockKSRuntimeHandle {
 	runtimeHandle := newRuntimeHandle(tc.ctrl, tc.taskStore)
-	runtimeHandle.EXPECT().Release()
+	runtimeHandle.EXPECT().Release(false)
 	tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.holderID()).Return(runtimeHandle, nil)
 	return runtimeHandle
 }
@@ -679,7 +679,7 @@ func TestStartTaskExecutorResolveTaskRuntimeFromTaskKeyspace(t *testing.T) {
 
 	taskStore := &storeWithKS{ks: taskKS}
 	runtimeHandle := newRuntimeHandle(ctrl, taskStore)
-	runtimeHandle.EXPECT().Release()
+	runtimeHandle.EXPECT().Release(false)
 	server := sqlsvrapimock.NewMockServer(ctrl)
 	server.EXPECT().AcquireKSRuntime(taskKS, dxfutil.GenHolderID("executor", task.ID)).Return(runtimeHandle, nil)
 

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	isolation_metrics "github.com/pingcap/tidb/pkg/sessiontxn/isolation/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -215,13 +216,14 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 }
 
 func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx context.Context, lockErr error) (sessiontxn.StmtErrorAction, error) {
-	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	sessVars := p.sctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
 	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {
 		logutil.Logger(p.ctx).Info("single statement deadlock, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("lockTS", deadlock.LockTs),
-			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
+			zap.Stringer("lockKey", redact.Stringer(sessVars.EnableRedactLog, kv.Key(deadlock.LockKey))),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
 		retryable = true
 
@@ -233,7 +235,6 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx co
 			return sessiontxn.ErrorAction(err)
 		}
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
-		sessVars := p.sctx.GetSessionVars()
 		waitTime := time.Since(sessVars.StmtCtx.GetLockWaitStartTime())
 		if waitTime.Milliseconds() >= sessVars.LockWaitTimeout {
 			return sessiontxn.ErrorAction(tikverr.ErrLockWaitTimeout)

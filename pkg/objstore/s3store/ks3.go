@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -69,6 +70,10 @@ func NewKS3Storage(
 	backend *backuppb.S3,
 	opts *storeapi.Options,
 ) (obj *KS3Storage, errRet error) {
+	if _, err := url.Parse(backend.Endpoint); err != nil {
+		// Discard the URL-bearing parser error before entering the SDK.
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid KS3 endpoint URL")
+	}
 	qs := *backend
 	awsConfig := aws.DefaultConfig
 	awsConfig.S3ForcePathStyle = qs.ForcePathStyle
@@ -328,11 +333,10 @@ func (rs *KS3Storage) DeleteFile(ctx context.Context, file string) error {
 
 // DeleteFiles delete the files in batch in s3 storage.
 func (rs *KS3Storage) DeleteFiles(ctx context.Context, files []string) error {
-	const s3DeleteObjectsLimit = 1000
 	for len(files) > 0 {
 		batch := files
-		if len(batch) > s3DeleteObjectsLimit {
-			batch = batch[:s3DeleteObjectsLimit]
+		if len(batch) > storeapi.S3DeleteObjectsLimit {
+			batch = batch[:storeapi.S3DeleteObjectsLimit]
 		}
 		objects := make([]*s3.ObjectIdentifier, 0, len(batch))
 		for _, file := range batch {
@@ -491,7 +495,7 @@ func (rs *KS3Storage) open(
 	ctx context.Context,
 	path string,
 	startOffset, endOffset int64,
-) (io.ReadCloser, s3like.RangeInfo, error) {
+) (_ io.ReadCloser, _ s3like.RangeInfo, retErr error) {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + path),
@@ -519,6 +523,12 @@ func (rs *KS3Storage) open(
 	if err != nil {
 		return nil, s3like.RangeInfo{}, errors.Trace(err)
 	}
+	defer func() {
+		// The caller takes ownership of the body only after validation succeeds.
+		if retErr != nil && result.Body != nil {
+			_ = result.Body.Close()
+		}
+	}()
 
 	var r s3like.RangeInfo
 	// Those requests without a `Range` will have no `ContentRange` in the response,

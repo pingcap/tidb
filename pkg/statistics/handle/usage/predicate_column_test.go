@@ -36,7 +36,7 @@ func TestCleanupPredicateColumns(t *testing.T) {
 
 	// Dump the statistics usage.
 	h := dom.StatsHandle()
-	err := h.DumpColStatsUsageToKV()
+	err := h.Usage().DumpColStatsUsageToKV()
 	require.NoError(t, err)
 
 	// Check the statistics usage.
@@ -49,7 +49,7 @@ func TestCleanupPredicateColumns(t *testing.T) {
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	columns, err := h.GetPredicateColumns(tbl.Meta().ID)
+	columns, err := h.Usage().GetPredicateColumns(tbl.Meta().ID)
 	require.NoError(t, err)
 	require.Len(t, columns, 1)
 }
@@ -66,7 +66,7 @@ func TestAnalyzeTableWithPredicateColumns(t *testing.T) {
 
 	// Dump the statistics usage.
 	h := dom.StatsHandle()
-	err := h.DumpColStatsUsageToKV()
+	err := h.Usage().DumpColStatsUsageToKV()
 	require.NoError(t, err)
 
 	// Set tidb_analyze_column_options to PREDICATE.
@@ -82,7 +82,7 @@ func TestAnalyzeTableWithPredicateColumns(t *testing.T) {
 	tk.MustQuery("select * from t where b > 1").Check(testkit.Rows("2 2 2", "3 3 3"))
 
 	// Dump the statistics usage.
-	err = h.DumpColStatsUsageToKV()
+	err = h.Usage().DumpColStatsUsageToKV()
 	require.NoError(t, err)
 
 	// Analyze again.
@@ -116,7 +116,7 @@ func TestAnalyzeTableWithTiDBPersistAnalyzeOptionsEnabled(t *testing.T) {
 
 	// Dump the statistics usage.
 	h := dom.StatsHandle()
-	err := h.DumpColStatsUsageToKV()
+	err := h.Usage().DumpColStatsUsageToKV()
 	require.NoError(t, err)
 
 	// Analyze table with specified columns.
@@ -164,7 +164,7 @@ func TestAnalyzeTableWithTiDBPersistAnalyzeOptionsDisabled(t *testing.T) {
 
 	// Dump the statistics usage.
 	h := dom.StatsHandle()
-	err := h.DumpColStatsUsageToKV()
+	err := h.Usage().DumpColStatsUsageToKV()
 	require.NoError(t, err)
 
 	// Analyze table with specified columns.
@@ -193,7 +193,7 @@ func TestAnalyzeNoPredicateColumnsWithIndexes(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	// Dump the statistics usage.
 	h := dom.StatsHandle()
-	err := h.DumpColStatsUsageToKV()
+	err := h.Usage().DumpColStatsUsageToKV()
 	require.NoError(t, err)
 
 	// Analyze table.
@@ -222,7 +222,7 @@ func TestAnalyzeWithNoPredicateColumnsAndNoIndexes(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	// Dump the statistics usage.
 	h := dom.StatsHandle()
-	err := h.DumpColStatsUsageToKV()
+	err := h.Usage().DumpColStatsUsageToKV()
 	require.NoError(t, err)
 
 	// Check stats_meta first.
@@ -252,7 +252,7 @@ func TestAnalyzeNoPredicateColumnsWithPrimaryKey(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	// Dump the statistics usage.
 	h := dom.StatsHandle()
-	err := h.DumpColStatsUsageToKV()
+	err := h.Usage().DumpColStatsUsageToKV()
 	require.NoError(t, err)
 
 	// Analyze table.

@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	tableinfo "github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -53,16 +52,14 @@ const (
 	initStatsPercentageInterval = float64(33)
 )
 
-func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) int64 {
+func (*Handle) initStatsMeta4Chunk(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache *cache.Cache, iter *chunk.Iterator4Chunk) int64 {
 	var (
 		physicalID    int64
 		maxPhysicalID int64
 	)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
-		// Use the init-stats helper so InfoSchema V1 avoids the expensive
-		// TableItemByPartitionID full partition scan when filtering stats_meta.
-		if _, found := h.TableItemByIDForInitStats(is, physicalID); !found {
+		if _, found := snapshotTableInfoGetter.TableItemByID(physicalID); !found {
 			// The table corresponding to this physical ID has been dropped but the stats meta has not yet been garbage collected.
 			continue
 		}
@@ -105,7 +102,7 @@ func genInitStatsMetaSQL(tableIDs ...int64) string {
 	return selectPrefix + whereClausePrefix + inListStr + whereClauseSuffix
 }
 
-func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
+func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, snapshotTableInfoGetter *util.SnapshotTableInfoGetter, tableIDs ...int64) (*cache.Cache, int64, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	sql := genInitStatsMetaSQL(tableIDs...)
 	rc, err := util.Exec(sctx, sql)
@@ -113,7 +110,7 @@ func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, is 
 		return nil, 0, errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	cache, err := cache.NewStatsCacheImpl(h)
+	cache, err := cache.New(h.pool, h.lease, h.tables)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -128,13 +125,13 @@ func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, is 
 		if req.NumRows() == 0 {
 			break
 		}
-		chunkMax := h.initStatsMeta4Chunk(is, cache, iter)
+		chunkMax := h.initStatsMeta4Chunk(snapshotTableInfoGetter, cache, iter)
 		maxPhysicalID = max(maxPhysicalID, chunkMax)
 	}
 	return cache, maxPhysicalID, nil
 }
 
-func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsHistograms4ChunkLite(cache *cache.Cache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID := row.GetInt64(0)
@@ -149,7 +146,7 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 			}
 			// optimization: doesn't need to copy and can do in place changes since
 			// 1. initStatsHistograms4ChunkLite is a single thread populating entries in a local cache, and later the
-			// cache will be called h.Replace(cache) to be the global cache
+			// cache will be called h.cache.Replace(cache) to be the global cache
 			// 2. following logic only modifies ColAndIdxExistenceMap, so it won't impact the cache memory cost
 			// calculation
 		}
@@ -183,7 +180,7 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 	}
 }
 
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, isCacheFull bool) {
+func (*Handle) initStatsHistograms4Chunk(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache *cache.Cache, iter *chunk.Iterator4Chunk, isCacheFull bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("panic when initStatsHistograms4Chunk", zap.Any("r", r),
@@ -210,7 +207,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			table = table.CopyAs(statistics.BothMapsWritable)
 			// Fetch table info only once per table instead of once per row
-			tblInfo, ok = h.TableInfoByIDForInitStats(is, tblID)
+			tblInfo, ok = snapshotTableInfoGetter.TableInfoByID(tblID)
 			if !ok {
 				// Table not found - likely dropped but stats metadata not yet garbage collected. Skip loading stats for this table.
 				statslogutil.StatsSampleLogger().Warn("table info not found during stats initialization, skipping", zap.Int64("physicalID", table.PhysicalID))
@@ -382,7 +379,7 @@ func genInitStatsHistogramsSQL(options genHistSQLOptions) string {
 	return selectPrefix + " where table_id in (" + inListStr + ")" + orderSuffix
 }
 
-func (h *Handle) initStatsHistogramsLite(ctx context.Context, sctx sessionctx.Context, cache statstypes.StatsCache, tableIDs ...int64) error {
+func (h *Handle) initStatsHistogramsLite(ctx context.Context, sctx sessionctx.Context, cache *cache.Cache, tableIDs ...int64) error {
 	sql := genInitStatsHistogramsSQL(newGenHistSQLOptionsForTableIDs(tableIDs))
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
@@ -408,17 +405,17 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, sctx sessionctx.Co
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
-	return h.Pool.SPool().WithSession(func(se *syssession.Session) error {
+func (h *Handle) initStatsHistogramsByPaging(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache *cache.Cache, task initstats.Task, totalMemory uint64) error {
+	return h.pool.SPool().WithSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
-			return h.initStatsHistogramsByPagingWithSCtx(sctx, is, cache, task, totalMemory)
+			return h.initStatsHistogramsByPagingWithSCtx(sctx, snapshotTableInfoGetter, cache, task, totalMemory)
 		})
 	})
 }
 
 // initStatsHistogramsByPagingWithSCtx contains the core business logic for initStatsHistogramsByPaging.
 // This method preserves git blame history by keeping the original logic intact.
-func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
+func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache *cache.Cache, task initstats.Task, totalMemory uint64) error {
 	sql := genInitStatsHistogramsSQL(newGenHistSQLOptionsForPaging([2]int64{task.StartTid, task.EndTid}))
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
@@ -436,7 +433,7 @@ func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, is
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4Chunk(is, cache, iter, isFullCache(cache, totalMemory))
+		h.initStatsHistograms4Chunk(snapshotTableInfoGetter, cache, iter, isFullCache(cache, totalMemory))
 		// The same table may continue in the next chunk. Drain LFU async admission/rejection
 		// before the next chunk reads or mutates it again.
 		cache.WaitForAsyncUpdates()
@@ -514,12 +511,12 @@ func (t tableListStrategy) generateAndSendTasks(worker *initstats.RangeWorker) {
 	}
 }
 
-func (h *Handle) initStatsHistogramsConcurrently(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
+func (h *Handle) initStatsHistogramsConcurrently(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache *cache.Cache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
 	totalTaskCnt := strategy.calculateTotalTaskCnt()
 	ls := initstats.NewRangeWorker(
 		"histogram",
 		func(task initstats.Task) error {
-			return h.initStatsHistogramsByPaging(is, cache, task, totalMemory)
+			return h.initStatsHistogramsByPaging(snapshotTableInfoGetter, cache, task, totalMemory)
 		},
 		concurrency,
 		totalTaskCnt,
@@ -531,7 +528,7 @@ func (h *Handle) initStatsHistogramsConcurrently(is infoschema.InfoSchema, cache
 	return nil
 }
 
-func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, totalMemory uint64, tablesWithBuckets map[int64]struct{}) {
+func (*Handle) initStatsTopN4Chunk(cache *cache.Cache, iter *chunk.Iterator4Chunk, totalMemory uint64, tablesWithBuckets map[int64]struct{}) {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return
 	}
@@ -632,8 +629,8 @@ func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (
 	return tablesWithBuckets, nil
 }
 
-func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
-	return h.Pool.SPool().WithSession(func(se *syssession.Session) error {
+func (h *Handle) initStatsTopNByPaging(cache *cache.Cache, task initstats.Task, totalMemory uint64) error {
+	return h.pool.SPool().WithSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
 			return h.initStatsTopNByPagingWithSCtx(sctx, cache, task, totalMemory)
 		})
@@ -642,7 +639,7 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 
 // initStatsTopNByPagingWithSCtx contains the core business logic for initStatsTopNByPaging.
 // This method preserves git blame history by keeping the original logic intact.
-func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
+func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache *cache.Cache, task initstats.Task, totalMemory uint64) error {
 	// First, get the tables with buckets in this range
 	tablesWithBuckets, err := getTablesWithBucketsInRange(sctx, [2]int64{task.StartTid, task.EndTid})
 	if err != nil {
@@ -674,7 +671,7 @@ func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache st
 	return nil
 }
 
-func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
+func (h *Handle) initStatsTopNConcurrently(cache *cache.Cache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
@@ -697,7 +694,7 @@ func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMem
 	return nil
 }
 
-func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsBuckets4Chunk(cache *cache.Cache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
 	var (
 		hasErr        bool
@@ -754,7 +751,7 @@ func genInitStatsBucketsSQLForIndexes(isPaging bool, tableRange [2]int64) string
 	return selectPrefix + rangeStartClause + rangeEndClause + orderSuffix
 }
 
-func (h *Handle) initStatsBucketsAndCalcPreScalar(cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
+func (h *Handle) initStatsBucketsAndCalcPreScalar(cache *cache.Cache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
@@ -771,8 +768,8 @@ func (h *Handle) initStatsBucketsAndCalcPreScalar(cache statstypes.StatsCache, t
 	return nil
 }
 
-func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task initstats.Task) error {
-	return h.Pool.SPool().WithSession(func(se *syssession.Session) error {
+func (h *Handle) initStatsBucketsByPaging(cache *cache.Cache, task initstats.Task) error {
+	return h.pool.SPool().WithSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
 			return h.initStatsBucketsByPagingWithSCtx(sctx, cache, task)
 		})
@@ -781,7 +778,7 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 
 // initStatsBucketsByPagingWithSCtx contains the core business logic for initStatsBucketsByPaging.
 // This method preserves git blame history by keeping the original logic intact.
-func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache statstypes.StatsCache, task initstats.Task) error {
+func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache *cache.Cache, task initstats.Task) error {
 	sql := genInitStatsBucketsSQLForIndexes(true, [2]int64{task.StartTid, task.EndTid})
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
@@ -807,7 +804,7 @@ func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache
 	return nil
 }
 
-func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
+func (h *Handle) initStatsBucketsConcurrently(cache *cache.Cache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
 	failpoint.Inject("mockBucketsLoadMemoryLimit", func(val failpoint.Value) {
 		if v, ok := val.(int); ok {
 			totalMemory = uint64(v)
@@ -842,7 +839,7 @@ func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, total
 // And to work with auto analyze's needs, we need to read all the tables' stats meta into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
 func (h *Handle) InitStatsLite(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error {
-	return h.Pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
+	return h.pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
 			return h.initStatsLiteWithSession(ctx, sctx, is, tableIDs...)
 		})
@@ -862,7 +859,8 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
 	start := time.Now()
-	cache, _, err := h.initStatsMeta(ctx, sctx, is, tableIDs...)
+	snapshotTableInfoGetter := util.NewSnapshotTableInfoGetter(is)
+	cache, _, err := h.initStatsMeta(ctx, sctx, snapshotTableInfoGetter, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -880,15 +878,15 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 	// If tableIDs is empty, it means we load all the tables' stats meta and histograms.
 	// So we can replace the global cache with the new cache.
 	if len(tableIDs) == 0 {
-		h.Replace(cache)
+		h.cache.Replace(cache)
 	} else {
 		tables := cache.Values()
 		for _, table := range tables {
 			intest.Assert(table != nil, "table should not be nil")
-			h.Put(table.PhysicalID, table)
+			h.cache.Put(table.PhysicalID, table)
 		}
 		// Targeted refresh publishes refreshed tables to global LFU; make async admissions visible before returning.
-		h.StatsCache.WaitForAsyncUpdates()
+		h.cache.WaitForAsyncUpdates()
 		// Do not forget to close the new cache. Otherwise it would cause the goroutine leak issue.
 		cache.Close()
 	}
@@ -903,7 +901,7 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
 // If tableIDs is provided, we only load the stats for the specified tables.
 func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error {
-	return h.Pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
+	return h.pool.SPool().WithForceBlockGCSession(ctx, func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
 			return h.initStatsWithSession(ctx, sctx, is, tableIDs...)
 		})
@@ -931,7 +929,8 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 	failpoint.Inject("beforeInitStats", func() {})
 
 	start := time.Now()
-	cache, maxTableID, err := h.initStatsMeta(ctx, sctx, is, tableIDs...)
+	snapshotTableInfoGetter := util.NewSnapshotTableInfoGetter(is)
+	cache, maxTableID, err := h.initStatsMeta(ctx, sctx, snapshotTableInfoGetter, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -944,7 +943,7 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 	concurrency := initstats.GetConcurrency()
 	strategy := newLoadStrategy(maxTableID, tableIDs)
 	start = time.Now()
-	err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, concurrency, strategy)
+	err = h.initStatsHistogramsConcurrently(snapshotTableInfoGetter, cache, totalMemory, concurrency, strategy)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -970,15 +969,15 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 	// If tableIDs is empty, it means we load all the tables' stats.
 	// So we can replace the global cache with the new cache.
 	if len(tableIDs) == 0 {
-		h.Replace(cache)
+		h.cache.Replace(cache)
 	} else {
 		tables := cache.Values()
 		for _, table := range tables {
 			intest.Assert(table != nil, "table should not be nil")
-			h.Put(table.PhysicalID, table)
+			h.cache.Put(table.PhysicalID, table)
 		}
 		// Targeted refresh publishes refreshed tables to global LFU; make async admissions visible before returning.
-		h.StatsCache.WaitForAsyncUpdates()
+		h.cache.WaitForAsyncUpdates()
 		// Do not forget to close the new cache. Otherwise it would cause the goroutine leak issue.
 		cache.Close()
 	}
@@ -986,9 +985,9 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 }
 
 // IsFullCacheFunc is whether the cache is full or not. but we can only change it when to test
-var IsFullCacheFunc func(cache statstypes.StatsCache, total uint64) bool = isFullCache
+var IsFullCacheFunc func(cache *cache.Cache, total uint64) bool = isFullCache
 
-func isFullCache(cache statstypes.StatsCache, total uint64) bool {
+func isFullCache(cache *cache.Cache, total uint64) bool {
 	memQuota := vardef.StatsCacheMemQuota.Load()
 	return (uint64(cache.MemConsumed()) >= total/4) || (cache.MemConsumed() >= memQuota && memQuota != 0)
 }

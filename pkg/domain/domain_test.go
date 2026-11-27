@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -239,6 +240,17 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	err = counter.Write(pb)
 	require.NoError(t, err)
 	require.Equal(t, float64(2), pb.GetCounter().GetValue())
+
+	// The domain has no stats handle, so each tick of gcStatsWorker panics on a nil pointer.
+	// The worker recovers each panic and keeps running, so stats stay marked as updating.
+	dom.statsLease = 10 * time.Millisecond
+	dom.statsOwner = owner.NewMockManager(context.Background(), "test", store, "stats-owner-test")
+	dom.SetStatsUpdating(true)
+	dom.wg.Run(dom.gcStatsWorker, "gcStatsWorker")
+	require.Eventually(t, func() bool {
+		return counter.Write(pb) == nil && pb.GetCounter().GetValue() >= 4
+	}, 5*time.Second, 10*time.Millisecond)
+	require.True(t, dom.StatsUpdating())
 
 	scope := dom.GetScope("status")
 	require.Equal(t, variable.DefaultStatusVarScopeFlag, scope)

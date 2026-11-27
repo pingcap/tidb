@@ -23,6 +23,8 @@ import (
 )
 
 var (
+	// ErrSchemaInReadOnlyMode rejects writes to a read-only database.
+	ErrSchemaInReadOnlyMode = ClassSchema.NewStd(mysql.ErrSchemaInReadOnlyMode)
 	// ErrInvalidWorker means the worker is invalid.
 	ErrInvalidWorker = ClassDDL.NewStd(mysql.ErrInvalidDDLWorker)
 	// ErrNotOwner means we are not owner and can't handle DDL jobs.
@@ -535,6 +537,8 @@ var (
 	ErrInvalidTableAffinity = ClassDDL.NewStd(mysql.ErrInvalidAffinityOption)
 	// ErrForbiddenDDL is returned when a DDL operation is forbidden.
 	ErrForbiddenDDL = ClassDDL.NewStd(mysql.ErrForbiddenDDL)
+	// ErrAccessSystemDBRejected is returned when access system database is rejected.
+	ErrAccessSystemDBRejected = ClassDDL.NewStd(mysql.ErrAccessSysDBRejected)
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.

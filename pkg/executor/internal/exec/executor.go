@@ -62,6 +62,10 @@ type Executor interface {
 	Open(context.Context) error
 	Next(ctx context.Context, req *chunk.Chunk) error
 
+	// FoundRows reports a completed query total, or false to use returned-row counting.
+	// The result set calls it only after successful EOF.
+	FoundRows() (uint64, bool)
+
 	// `Close()` may be called at any time after `Open()` and it may be called with `Next()` at the same time
 	Close() error
 	Schema() *expression.Schema
@@ -321,6 +325,11 @@ func (e *BaseExecutorV2) Close() error {
 // Next fills multiple rows into a chunk.
 func (*BaseExecutorV2) Next(_ context.Context, _ *chunk.Chunk) error {
 	return nil
+}
+
+// FoundRows leaves returned-row counting to the result set by default.
+func (*BaseExecutorV2) FoundRows() (uint64, bool) {
+	return 0, false
 }
 
 // Detach detaches the current executor from the session context.

@@ -188,6 +188,15 @@ func TestTikvRegionPeers(t *testing.T) {
 	}
 
 	tk := testkit.NewTestKit(t, store)
+	for _, condition := range []string{
+		"region_id=-1", "store_id=-1", "region_id=0", "store_id=0",
+		"region_id in (-1, 0)", "store_id in (-1, 0)",
+		"region_id=-1 and store_id=1", "region_id=1 and store_id=-1",
+		"region_id='not-an-id'",
+	} {
+		tk.MustQuery("select * from information_schema.tikv_region_peers where " + condition).Check(testkit.Rows())
+	}
+	tk.MustQuery("select region_id, store_id from information_schema.tikv_region_peers where region_id in (-1, 0, 1) and store_id in (-1, 0, 2)").Check(testkit.Rows("1 2"))
 	for _, cas := range cases {
 		sql := "select * from information_schema.tikv_region_peers"
 		if len(cas.conditions) > 0 {

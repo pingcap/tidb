@@ -16,6 +16,7 @@ package importintotest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -32,8 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -150,7 +152,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		TableID:     tableID1,
 		CreatedBy:   "test_show_job1@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-job/t.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test-show-job/t.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -163,6 +165,40 @@ func (s *mockGCSSuite) TestShowJob() {
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
+	if kerneltype.IsNextGen() {
+		// SHOW RAW IMPORT JOB should return machine-friendly JSON stats for SDK/Lightning.
+		rawRows := s.tk.MustQuery(fmt.Sprintf("show raw import job %d", importer.TestLastImportJobID.Load())).Rows()
+		s.Len(rawRows, 1)
+		rawStatsBytes := []byte(fmt.Sprintf("%s", rawRows[0][2]))
+		var rawStats jobstats.RawStats
+		s.NoError(json.Unmarshal(rawStatsBytes, &rawStats))
+		s.Equal(strconv.Itoa(int(jobInfo.ID)), rawRows[0][0])
+		s.Equal("<nil>", fmt.Sprintf("%v", rawRows[0][1]))
+		s.Equal(jobstats.ContractVersion, rawStats.Version)
+		s.Zero(rawStats.JobID)
+		s.Empty(rawStats.GroupKey)
+		urlExpected, err := url.Parse(jobInfo.Parameters.FileLocation)
+		s.NoError(err)
+		urlGot, err := url.Parse(rawStats.DataSource)
+		s.NoError(err)
+		s.Equal(urlExpected.Query(), urlGot.Query())
+		urlExpected.RawQuery, urlGot.RawQuery = "", ""
+		s.Equal(urlExpected.String(), urlGot.String())
+		s.Equal(utils.EncloseDBAndTable(jobInfo.TableSchema, jobInfo.TableName), rawStats.TargetTable)
+		s.Equal(jobInfo.TableID, rawStats.TableID)
+		s.Equal(jobInfo.Step, rawStats.Phase)
+		s.Equal(jobInfo.Status, rawStats.Status)
+		s.Equal(jobstats.StatusCategoryTerminal, rawStats.StatusCategory)
+		s.True(rawStats.IsCompleted())
+		s.Equal(jobInfo.SourceFileSize, rawStats.SourceFileSizeBytes)
+		s.NotNil(rawStats.ImportedRows)
+		s.Equal(jobInfo.Summary.ImportedRows, *rawStats.ImportedRows)
+		s.NotNil(rawStats.Summary)
+		s.Equal(jobInfo.Summary.ImportedRows, rawStats.Summary.ImportedRows)
+		s.Equal(jobInfo.CreatedBy, rawStats.CreatedBy)
+		s.Nil(rawStats.CurrentStep)
+	}
+
 	// test show job by id using test_show_job2
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job2", Hostname: "localhost"}, nil, nil, nil))
 	result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test-show-job/t.csv?endpoint=%s'`, gcsEndpoint)).Rows()
@@ -174,11 +210,16 @@ func (s *mockGCSSuite) TestShowJob() {
 	jobInfo.TableName = "t2"
 	jobInfo.TableID = tableID2
 	jobInfo.CreatedBy = "test_show_job2@localhost"
-	jobInfo.Parameters.FileLocation = fmt.Sprintf(`gs://test-show-job/t.csv?endpoint=%s`, gcsEndpoint)
+	jobInfo.Parameters.FileLocation = `gs://test-show-job/t.csv?endpoint=xxxxxx`
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	s.Len(rows, 1)
 	s.Equal(result2, rows)
+	if kerneltype.IsNextGen() {
+		rawRows := s.tk.MustQuery("show raw import jobs").Rows()
+		s.Len(rawRows, 1)
+		s.Equal(result2[0][0], rawRows[0][0])
+	}
 
 	// show import jobs with root
 	checkJobsMatch := func(rows [][]any) {
@@ -199,6 +240,17 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	checkJobsMatch(rows)
+	if kerneltype.IsNextGen() {
+		rawRows := s.tk.MustQuery("show raw import jobs").Rows()
+		rawJobIDs := make(map[any]struct{}, len(rawRows))
+		for _, row := range rawRows {
+			rawJobIDs[row[0]] = struct{}{}
+		}
+		_, ok := rawJobIDs[result1[0][0]]
+		s.True(ok)
+		_, ok = rawJobIDs[result2[0][0]]
+		s.True(ok)
+	}
 	// show import job by id with root
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 	s.Len(rows, 1)
@@ -207,7 +259,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	jobInfo.TableName = "t2"
 	jobInfo.TableID = tableID2
 	jobInfo.CreatedBy = "test_show_job2@localhost"
-	jobInfo.Parameters.FileLocation = fmt.Sprintf(`gs://test-show-job/t.csv?endpoint=%s`, gcsEndpoint)
+	jobInfo.Parameters.FileLocation = `gs://test-show-job/t.csv?endpoint=xxxxxx`
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
 	// grant SUPER to test_show_job2, now it can see all jobs
@@ -223,14 +275,15 @@ func (s *mockGCSSuite) TestShowJob() {
 		func() {
 			newVal := counter.Add(1)
 			if newVal == 1 {
+				runningJobID := importer.TestLastImportJobID.Load()
 				jobInfo = &importer.JobInfo{
-					ID:          importer.TestLastImportJobID.Load(),
+					ID:          runningJobID,
 					TableSchema: "test_show_job",
 					TableName:   "t3",
 					TableID:     tableID3,
 					CreatedBy:   "test_show_job2@localhost",
 					Parameters: importer.ImportParameters{
-						FileLocation: fmt.Sprintf(`gs://test-show-job/t*.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=%s`, gcsEndpoint),
+						FileLocation: `gs://test-show-job/t*.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=xxxxxx`,
 						Format:       importer.DataFormatCSV,
 					},
 					SourceFileSize: 6,
@@ -244,6 +297,33 @@ func (s *mockGCSSuite) TestShowJob() {
 				rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 				s.Len(rows, 1)
 				s.compareJobInfoWithoutTime(jobInfo, rows[0])
+
+				if kerneltype.IsNextGen() {
+					// Exercise both RAW runtime-info paths while the job is held in
+					// a deterministic running state.
+					rawByID := tk2.MustQuery(fmt.Sprintf("show raw import job %d", runningJobID)).Rows()
+					s.Len(rawByID, 1)
+					rawList := tk2.MustQuery("show raw import jobs").Rows()
+					var rawFromList []any
+					for _, row := range rawList {
+						if fmt.Sprintf("%s", row[0]) == strconv.FormatInt(runningJobID, 10) {
+							rawFromList = row
+							break
+						}
+					}
+					s.NotNil(rawFromList)
+					var singularStats, pluralStats jobstats.RawStats
+					s.NoError(json.Unmarshal([]byte(fmt.Sprintf("%s", rawByID[0][2])), &singularStats))
+					s.NoError(json.Unmarshal([]byte(fmt.Sprintf("%s", rawFromList[2])), &pluralStats))
+					s.Equal("running", singularStats.Status)
+					s.False(singularStats.IsCompleted())
+					s.NotNil(singularStats.CurrentStep)
+					s.NotEmpty(singularStats.CurrentStep.Name)
+					s.Equal(singularStats.Status, pluralStats.Status)
+					s.Equal(singularStats.StatusCategory, pluralStats.StatusCategory)
+					s.Equal(singularStats.CurrentStep, pluralStats.CurrentStep)
+				}
+
 				// show processlist, should be redacted too
 				procRows := tk2.MustQuery("show full processlist").Rows()
 
@@ -276,6 +356,38 @@ func (s *mockGCSSuite) TestShowJob() {
 	})
 	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s' with thread=1, __max_engine_size='1'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t3").Sort().Check(testkit.Rows("1", "2", "3", "4"))
+
+	if kerneltype.IsNextGen() {
+		// SHOW RAW IMPORT JOBS should be filterable by GROUP_KEY for polling.
+		const groupKey = "test_show_raw_group"
+		s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+		s.tk.MustExec("CREATE TABLE t4 (i INT PRIMARY KEY);")
+		s.tk.MustExec("CREATE TABLE t5 (i INT PRIMARY KEY);")
+		s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job2", Hostname: "localhost"}, nil, nil, nil))
+		s.tk.MustQuery(fmt.Sprintf(`import into t4 FROM 'gs://test-show-job/t.csv?endpoint=%s' with group_key='%s'`, gcsEndpoint, groupKey))
+		jobID4 := importer.TestLastImportJobID.Load()
+		s.tk.MustQuery(fmt.Sprintf(`import into t5 FROM 'gs://test-show-job/t.csv?endpoint=%s' with group_key='%s'`, gcsEndpoint, groupKey))
+		jobID5 := importer.TestLastImportJobID.Load()
+
+		rawList := s.tk.MustQuery(fmt.Sprintf(`show raw import jobs where group_key = '%s'`, groupKey)).Rows()
+		s.Len(rawList, 2)
+		wantJobIDs := map[int64]struct{}{jobID4: {}, jobID5: {}}
+		for _, r := range rawList {
+			b := []byte(fmt.Sprintf("%s", r[2]))
+			var st jobstats.RawStats
+			s.NoError(json.Unmarshal(b, &st))
+			s.Equal(groupKey, r[1])
+			jobID, err := strconv.ParseInt(fmt.Sprintf("%s", r[0]), 10, 64)
+			s.NoError(err)
+			_, ok := wantJobIDs[jobID]
+			s.True(ok)
+			s.Zero(st.JobID)
+			s.Empty(st.GroupKey)
+			s.Equal(jobstats.ContractVersion, st.Version)
+			delete(wantJobIDs, jobID)
+		}
+		s.Len(wantJobIDs, 0)
+	}
 }
 
 func (s *mockGCSSuite) TestShowDetachedJob() {
@@ -303,7 +415,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 		TableID:     tableID1,
 		CreatedBy:   "root@%",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-detached-job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test-show-detached-job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -345,7 +457,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 		TableID:     tableID2,
 		CreatedBy:   "root@%",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-detached-job/t2.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test-show-detached-job/t2.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -378,7 +490,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 		TableID:     tableID3,
 		CreatedBy:   "root@%",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-detached-job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test-show-detached-job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -467,7 +579,7 @@ func (s *mockGCSSuite) TestShowImportJobTimingAroundPrepare() {
 	var preparedOnce sync.Once
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/afterTaskPrepared",
 		func(task *proto.Task) {
-			if task.Key != importinto.TaskKey(jobID64) {
+			if task.Key != taskkey.ForJob(jobID64) {
 				return
 			}
 			preparedOnce.Do(func() {
@@ -508,7 +620,7 @@ func (s *mockGCSSuite) TestShowImportJobTimingAroundPrepare() {
 		TableID:     tableID,
 		CreatedBy:   createdBy,
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://show-job-prepare-timing-source/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://show-job-prepare-timing-source/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -615,10 +727,10 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 		Content: []byte("seed"),
 	})
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/mockDisableAsyncPrepare", "return")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/mockDisableAsyncPrepare", "return")
 	// Block scheduler so we can verify submitted task still has no prepare mode.
 	releaseScheduler := s.blockSchedulerBeforeGetSchedulableTasks()
-	s.False(importinto.ShouldUseAsyncPrepare(&importer.Plan{CloudStorageURI: "gs://mock-bucket/mock-path"}))
+	s.False(importer.ShouldUseAsyncPrepare(&importer.Plan{CloudStorageURI: "gs://mock-bucket/mock-path"}))
 	importSQL := fmt.Sprintf(
 		`IMPORT INTO t FROM 'gs://detached-job-without-prepare-mode-source/t.csv?endpoint=%s'
 		WITH DETACHED, cloud_storage_uri='gs://detached-job-without-prepare-mode-sort/path?endpoint=%s'`,
@@ -630,7 +742,7 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
 	jobID64 := int64(jobID)
-	taskKey := importinto.TaskKey(jobID64)
+	taskKey := taskkey.ForJob(jobID64)
 	// prepare_mode is 0 and omit when marshal to JSON, so "is null" return true.
 	s.tk.MustQuery(fmt.Sprintf(
 		"select json_extract(extra_params, '$.prepare_mode') is null from mysql.tidb_global_task where task_key = '%s'",
@@ -653,7 +765,7 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 func (s *mockGCSSuite) getTaskByJobID(ctx context.Context, jobID int64) *proto.Task {
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := importinto.TaskKey(jobID)
+	taskKey := taskkey.ForJob(jobID)
 	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err)
 	return task
@@ -713,7 +825,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		TableID:     tableID1,
 		CreatedBy:   "test_cancel_job1@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test_cancel_job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -775,7 +887,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		TableID:     tableID2,
 		CreatedBy:   "test_cancel_job2@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test_cancel_job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -786,7 +898,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.compareJobInfoWithoutTime(jobInfo, rows2[0])
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := importinto.TaskKey(int64(jobID2))
+	taskKey := taskkey.ForJob(int64(jobID2))
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
 		task2, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
@@ -843,7 +955,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		TableID:     tableID2,
 		CreatedBy:   "test_cancel_job2@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test_cancel_job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -871,7 +983,7 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 		TableID:     tableID1,
 		CreatedBy:   "root@%",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://fail_job_after_import/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://fail_job_after_import/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -935,7 +1047,7 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 	s.Equal("cancelled", rows[0][fmap["Status"]])
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := importinto.TaskKey(jobID)
+	taskKey := taskkey.ForJob(jobID)
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
 		task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)

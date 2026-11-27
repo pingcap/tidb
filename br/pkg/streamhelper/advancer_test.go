@@ -1581,12 +1581,27 @@ func TestGCCheckpoint(t *testing.T) {
 }
 
 func TestRedactBackend(t *testing.T) {
+	t.Run("S3 session credentials", func(t *testing.T) {
+		storage := &backup.S3{AccessKey: "FAKE_STREAM_AK", SecretAccessKey: "FAKE_STREAM_SK", SessionToken: "FAKE_STREAM_STS"}
+		info := &backup.StreamBackupTaskInfo{Storage: &backup.StorageBackend{Backend: &backup.StorageBackend_S3{S3: storage}}}
+		original := info.String()
+
+		output := (redact.TaskInfoRedacted{Info: info}).String()
+
+		require.Equal(t, original, info.String(), "logging must not change task credentials")
+		for _, secret := range []string{storage.AccessKey, storage.SecretAccessKey, storage.SessionToken} {
+			t.Run(secret, func(t *testing.T) {
+				require.NotContains(t, output, secret)
+			})
+		}
+		require.Contains(t, output, `session_token:"[REDACTED]"`)
+	})
 	info := new(backup.StreamBackupTaskInfo)
 	info.Name = "test"
 	info.Storage = &backup.StorageBackend{
 		Backend: &backup.StorageBackend_S3{
 			S3: &backup.S3{
-				Endpoint:        "http://",
+				Endpoint:        "http://localhost:9000",
 				Bucket:          "test",
 				Prefix:          "test",
 				AccessKey:       "12abCD!@#[]{}?/\\",
@@ -1596,13 +1611,13 @@ func TestRedactBackend(t *testing.T) {
 	}
 
 	redacted := redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, redacted.String(), "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" sse_kms_key_id:\"[REDACTED]\" > > name:\"test\" ")
-	require.Equal(t, info.String(), "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"12abCD!@#[]{}?/\\\\\" secret_access_key:\"12abCD!@#[]{}?/\\\\\" > > name:\"test\" ")
+	require.Equal(t, redacted.String(), "storage:<s3:<endpoint:\"http://localhost:9000\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" sse_kms_key_id:\"[REDACTED]\" > > name:\"test\" ")
+	require.Equal(t, info.String(), "storage:<s3:<endpoint:\"http://localhost:9000\" bucket:\"test\" prefix:\"test\" access_key:\"12abCD!@#[]{}?/\\\\\" secret_access_key:\"12abCD!@#[]{}?/\\\\\" > > name:\"test\" ")
 
 	info.Storage = &backup.StorageBackend{
 		Backend: &backup.StorageBackend_Gcs{
 			Gcs: &backup.GCS{
-				Endpoint:        "http://",
+				Endpoint:        "http://localhost:9000",
 				Bucket:          "test",
 				Prefix:          "test",
 				CredentialsBlob: "12abCD!@#[]{}?/\\",
@@ -1610,13 +1625,13 @@ func TestRedactBackend(t *testing.T) {
 		},
 	}
 	redacted = redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, redacted.String(), "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" credentials_blob:\"[REDACTED]\" > > name:\"test\" ")
-	require.Equal(t, info.String(), "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" credentials_blob:\"12abCD!@#[]{}?/\\\\\" > > name:\"test\" ")
+	require.Equal(t, redacted.String(), "storage:<gcs:<endpoint:\"http://localhost:9000\" bucket:\"test\" prefix:\"test\" credentials_blob:\"[REDACTED]\" > > name:\"test\" ")
+	require.Equal(t, info.String(), "storage:<gcs:<endpoint:\"http://localhost:9000\" bucket:\"test\" prefix:\"test\" credentials_blob:\"12abCD!@#[]{}?/\\\\\" > > name:\"test\" ")
 
 	info.Storage = &backup.StorageBackend{
 		Backend: &backup.StorageBackend_AzureBlobStorage{
 			AzureBlobStorage: &backup.AzureBlobStorage{
-				Endpoint:  "http://",
+				Endpoint:  "http://localhost:9000",
 				Bucket:    "test",
 				Prefix:    "test",
 				SharedKey: "12abCD!@#[]{}?/\\",
@@ -1629,6 +1644,6 @@ func TestRedactBackend(t *testing.T) {
 		},
 	}
 	redacted = redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, redacted.String(), "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" access_sig:\"[REDACTED]\" encryption_key:<encryption_key:\"[REDACTED]\" > > > name:\"test\" ")
-	require.Equal(t, info.String(), "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"12abCD!@#[]{}?/\\\\\" access_sig:\"12abCD!@#[]{}?/\\\\\" encryption_key:<encryption_key:\"12abCD!@#[]{}?/\\\\\" encryption_key_sha256:\"12abCD!@#[]{}?/\\\\\" > > > name:\"test\" ")
+	require.Equal(t, redacted.String(), "storage:<azure_blob_storage:<endpoint:\"http://localhost:9000\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" access_sig:\"[REDACTED]\" encryption_key:<encryption_key:\"[REDACTED]\" > > > name:\"test\" ")
+	require.Equal(t, info.String(), "storage:<azure_blob_storage:<endpoint:\"http://localhost:9000\" bucket:\"test\" prefix:\"test\" shared_key:\"12abCD!@#[]{}?/\\\\\" access_sig:\"12abCD!@#[]{}?/\\\\\" encryption_key:<encryption_key:\"12abCD!@#[]{}?/\\\\\" encryption_key_sha256:\"12abCD!@#[]{}?/\\\\\" > > > name:\"test\" ")
 }

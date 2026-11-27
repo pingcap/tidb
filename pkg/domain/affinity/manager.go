@@ -40,10 +40,10 @@ type pdManager struct {
 }
 
 const (
-	// Keep ids query under a conservative URI budget and fall back to full-scan filtering
-	// for larger requests to avoid request-line limits in proxies and gateways.
+	// Keep each ids query under a conservative URI budget to avoid request-line
+	// limits in proxies and gateways.
 	maxAffinityGroupIDsQueryLen = 4096
-	// Cap ids count so large lookups use full-scan filtering instead of building huge query strings.
+	// Cap the number of IDs in each PD request.
 	maxAffinityGroupIDsCount = 100
 )
 
@@ -86,21 +86,53 @@ func (m *pdManager) GetAffinityGroups(ctx context.Context, ids []string) (map[st
 		return make(map[string]*pdhttp.AffinityGroupState), nil
 	}
 
-	if shouldUseGetAllAffinityGroups(ids) {
-		return m.getAffinityGroupsByScanningAll(ctx, ids)
-	}
-
-	groups, err := m.Client.GetAffinityGroups(ctx, ids)
-	if err != nil {
-		if shouldFallbackGetAffinityGroups(err) {
+	uniqueIDs := make([]string, 0, len(ids))
+	idIndexes := make(map[string]int, len(ids))
+	for _, id := range ids {
+		if _, exists := idIndexes[id]; exists {
+			continue
+		}
+		if affinityGroupIDsEscapedQueryLen([]string{id}) > maxAffinityGroupIDsQueryLen {
 			return m.getAffinityGroupsByScanningAll(ctx, ids)
 		}
-		return nil, err
+		idIndexes[id] = len(uniqueIDs)
+		uniqueIDs = append(uniqueIDs, id)
 	}
 
-	// Older PD versions may ignore ids query parameters and return all groups.
-	// Filter client-side so requested IDs semantics stay stable in mixed versions.
-	return filterAffinityGroups(groups, ids), nil
+	result := make(map[string]*pdhttp.AffinityGroupState, len(uniqueIDs))
+	for start := 0; start < len(uniqueIDs); {
+		end, queryLen := start, 0
+		for end < len(uniqueIDs) && end-start < maxAffinityGroupIDsCount {
+			idQueryLen := affinityGroupIDsEscapedQueryLen(uniqueIDs[end : end+1])
+			if end > start {
+				idQueryLen++ // The separator between ids parameters.
+			}
+			if queryLen+idQueryLen > maxAffinityGroupIDsQueryLen {
+				break
+			}
+			queryLen += idQueryLen
+			end++
+		}
+
+		groups, err := m.Client.GetAffinityGroups(ctx, uniqueIDs[start:end])
+		if err != nil {
+			if shouldFallbackGetAffinityGroups(err) {
+				return m.getAffinityGroupsByScanningAll(ctx, uniqueIDs)
+			}
+			return nil, err
+		}
+		for id, group := range groups {
+			index, requested := idIndexes[id]
+			if !requested || index < start || index >= end {
+				// Older PD versions ignore ids and return all groups. Reuse that
+				// response for the entire lookup instead of requesting more batches.
+				return filterAffinityGroups(groups, uniqueIDs), nil
+			}
+			result[id] = group
+		}
+		start = end
+	}
+	return result, nil
 }
 
 func (m *pdManager) createAffinityGroupsIfNotExistsByFiltering(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange) error {
@@ -135,10 +167,6 @@ func (m *pdManager) getAffinityGroupsByScanningAll(ctx context.Context, ids []st
 		return nil, err
 	}
 	return filterAffinityGroups(allGroups, ids), nil
-}
-
-func shouldUseGetAllAffinityGroups(ids []string) bool {
-	return len(ids) > maxAffinityGroupIDsCount || affinityGroupIDsEscapedQueryLen(ids) > maxAffinityGroupIDsQueryLen
 }
 
 func affinityGroupIDsEscapedQueryLen(ids []string) int {

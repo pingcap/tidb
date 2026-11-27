@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "bootstrap.go",
         "handle.go",
+        "table_stats.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle",
     visibility = ["//visibility:public"],
@@ -25,7 +26,6 @@ go_library(
         "//pkg/statistics/handle/cache",
         "//pkg/statistics/handle/ddl",
         "//pkg/statistics/handle/globalstats",
-        "//pkg/statistics/handle/history",
         "//pkg/statistics/handle/initstats",
         "//pkg/statistics/handle/lockstats",
         "//pkg/statistics/handle/logutil",

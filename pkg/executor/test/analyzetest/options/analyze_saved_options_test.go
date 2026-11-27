@@ -57,14 +57,14 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
 	tk.MustExec("analyze table t with 1 topn, 2 buckets")
 	is := dom.InfoSchema()
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
-	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	require.NoError(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
@@ -85,8 +85,8 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	// auto-analyze uses the table-level options
 	tk.MustExec("insert into t values (10,10,10)")
 	tk.MustExec("flush stats_delta *.*")
-	require.Nil(t, h.Update(context.Background(), is))
-	h.HandleAutoAnalyze()
+	require.Nil(t, h.Cache().Update(context.Background(), is))
+	h.AutoAnalyze().HandleAutoAnalyze()
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
@@ -101,7 +101,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
 	require.Equal(t, 3, len(col0.Buckets))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
-	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	require.NoError(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 	col1 = tbl.GetCol(tableInfo.Columns[1].ID)
 	require.Equal(t, 1, len(col1.TopN.TopN))
 	col2 = tbl.GetCol(tableInfo.Columns[2].ID)
@@ -301,7 +301,7 @@ PARTITION BY RANGE ( a ) (
 	// drop partition
 	tk.MustExec("alter table t drop partition p1")
 	is = dom.InfoSchema() // refresh infoschema
-	require.Nil(t, h.GCStats(is, time.Duration(0)))
+	require.Nil(t, h.GC().GCStats(is, time.Duration(0)))
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
@@ -312,7 +312,7 @@ PARTITION BY RANGE ( a ) (
 	// drop table
 	tk.MustExec("drop table t")
 	is = dom.InfoSchema() // refresh infoschema
-	require.Nil(t, h.GCStats(is, time.Duration(0)))
+	require.Nil(t, h.GC().GCStats(is, time.Duration(0)))
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
 	//require.Equal(t, len(rs.Rows()), 0) TODO
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
@@ -393,18 +393,18 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(3 * time.Second)
+	h.SetLeaseForTest(3 * time.Second)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	tk.MustExec("select * from t where b > 1")
-	require.NoError(t, h.DumpColStatsUsageToKV())
+	require.NoError(t, h.Usage().DumpColStatsUsageToKV())
 	tk.MustExec("analyze table t predicate columns")
-	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	require.NoError(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 	tblStats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	lastVersion := tblStats.Version
 	// column b is analyzed
@@ -414,10 +414,10 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select column_choice, column_ids from mysql.analyze_options where table_id = %v", tblInfo.ID)).Check(testkit.Rows("PREDICATE "))
 
 	tk.MustExec("select * from t where c > 1")
-	require.NoError(t, h.DumpColStatsUsageToKV())
+	require.NoError(t, h.Usage().DumpColStatsUsageToKV())
 	// manually analyze uses the saved option(predicate columns).
 	tk.MustExec("analyze table t")
-	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	require.NoError(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 	tblStats = h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
@@ -428,9 +428,9 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 
 	tk.MustExec("insert into t values (5,5,5),(6,6,6)")
 	tk.MustExec("flush stats_delta *.*")
-	require.Nil(t, h.Update(context.Background(), is))
+	require.Nil(t, h.Cache().Update(context.Background(), is))
 	// auto analyze uses the saved option(predicate columns).
-	h.HandleAutoAnalyze()
+	h.AutoAnalyze().HandleAutoAnalyze()
 	tblStats = h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
@@ -441,7 +441,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 
 	tk.MustExec("analyze table t columns a")
 	// TODO: the a's meta should be keep. Or the previous a's meta should be clear.
-	tblStats, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
+	tblStats, err = h.Cache().TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
 	require.NoError(t, err)
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
@@ -453,7 +453,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 
 	tk.MustExec("analyze table t all columns")
 	// TODO: the a's meta should be keep. Or the previous a's meta should be clear.
-	tblStats, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
+	tblStats, err = h.Cache().TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
 	require.NoError(t, err)
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
@@ -495,7 +495,7 @@ func TestAnalyzeWithDefaultResetsSavedOptions(t *testing.T) {
 	optsQuery := fmt.Sprintf("select sample_num,sample_rate,buckets,topn,column_choice from mysql.analyze_options where table_id = %d", tableInfo.ID)
 	loadStats := func() *statistics.Table {
 		tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
-		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+		require.NoError(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 		return h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	}
 	hasAdaptiveSampleRateNote := func() bool {

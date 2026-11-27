@@ -34,8 +34,10 @@ import (
 	zaplog "github.com/pingcap/log"
 	meter_config "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -1010,6 +1012,35 @@ func TestEnableStorageClassConfig(t *testing.T) {
 	}
 }
 
+func TestDisableGCConfig(t *testing.T) {
+	require.False(t, NewConfig().DisableGC)
+	for _, tt := range []struct {
+		name    string
+		content string
+		initial bool
+		want    bool
+	}{
+		{name: "missing"},
+		{name: "enabled", content: "disable-gc = true", want: true},
+		{name: "disabled", content: "disable-gc = false", initial: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			configFile := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(configFile, []byte(tt.content), 0600))
+			conf := NewConfig()
+			conf.DisableGC = tt.initial
+			require.NoError(t, conf.Load(configFile))
+			require.Equal(t, tt.want, conf.DisableGC)
+
+			data, err := json.Marshal(conf)
+			require.NoError(t, err)
+			var settings map[string]any
+			require.NoError(t, json.Unmarshal(data, &settings))
+			require.Equal(t, tt.want, settings["disable-gc"])
+		})
+	}
+}
+
 func TestConfig(t *testing.T) {
 	t.Run("cross AZ weight is not configurable", func(t *testing.T) {
 		conf := NewConfig()
@@ -1538,6 +1569,48 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 	}
 }
 
+func TestMaintenanceModeConfig(t *testing.T) {
+	require.False(t, NewConfig().MaintenanceMode)
+	encoded, err := json.Marshal(NewConfig())
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"maintenance-mode":false`)
+
+	modes := []string{""}
+	if kerneltype.IsNextGen() {
+		modes = append(modes, "premium", "premium_reserved", "starter")
+	}
+	for _, mode := range modes {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("mode=%s/enabled=%t", mode, enabled), func(t *testing.T) {
+				content := fmt.Sprintf("maintenance-mode = %t\n", enabled)
+				if mode != "" {
+					content += fmt.Sprintf("deploy-mode = %q\n", mode)
+				}
+				configFile := filepath.Join(t.TempDir(), "config.toml")
+				require.NoError(t, os.WriteFile(configFile, []byte(content), 0644))
+				conf := NewConfig()
+				if kerneltype.IsClassic() {
+					require.ErrorContains(t, conf.Load(configFile), "maintenance-mode can only be configured for nextgen TiDB")
+					conf = NewConfig()
+					conf.MaintenanceMode = enabled
+					if enabled {
+						require.ErrorContains(t, conf.Valid(), "maintenance-mode can only be configured for nextgen TiDB")
+					} else {
+						require.NoError(t, conf.Valid())
+					}
+					return
+				}
+				require.NoError(t, conf.Load(configFile))
+				require.NoError(t, conf.Valid())
+				require.Equal(t, enabled, conf.MaintenanceMode)
+				encoded, err := json.Marshal(conf)
+				require.NoError(t, err)
+				require.Contains(t, string(encoded), fmt.Sprintf(`"maintenance-mode":%t`, enabled))
+			})
+		}
+	}
+}
+
 func TestDeployModeConfig(t *testing.T) {
 	conf := NewConfig()
 	require.Equal(t, deploymode.Premium, conf.DeployMode)
@@ -1779,6 +1852,45 @@ max-allowed-packet = %d`, packetSize)), 0644))
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
 	conf = NewConfig()
 	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)
+}
+
+func TestDiagnosticSkipGrantTableConfig(t *testing.T) {
+	if !intest.InTest {
+		t.Skip("diagnosticmode.SetForTest requires the intest build tag")
+	}
+
+	tests := []struct {
+		name       string
+		diagnostic bool
+		skipGrant  bool
+		host       string
+		port       uint
+		socket     string
+		wantError  string
+	}{
+		{name: "diagnostic socket only", diagnostic: true, skipGrant: true, host: "127.0.0.1", socket: "/tmp/tidb.sock"},
+		{name: "diagnostic empty host", diagnostic: true, skipGrant: true, port: 4000, socket: "/tmp/tidb.sock"},
+		{name: "diagnostic TCP", diagnostic: true, skipGrant: true, host: "127.0.0.1", port: 4000, socket: "/tmp/tidb.sock", wantError: "requires a Unix socket and no MySQL TCP listener"},
+		{name: "diagnostic no socket", diagnostic: true, skipGrant: true, host: "127.0.0.1", wantError: "requires a Unix socket and no MySQL TCP listener"},
+		{name: "diagnostic grants enabled", diagnostic: true, host: "127.0.0.1", port: 4000},
+		{name: "normal mode", skipGrant: true, host: "127.0.0.1", port: 4000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(diagnosticmode.SetForTest(tt.diagnostic))
+			cfg := NewConfig()
+			cfg.Security.SkipGrantTable = tt.skipGrant
+			cfg.Host, cfg.Port, cfg.Socket = tt.host, tt.port, tt.socket
+			err := cfg.Valid()
+			if !tt.diagnostic && tt.skipGrant && !hasRootPrivilege() {
+				require.ErrorContains(t, err, "skip-grant-table need root privilege")
+			} else if tt.wantError != "" {
+				require.ErrorContains(t, err, tt.wantError)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestKeyspaceActivateModeConfig(t *testing.T) {

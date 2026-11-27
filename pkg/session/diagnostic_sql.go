@@ -17,6 +17,7 @@ package session
 import (
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
@@ -26,7 +27,10 @@ import (
 //
 // The diagnostic endpoint is deliberately an allowlist: it accepts a
 // non-ANALYZE EXPLAIN over a SELECT (or a SELECT set operation), USE, the
-// explicitly listed metadata SHOW statements, and SELECTs over system tables.
+// explicitly listed metadata SHOW statements, SELECTs over system tables, and
+// RECOMMEND INDEX RETURN RESULT FOR over SELECT statements. RETURN RESULT
+// plans those statements and does not persist recommendations. Other
+// RECOMMEND INDEX actions stay rejected.
 // A generic read-only check is
 // insufficient because SELECT can acquire locks, write a file, assign a
 // variable, or call functions that change session/sequence or advisory-lock
@@ -65,14 +69,56 @@ func isDiagnosticSQLAllowed(stmt ast.StmtNode, currentDB string, is infoschemact
 		checker := diagnosticSQLChecker{}
 		ast.Walk(node, &checker)
 		return !checker.denied
+	case *ast.RecommendIndexStmt:
+		return diagnosticRecommendIndexAllowed(node)
 	default:
 		return false
 	}
 }
 
+// diagnosticRecommendIndexAllowed accepts only RETURN RESULT. The advisor
+// plans each supplied statement with fix-control 43817, which refuses to
+// evaluate non-correlated subqueries, and it does not persist the result.
+// Statements that fail to parse are rejected here: the executor splits the
+// string on semicolons and would still plan any earlier statement.
+func diagnosticRecommendIndexAllowed(stmt *ast.RecommendIndexStmt) bool {
+	if stmt.Action != ast.RecommendIndexActionReturn {
+		return false
+	}
+	if stmt.SQL == "" {
+		return true
+	}
+	stmts, _, err := parser.New().Parse(stmt.SQL, "", "")
+	if err != nil || len(stmts) == 0 {
+		return false
+	}
+	for _, inner := range stmts {
+		if !diagnosticRecommendIndexQueryAllowed(inner) {
+			return false
+		}
+	}
+	return true
+}
+
+func diagnosticRecommendIndexQueryAllowed(stmt ast.StmtNode) bool {
+	switch child := stmt.(type) {
+	case *ast.SelectStmt:
+		if child.Kind != ast.SelectStmtKindSelect {
+			return false
+		}
+	case *ast.SetOprStmt:
+	default:
+		return false
+	}
+	checker := diagnosticSQLChecker{allowSubqueries: true}
+	ast.Walk(stmt, &checker)
+	return !checker.denied
+}
+
 type diagnosticSQLChecker struct {
 	denied                bool
 	onlyAllowSystemTables bool
+	allowSubqueries       bool
 	hasTable              bool
 	currentDB             ast.CIStr
 	infoSchema            infoschemactx.MetaOnlyInfoSchema
@@ -141,7 +187,12 @@ func (c *diagnosticSQLChecker) Enter(node ast.Node) (skipChildren bool) {
 	case *ast.SubqueryExpr:
 		// Non-CTE subqueries may be evaluated by the optimizer while it is
 		// compiling EXPLAIN. Reject them before compilation can start.
-		c.denied = !c.onlyAllowSystemTables
+		// RECOMMEND INDEX plans with fix-control 43817, which refuses that
+		// evaluation, so its checker allows subqueries and still walks them
+		// for locks and side effects.
+		if !c.allowSubqueries {
+			c.denied = !c.onlyAllowSystemTables
+		}
 	case *ast.SelectStmt:
 		// Any lock clause can cause TiKV lock-resolution or lock-writing
 		// requests even though the statement is syntactically a SELECT.

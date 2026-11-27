@@ -312,39 +312,48 @@ func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 
 // AppendCellRange appends cells in [begin, end) from the source column.
 func (c *Column) AppendCellRange(src *Column, begin, end int) {
-	if src == nil || begin < 0 || begin >= end || end > src.Rows() {
+	if src == nil {
 		return
 	}
+	srcRows := src.Rows()
+	if begin < 0 || begin >= end || end > srcRows {
+		return
+	}
+	appendedRows := end - begin
 	oldLen := c.length
-	newLen := oldLen + end - begin
+	newLen := oldLen + appendedRows
 	sizeNulls := (newLen + 7) >> 3
 	if cap(c.nullBitmap) >= sizeNulls {
 		c.nullBitmap = c.nullBitmap[:sizeNulls]
 	} else {
-		bitmap := make([]byte, sizeNulls)
-		copy(bitmap, c.nullBitmap)
-		c.nullBitmap = bitmap
+		oldNullBitmap := c.nullBitmap
+		c.nullBitmap = make([]byte, sizeNulls)
+		copy(c.nullBitmap, oldNullBitmap)
 	}
-	for i := begin; i < end; i++ {
-		dst := oldLen + i - begin
-		if src.IsNull(i) {
-			c.nullBitmap[dst>>3] &^= byte(1 << uint(dst&7))
+	for i := range appendedRows {
+		dstRowIdx := oldLen + i
+		srcRowIdx := begin + i
+		byteIdx := dstRowIdx >> 3
+		bitMask := byte(1 << uint(dstRowIdx&7))
+		if src.IsNull(srcRowIdx) {
+			c.nullBitmap[byteIdx] &^= bitMask
 		} else {
-			c.nullBitmap[dst>>3] |= byte(1 << uint(dst&7))
+			c.nullBitmap[byteIdx] |= bitMask
 		}
 	}
 	if c.IsFixed() {
 		elemLen := len(src.elemBuf)
-		c.data = append(c.data, src.data[begin*elemLen:end*elemLen]...)
+		beginOffset, endOffset := begin*elemLen, end*elemLen
+		c.data = append(c.data, src.data[beginOffset:endOffset]...)
 		c.length = newLen
 		return
 	}
-	dataStart := src.offsets[begin]
-	dataEnd := src.offsets[end]
-	dstStart := int64(len(c.data))
-	c.data = append(c.data, src.data[dataStart:dataEnd]...)
-	for i := begin + 1; i <= end; i++ {
-		c.offsets = append(c.offsets, dstStart+(src.offsets[i]-dataStart))
+	beginOffset, endOffset := src.offsets[begin], src.offsets[end]
+	dstDataStart := int64(len(c.data))
+	srcDataStart := src.offsets[begin]
+	c.data = append(c.data, src.data[beginOffset:endOffset]...)
+	for rowIdx := begin + 1; rowIdx <= end; rowIdx++ {
+		c.offsets = append(c.offsets, dstDataStart+(src.offsets[rowIdx]-srcDataStart))
 	}
 	c.length = newLen
 }
@@ -599,12 +608,14 @@ func (c *Column) nullCount() int {
 
 // HasNull returns true if there is any null value in this Column.
 func (c *Column) HasNull() bool {
-	for i := 0; i+8 <= c.length; i += 8 {
-		if c.nullBitmap[i>>3] != 0xff {
+	var i int
+	for ; i+8 <= c.length; i += 8 {
+		// 0 is null and 1 is not null
+		if c.nullBitmap[i>>3] != 0xFF {
 			return true
 		}
 	}
-	for i := (c.length / 8) * 8; i < c.length; i++ {
+	for ; i < c.length; i++ {
 		if c.IsNull(i) {
 			return true
 		}

@@ -314,6 +314,9 @@ type backfillResult struct {
 }
 
 func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (totalAddedCnt, totalScanCnt int64, err error) {
+	if err := activateSchemaReadOnlyWrite(e.Ctx(), e.table.Meta()); err != nil {
+		return 0, 0, err
+	}
 	var (
 		currentHandle kv.Handle
 		lastLogCnt    int64
@@ -781,6 +784,9 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
+	if err := activateSchemaReadOnlyWrite(e.Ctx(), e.table.Meta()); err != nil {
+		return err
+	}
 	for {
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
 		errInTxn := kv.RunInNewTxn(ctx, e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {

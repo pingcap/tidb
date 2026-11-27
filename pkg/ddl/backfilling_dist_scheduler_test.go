@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	disttestutil "github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
@@ -42,12 +43,19 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
@@ -67,7 +75,24 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	want := "tenant_only"
+	if kerneltype.IsNextGen() {
+		want = resourcegroup.DefaultResourceGroupName
+	}
+	var client *backfillResourceGroupClient
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithClientHijacker(func(inner tikv.Client) tikv.Client {
+		client = &backfillResourceGroupClient{
+			Client:     inner,
+			checkGroup: func(group string) { assert.Equal(t, want, group) },
+		}
+		return client
+	}))
+	tikv.DisableResourceControl() // Inspect attribution independently of PD's group cache.
+	t.Cleanup(func() {
+		if vardef.EnableResourceControl.Load() {
+			tikv.EnableResourceControl()
+		}
+	})
 	sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
 	sch.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
@@ -89,15 +114,41 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
+	var resourceMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(task.Meta, &resourceMeta))
+	resourceMeta.Job.Type = model.ActionAddIndex
+	resourceMeta.Job.ReorgMeta.ResourceGroupName = "tenant_only"
+	resourceMeta.EleIDs = []int64{tblInfo.Indices[0].ID}
+	task.Meta, err = json.Marshal(&resourceMeta)
+	require.NoError(t, err)
+	originalMeta := append([]byte(nil), task.Meta...)
 
 	// 1.1 OnNextSubtasksBatch
 	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
-	execIDs := []string{":4000"}
+	nodeCnt := 1
 	ctx := util.WithInternalSourceType(context.Background(), "backfill")
-	metas, err := sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	client.recording.Store(true)
+	metas, err := sch.OnNextSubtasksBatch(ctx, nil, task, nodeCnt, task.Step)
+	client.recording.Store(false)
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
+	require.Positive(t, client.scanCount.Load())
+	// Worker execution uses a decoded copy; persisted foreground metadata stays intact.
+	checked := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeGetUserTableForBackfillStep", func(job *model.Job) {
+		checked = true
+		require.Equal(t, want, job.ReorgMeta.ResourceGroupName)
+	})
+	param := taskexecutor.NewParamForTest(nil, nil, proto.NodeResourceForTest, ":4000")
+	param.TaskRuntime = newBackfillingSchedulerTestRuntime(ctrl, store, dom.SysSessionPool())
+	worker := taskexecutor.GetTaskExecutorFactory(proto.Backfill)(ctx, task, param)
+	require.NoError(t, worker.Init(ctx))
+	_, err = worker.(taskexecutor.Extension).GetStepExecutor(task)
+	worker.Close()
+	require.NoError(t, err)
+	require.True(t, checked)
+	require.Equal(t, originalMeta, task.Meta)
 	var taskMetaView struct {
 		Summary *struct {
 			IndexKVSize uint64 `json:"index_kv_size"`
@@ -115,7 +166,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
-	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, nodeCnt, task.Step)
 	require.NoError(t, err)
 	require.Len(t, metas, 0)
 
@@ -128,7 +179,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	tk.MustExec("create table t1(id int primary key, v int)")
 	task, server = createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false)
 	require.Nil(t, server)
-	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, nodeCnt, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 	// 2.2 non empty table.
@@ -141,14 +192,14 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.Nil(t, server)
 	// 2.2.1 stepInit
 	task.Step = sch.GetNextStep(&task.TaskBase)
-	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, nodeCnt, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
 
 	// 2.2.2 transient region discontinuity should be retried.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockPhysicalTableRegionDiscontinuity", "1*return()")
-	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, nodeCnt, task.Step)
 	require.NoError(t, err)
 	require.Len(t, metas, 1)
 
@@ -160,12 +211,12 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.Nil(t, server)
 	multiRegionTask.Step = sch.GetNextStep(&multiRegionTask.TaskBase)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", "return(1)")
-	expectedMetas, err := sch.OnNextSubtasksBatch(ctx, nil, multiRegionTask, execIDs, multiRegionTask.Step)
+	expectedMetas, err := sch.OnNextSubtasksBatch(ctx, nil, multiRegionTask, nodeCnt, multiRegionTask.Step)
 	require.NoError(t, err)
 	require.Len(t, expectedMetas, 2)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAllocNewTSError", "1*return(false)->1*return(true)")
-	metas, err = sch.OnNextSubtasksBatch(ctx, nil, multiRegionTask, execIDs, multiRegionTask.Step)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, multiRegionTask, nodeCnt, multiRegionTask.Step)
 	require.NoError(t, err)
 	require.Len(t, metas, len(expectedMetas))
 	for i := range expectedMetas {
@@ -191,7 +242,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.NoError(t, err)
 	mergeTask.Step = proto.BackfillStepMergeTempIndex
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMergeTempIndexRegionDiscontinuity", "1*return()")
-	metas, err = sch.OnNextSubtasksBatch(ctx, nil, mergeTask, execIDs, mergeTask.Step)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, mergeTask, nodeCnt, mergeTask.Step)
 	require.NoError(t, err)
 	require.Len(t, metas, 1)
 
@@ -199,7 +250,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
-	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, nodeCnt, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 }
@@ -313,10 +364,10 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, "", 1, "", 0, proto.ExtraParams{}, task.Meta)
 	require.NoError(t, err)
 	task.ID = taskID
-	execIDs := []string{":4000"}
+	nodeCnt := 1
 
 	// 1. to read-index stage
-	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, execIDs, sch.GetNextStep(&task.TaskBase))
+	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, nodeCnt, sch.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	nextStep := ext.GetNextStep(&task.TaskBase)
@@ -383,12 +434,12 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	require.NoError(t, json.Unmarshal(originalTaskMeta, &taskMetaView))
 	originalEleIDs := append([]int64(nil), taskMetaView.EleIDs...)
 	originalCloudStorageURI := taskMetaView.CloudStorageURI
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, proto.BackfillStepWriteAndIngest)
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, nodeCnt, proto.BackfillStepWriteAndIngest)
 	require.EqualError(t, err, "mock global-sort ingest planning error")
 	require.Empty(t, subtaskMetas)
 	require.Equal(t, originalTaskMeta, task.Meta)
 
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, proto.BackfillStepWriteAndIngest)
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, nodeCnt, proto.BackfillStepWriteAndIngest)
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	require.NoError(t, json.Unmarshal(task.Meta, &taskMetaView))
@@ -399,7 +450,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 
 	// 2. to merge-sort stage.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, nodeCnt, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
 	nextStep = ext.GetNextStep(&task.TaskBase)
@@ -438,7 +489,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, mergeSortStepMetaBytes))
 	}
 	// 3. to write&ingest stage.
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, nodeCnt, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	require.NoError(t, json.Unmarshal(task.Meta, &taskMetaView))
@@ -449,11 +500,71 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepWriteAndIngest, task.Step)
 	// 4. to done stage.
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, nodeCnt, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
+
+	// Exercise real ingest planning with a tiny non-empty file. The live server
+	// list can include nodes that are not eligible for this task (issue #73379).
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockWriteIngest")
+	extStore, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(extStore.Close)
+	kvMeta := &globalsort.SortedKVMeta{}
+	writer := simplesst.NewWriterBuilder().SetMemorySizeLimit(1024).SetBlockSize(1024).
+		SetOnCloseFunc(kvMeta.MergeSummary).Build(extStore, "data", "writer")
+	require.NoError(t, writer.WriteRow(ctx, []byte("ta"), []byte(strings.Repeat("v", 40)), nil))
+	require.NoError(t, writer.Close(ctx))
+	require.Equal(t, uint64(42), kvMeta.TotalKVSize)
+	for i, s := range gotSubtasks {
+		group := &globalsort.SortedKVMeta{}
+		if i == 0 {
+			group = kvMeta
+		}
+		m := &ddl.BackfillSubTaskMeta{EleIDs: []int64{10}, MetaGroups: []*globalsort.SortedKVMeta{group}}
+		raw, err := m.Marshal()
+		require.NoError(t, err)
+		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, raw))
+	}
+	var backfillMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(task.Meta, &backfillMeta))
+	backfillMeta.CloudStorageURI = extStore.URI()
+	task.Meta, err = json.Marshal(&backfillMeta)
+	require.NoError(t, err)
+
+	liveExecIDs := make([]string, 64)
+	originalServerInfo := scheduler.MockServerInfo.Swap(&liveExecIDs)
+	t.Cleanup(func() { scheduler.MockServerInfo.Store(originalServerInfo) })
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockTaskExecutorNodes", "return()")
+	originalNodeResource := storage.GetNodeResource()
+	storage.SetNodeResource(proto.NodeResourceForTest)
+	t.Cleanup(func() { storage.SetNodeResource(originalNodeResource) })
+	for _, tc := range []struct {
+		nodeCnt int
+		size    uint64
+	}{{1, 42}, {2, 21}, {64, 1}} {
+		task.MaxNodeCount = tc.nodeCnt
+		planNodeCnt := tc.nodeCnt
+		if kerneltype.IsNextGen() {
+			// NextGen plans for the task limit even before workers scale out.
+			planNodeCnt = 1
+		}
+		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, planNodeCnt, proto.BackfillStepWriteAndIngest)
+		require.NoError(t, err)
+		require.Len(t, subtaskMetas, 1)
+		var m ddl.BackfillSubTaskMeta
+		require.NoError(t, json.Unmarshal(subtaskMetas[0], &m))
+		require.NoError(t, m.ReadJSONFromExternalStorage(ctx, extStore, &m))
+		require.Len(t, m.MetaGroups, 1)
+		require.Equal(t, tc.size, m.MetaGroups[0].TotalKVSize, "node count %d", tc.nodeCnt)
+		require.Equal(t, kvMeta.StartKey, m.MetaGroups[0].StartKey)
+		require.Equal(t, kvMeta.EndKey, m.MetaGroups[0].EndKey)
+		require.Len(t, m.DataFiles, 1)
+		require.Len(t, m.StatFiles, 1)
+		require.Equal(t, []int64{10}, m.EleIDs)
+	}
 }
 
 func TestGetNextStep(t *testing.T) {
@@ -609,4 +720,20 @@ func TestBackfillTaskMetaVersion(t *testing.T) {
 	require.NotNil(t, summaryMetaView.Summary)
 	_, ok := summaryMetaView.Summary["index_kv_size"]
 	require.False(t, ok, "zero-valued summary fields are omitted from the encoded meta")
+}
+
+// Check the actual snapshot scan requests used to discover backfill ranges.
+type backfillResourceGroupClient struct {
+	tikv.Client
+	recording  atomic.Bool
+	scanCount  atomic.Int64
+	checkGroup func(string)
+}
+
+func (c *backfillResourceGroupClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if c.recording.Load() && req.Type == tikvrpc.CmdScan {
+		c.scanCount.Add(1)
+		c.checkGroup(req.GetResourceControlContext().GetResourceGroupName())
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
 }

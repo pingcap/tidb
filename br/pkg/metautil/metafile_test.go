@@ -5,6 +5,7 @@ package metautil
 import (
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -41,6 +42,22 @@ func appendBytesField(dst []byte, fieldNumber protowire.Number, v []byte) []byte
 	dst = protowire.AppendTag(dst, fieldNumber, protowire.BytesType)
 	dst = protowire.AppendBytes(dst, v)
 	return dst
+}
+
+func TestReceiveBatchTerminalError(t *testing.T) {
+	// Both terminal events are ready before receiving. Success must not depend
+	// on which select case wins.
+	for range 128 {
+		errCh := make(chan error, 1)
+		errCh <- context.DeadlineExceeded
+		results := make(chan any)
+		close(results)
+		err := receiveBatch(context.Background(), errCh, results, MaxBatchSize, func(any) error {
+			t.Fatal("unexpected result")
+			return nil
+		})
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	}
 }
 
 func TestWalkMetaFileEmpty(t *testing.T) {
@@ -177,6 +194,51 @@ type encryptTest struct {
 	method   encryptionpb.EncryptionMethod
 	rightKey string
 	wrongKey string
+}
+
+func TestDecryptFullBackupMetaIfNeeded(t *testing.T) {
+	for _, method := range []encryptionpb.EncryptionMethod{
+		encryptionpb.EncryptionMethod_AES128_CTR,
+		encryptionpb.EncryptionMethod_AES192_CTR,
+		encryptionpb.EncryptionMethod_AES256_CTR,
+	} {
+		for _, size := range []int{0, 1, 15, 16} {
+			t.Run(fmt.Sprintf("%s/%d", method, size), func(t *testing.T) {
+				var data []byte
+				var err error
+				require.NotPanics(t, func() {
+					data, err = DecryptFullBackupMetaIfNeeded(make([]byte, size),
+						&backuppb.CipherInfo{CipherType: method})
+				})
+				if size < CrypterIvLen {
+					require.ErrorContains(t, err, "backupmeta is too short")
+					require.Nil(t, data)
+				} else {
+					require.NoError(t, err)
+					require.Empty(t, data)
+				}
+			})
+		}
+	}
+	for _, cipher := range []*backuppb.CipherInfo{
+		nil,
+		{CipherType: encryptionpb.EncryptionMethod_UNKNOWN},
+		{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT},
+		{CipherType: encryptionpb.EncryptionMethod_AES128_CTR, CipherKey: make([]byte, 16)},
+		{CipherType: encryptionpb.EncryptionMethod_AES192_CTR, CipherKey: make([]byte, 24)},
+		{CipherType: encryptionpb.EncryptionMethod_AES256_CTR, CipherKey: make([]byte, 32)},
+	} {
+		original := []byte("backupmeta")
+		data := original
+		if cipher != nil && utils.IsEffectiveEncryptionMethod(cipher.CipherType) {
+			encrypted, iv, err := Encrypt(data, cipher)
+			require.NoError(t, err)
+			data = append(iv, encrypted...)
+		}
+		actual, err := DecryptFullBackupMetaIfNeeded(data, cipher)
+		require.NoError(t, err)
+		require.Equal(t, original, actual)
+	}
 }
 
 func TestEncryptAndDecrypt(t *testing.T) {

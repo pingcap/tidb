@@ -171,7 +171,7 @@ func TestTableScanCostWithForce(t *testing.T) {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
 			tk2.MustExec("drop table if exists t")
-			dom.StatsHandle().Clear()
+			dom.StatsHandle().ClearForTest()
 		}()
 
 		tk.MustExec("use test")
@@ -215,7 +215,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
 			tk2.MustExec("drop table if exists t")
-			dom.StatsHandle().Clear()
+			dom.StatsHandle().ClearForTest()
 		}()
 
 		tk.MustExec("use test")
@@ -846,7 +846,7 @@ func TestHashAggMemCostNotDividedByConcurrency(t *testing.T) {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
 			tk2.MustExec("drop table if exists t_high_ndv")
-			dom.StatsHandle().Clear()
+			dom.StatsHandle().ClearForTest()
 		}()
 
 		tk.MustExec("use test")
@@ -916,7 +916,7 @@ func TestHashAggMemCostGatedOnFreeOrdering(t *testing.T) {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
 			tk2.MustExec("drop table if exists t_indexed, t_join_a, t_join_b")
-			dom.StatsHandle().Clear()
+			dom.StatsHandle().ClearForTest()
 		}()
 
 		tk.MustExec("use test")

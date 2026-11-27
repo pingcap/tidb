@@ -253,6 +253,10 @@ func getRequiredGIDCount(specs []*JobSpec) int {
 			continue
 		}
 		switch spec.Job.Type {
+		case model.ActionMViewRefreshOutOfPlaceCutover:
+			if spec.Args.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs).OldMLogID != 0 {
+				count++
+			}
 		case model.ActionCreateMaterializedViewLog:
 			args := spec.Args.(*model.CreateMaterializedViewLogArgs)
 			count += idCountForTable(args.TableInfo)
@@ -294,6 +298,11 @@ func assignGIDsForJobs(specs []*JobSpec, ids []int64) {
 	alloc := &gidAllocator{ids: ids}
 	for _, spec := range specs {
 		switch spec.Job.Type {
+		case model.ActionMViewRefreshOutOfPlaceCutover:
+			args := spec.Args.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
+			if !spec.IDAllocated && args.OldMLogID != 0 {
+				args.NewMLogID = alloc.next()
+			}
 		case model.ActionCreateMaterializedViewLog:
 			args := spec.Args.(*model.CreateMaterializedViewLogArgs)
 			if !spec.IDAllocated {
@@ -517,7 +526,13 @@ func job2TableIDs(spec *JobSpec) string {
 		return strconv.FormatInt(spec.Job.TableID, 10)
 	case model.ActionMViewRefreshOutOfPlaceCutover:
 		args := spec.Args.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
-		return makeStringForIDs([]int64{spec.Job.TableID, args.ShadowTableID})
+		// MDL only waits on the physical objects replaced by cutover. The broader
+		// InvolvingSchemaInfo set serializes changes to upstream refs and children.
+		ids := []int64{spec.Job.TableID, args.ShadowTableID}
+		if args.OldMLogID != 0 {
+			ids = append(ids, args.OldMLogID, args.NewMLogID)
+		}
+		return makeStringForIDs(ids)
 	default:
 		return strconv.FormatInt(spec.Job.TableID, 10)
 	}

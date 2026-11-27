@@ -107,14 +107,14 @@ func UpdateStatsMeta(
 	// of encountering lock conflicts during the update process.
 	lockedTableIDsStr := strings.Join(lockedTableIDs, ",")
 	if lockedTableIDsStr != "" {
-		if _, err = statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("select * from mysql.stats_table_locked where table_id in (%s) for update", lockedTableIDsStr)); err != nil {
+		if err = execAndCloseRecordSet(ctx, sctx, fmt.Sprintf("select * from mysql.stats_table_locked where table_id in (%s) for update", lockedTableIDsStr)); err != nil {
 			return err
 		}
 	}
 
 	unlockedTableIDsStr := strings.Join(unlockedTableIDs, ",")
 	if unlockedTableIDsStr != "" {
-		if _, err = statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("select * from mysql.stats_meta where table_id in (%s) for update", unlockedTableIDsStr)); err != nil {
+		if err = execAndCloseRecordSet(ctx, sctx, fmt.Sprintf("select * from mysql.stats_meta where table_id in (%s) for update", unlockedTableIDsStr)); err != nil {
 			return err
 		}
 	}
@@ -151,6 +151,19 @@ func UpdateStatsMeta(
 	return nil
 }
 
+// execAndCloseRecordSet executes a statement whose rows are not needed, such as a lock read.
+// The statement reaches the slow log and the execution duration metrics only when its RecordSet is closed.
+func execAndCloseRecordSet(ctx context.Context, sctx sessionctx.Context, sql string) error {
+	rs, err := statsutil.ExecWithCtx(ctx, sctx, sql)
+	if err != nil {
+		return err
+	}
+	if rs != nil {
+		return rs.Close()
+	}
+	return nil
+}
+
 var changeGlobalStatsTables = []string{
 	"stats_meta", "stats_top_n", "stats_fm_sketch", "stats_buckets",
 	"stats_histograms", "column_stats_usage",
@@ -181,16 +194,41 @@ func UpdateStatsMetaVerAndLastHistUpdateVer(
 	sctx sessionctx.Context,
 	physicalID int64,
 ) (uint64, error) {
+	return updateStatsMetaVersion(ctx, sctx, true, physicalID)
+}
+
+// UpdateStatsMetaVer updates the version to the newest TS for the tables.
+// It keeps last_stats_histograms_version, so the stats cache does not reload the column and index stats.
+func UpdateStatsMetaVer(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalIDs ...int64,
+) (uint64, error) {
+	return updateStatsMetaVersion(ctx, sctx, false, physicalIDs...)
+}
+
+func updateStatsMetaVersion(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	updateHistVersion bool,
+	physicalIDs ...int64,
+) (uint64, error) {
 	startTS, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if _, err = statsutil.ExecWithCtx(
-		ctx,
-		sctx,
-		"update mysql.stats_meta set version=%?, last_stats_histograms_version=%? where table_id =%?",
-		startTS, startTS, physicalID,
-	); err != nil {
+	ids := make([]string, 0, len(physicalIDs))
+	for _, id := range physicalIDs {
+		ids = append(ids, fmt.Sprintf("%d", id))
+	}
+	sql := "update mysql.stats_meta set version = %?"
+	args := []any{startTS}
+	if updateHistVersion {
+		sql += ", last_stats_histograms_version = %?"
+		args = append(args, startTS)
+	}
+	sql += fmt.Sprintf(" where table_id in (%s)", strings.Join(ids, ","))
+	if _, err = statsutil.ExecWithCtx(ctx, sctx, sql, args...); err != nil {
 		return 0, errors.Trace(err)
 	}
 	return startTS, nil

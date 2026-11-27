@@ -176,22 +176,13 @@ func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerCont
 		}
 		access = append(access, newCond)
 	}
-	// All of access conditions must be used to build ranges, so we don't limit range memory usage.
-	var remainedConds []expression.Expression
-	ranges, _, remainedConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
+	// Disable memory fallback. Semantic fallback can still return residuals, whose
+	// predicates the planner retains in filters (including the suffix after a
+	// correlated TIMESTAMP equality); see SplitCorColAccessCondFromFilters.
+	ranges, _, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
 	if err != nil {
 		return nil, err
 	}
-	// Residuals from the detacher don't cause incorrect results on this path:
-	//   - Binary-collation residuals are blocked upstream -- SplitCorColAccessCondFromFilters
-	//     in pkg/planner/util/path.go rejects collation-mismatched predicates before they
-	//     can be promoted into is.AccessCondition.
-	//   - For other shouldReserve cases (prefix indexes, range predicates), the planner
-	//     retains the original predicate in path.TableFilters, which becomes a parent
-	//     Selection / table-side filter; rebuilding only the access ranges here is safe.
-	// The assert below is a regression guard in case a future planner change introduces a
-	// shouldReserve case that isn't covered by one of these two mechanisms.
-	intest.Assert(len(remainedConds) == 0, "rebuildIndexRanges: detacher returned residuals on correlated-access path")
 	return ranges, nil
 }
 
@@ -255,6 +246,11 @@ type IndexReaderExecutor struct {
 	partitionIDMap map[int64]struct{}
 
 	paging bool
+
+	// rowCountUpperBound is a proven upper bound of the number of rows the ranges can return.
+	// It is only valid when hasRowCountUpperBound is true.
+	rowCountUpperBound    uint64
+	hasRowCountUpperBound bool
 
 	keepOrder bool
 	desc      bool
@@ -336,6 +332,15 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	// They are two different sources of ranges, and should not appear together.
 	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.groupedRanges) > 0), "partRangeMap and groupedRanges should not appear together")
 
+	// The bound only matters for a Scan -> Limit DAG with a small limit that is not smaller than the number of
+	// ranges. When partRangeMap is set, e.ranges is not what is sent to each partition, so no bound is derived.
+	e.hasRowCountUpperBound = false
+	if limit, ok := distsql.ScanLimitWithMinimalConcurrency(e.dagPB); ok && uint64(len(e.ranges)) <= limit &&
+		len(e.partRangeMap) == 0 && e.table != nil {
+		e.rowCountUpperBound, e.hasRowCountUpperBound = ranger.RowCountUpperBoundByUniqueKey(
+			e.rctx.TypeCtx, e.table.Meta(), e.idxCols, e.colLens, e.ranges)
+	}
+
 	// Build kvRanges considering both partitions and groupedRanges
 	kvRanges, err := e.buildKVRangesForIndexReader()
 	if err != nil {
@@ -375,9 +380,13 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 
 func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 	var builder distsql.RequestBuilder
-	builder.SetKeyRanges(r).
-		SetDAGRequest(e.dagPB).
-		SetStartTS(e.startTS).
+	builder.SetKeyRanges(r)
+	if e.hasRowCountUpperBound {
+		builder.SetDAGRequestWithRowCountUpperBound(e.dagPB, e.rowCountUpperBound)
+	} else {
+		builder.SetDAGRequest(e.dagPB)
+	}
+	builder.SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
@@ -1688,7 +1697,8 @@ func (w *indexWorker) extractLookupTaskData(
 	if w.adaptiveLimitController != nil {
 		// Reserve before extracting handles so a large DistSQL chunk cannot be
 		// admitted directly into table lookup tasks beyond the physical window.
-		reserved, ok, err := w.adaptiveLimitController.ReserveLookup(ctx, w.batchSize)
+		// The controller applies its current batch limit after waking up.
+		reserved, ok, err := w.adaptiveLimitController.ReserveLookup(ctx, w.maxBatchSize)
 		if err != nil {
 			return data, err
 		}

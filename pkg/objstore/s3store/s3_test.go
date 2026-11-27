@@ -29,6 +29,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -38,6 +40,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	. "github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	. "github.com/pingcap/tidb/pkg/objstore/s3like"
@@ -90,6 +93,9 @@ func TestApply(t *testing.T) {
 		if test.errReturn {
 			require.Error(t, err)
 			require.Regexp(t, test.errMsg, err.Error())
+			for _, secret := range []string{"FAKE_ENDPOINT_USER", "FAKE_ENDPOINT_PASS", "FAKE_ENDPOINT_TOKEN"} {
+				require.NotContains(t, err.Error(), secret)
+			}
 		} else {
 			require.NoError(t, err)
 		}
@@ -134,7 +140,15 @@ func TestApply(t *testing.T) {
 			options: S3BackendOptions{
 				Endpoint: "!http:12345",
 			},
-			errMsg:    "parse (.*)!http:12345(.*): first path segment in URL cannot contain colon.*",
+			errMsg:    "invalid S3 endpoint URL.*",
+			errReturn: true,
+		},
+		{
+			name: "invalid endpoint with credentials",
+			options: S3BackendOptions{
+				Endpoint: "https://FAKE_ENDPOINT_USER:FAKE_ENDPOINT_PASS@host/path%zz?sig=FAKE_ENDPOINT_TOKEN",
+			},
+			errMsg:    "invalid S3 endpoint URL.*",
 			errReturn: true,
 		},
 	}
@@ -897,7 +911,7 @@ func TestOpenAsBufio(t *testing.T) {
 
 	reader, err := s.Storage.Open(ctx, "plain-text-file", nil)
 	require.NoError(t, err)
-	require.Nil(t, reader.Close())
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 	bufReader := bufio.NewReaderSize(reader, 5)
 	content, err := bufReader.ReadString('\n')
 	require.NoError(t, err)
@@ -1067,9 +1081,9 @@ func TestS3RangeReaderRetryReadAndUnRetryableCase(t *testing.T) {
 			}).Times(times)
 		reader, err := s.Storage.Open(ctx, "random", &storeapi.ReaderOption{StartOffset: aws.Int64(3)})
 		require.NoError(t, err)
-		defer func() {
+		t.Cleanup(func() {
 			require.NoError(t, reader.Close())
-		}()
+		})
 		slice := make([]byte, 2)
 		n, err := reader.Read(slice)
 		require.NoError(t, err)
@@ -1099,6 +1113,44 @@ func TestS3RangeReaderRetryReadAndUnRetryableCase(t *testing.T) {
 		require.ErrorContains(t, err, "mock read error")
 		require.Zero(t, n)
 	})
+
+	for _, operation := range []string{"read", "seek"} {
+		for _, prefetchSize := range []int{0, 16} {
+			t.Run(fmt.Sprintf("retry after failed %s reopen/prefetch=%d", operation, prefetchSize), func(t *testing.T) {
+				s := CreateS3Suite(t)
+				ctx := context.Background()
+				pipeReader, pipeWriter := io.Pipe()
+				defer pipeReader.Close()
+				require.NoError(t, pipeWriter.CloseWithError(io.ErrUnexpectedEOF))
+				content := strings.Repeat("r", 128*1024)
+				openErr := errors.New("temporary open failure")
+				first := s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(&s3.GetObjectOutput{Body: pipeReader, ContentLength: aws.Int64(int64(len(content)))}, nil)
+				failed := s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).After(first).
+					Return(nil, openErr)
+				s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).After(failed).
+					Return(&s3.GetObjectOutput{
+						Body: io.NopCloser(strings.NewReader(content)), ContentLength: aws.Int64(int64(len(content))),
+					}, nil)
+				reader, err := s.Storage.Open(ctx, "test", &storeapi.ReaderOption{PrefetchSize: prefetchSize})
+				require.NoError(t, err)
+				defer reader.Close()
+				buf := make([]byte, 1)
+				if operation == "read" {
+					_, err = reader.Read(buf)
+					require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+				} else {
+					_, err = reader.Seek(64*1024+1, io.SeekStart)
+					require.ErrorIs(t, err, openErr)
+				}
+				// A failed reopen must not prevent the caller from retrying Read.
+				n, err := reader.Read(buf)
+				require.NoError(t, err)
+				require.Equal(t, 1, n)
+				require.Equal(t, "r", string(buf))
+			})
+		}
+	}
 }
 
 // TestS3ReaderWithRetryEOF check the Read with retry and end with io.EOF.
@@ -1152,6 +1204,208 @@ type alwaysFailReader struct{}
 
 func (alwaysFailReader) Read([]byte) (n int, err error) {
 	return 0, errors.New("always fail read")
+}
+
+type closeCountingReader struct {
+	io.ReadCloser
+	closeCount atomic.Int32
+}
+
+func (r *closeCountingReader) Close() error {
+	r.closeCount.Add(1)
+	return r.ReadCloser.Close()
+}
+
+func TestS3CompressedReaderCloseDuringRetry(t *testing.T) {
+	for _, prefetchSize := range []int{0, 16} {
+		t.Run(fmt.Sprintf("prefetch=%d", prefetchSize), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := CreateS3Suite(t)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				initial := &closeCountingReader{ReadCloser: io.NopCloser(alwaysFailReader{})}
+				first := s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(&s3.GetObjectOutput{Body: initial, ContentLength: aws.Int64(16)}, nil)
+				resumeOpen := make(chan struct{})
+				resume := sync.OnceFunc(func() { close(resumeOpen) })
+				defer resume()
+				var requestCtx context.Context
+				s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).After(first).
+					DoAndReturn(func(ctx context.Context, _ *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+						requestCtx = ctx
+						select {
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						case <-resumeOpen:
+							return nil, errors.New("retry released for cleanup")
+						}
+					})
+				storage := WithCompression(s.Storage, compressedio.Zstd, compressedio.DecompressConfig{ZStdDecodeConcurrency: 2})
+				reader, err := storage.Open(ctx, "test.zst", &storeapi.ReaderOption{PrefetchSize: prefetchSize})
+				require.NoError(t, err)
+				closeDone := make(chan struct{})
+				var closeErr error
+				startClose := sync.OnceFunc(func() {
+					go func() {
+						closeErr = reader.Close()
+						close(closeDone)
+					}()
+				})
+				defer func() {
+					// Release a stuck retry only after checking that Close can cancel it.
+					resume()
+					startClose()
+					<-closeDone
+				}()
+				synctest.Wait()
+				require.NotNil(t, requestCtx)
+				require.NoError(t, requestCtx.Err())
+				startClose()
+				synctest.Wait()
+				select {
+				case <-closeDone:
+					require.NoError(t, closeErr)
+				default:
+					t.Fatal("compressed reader Close is blocked on the retry")
+				}
+				require.ErrorIs(t, requestCtx.Err(), context.Canceled)
+				require.NoError(t, ctx.Err())
+				require.EqualValues(t, 1, initial.closeCount.Load())
+			})
+		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type observedHTTPBody struct {
+	io.ReadCloser
+	readStarted func()
+	readDone    chan<- error
+}
+
+func (r *observedHTTPBody) Read(p []byte) (int, error) {
+	r.readStarted()
+	n, err := r.ReadCloser.Read(p)
+	select {
+	case r.readDone <- err:
+	default:
+	}
+	return n, err
+}
+
+func TestS3CompressedReaderCloseDuringRead(t *testing.T) {
+	for _, prefetchSize := range []int{0, 16} {
+		t.Run(fmt.Sprintf("prefetch=%d", prefetchSize), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			requestDone := make(chan error, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Open must receive the headers, but every body Read must wait for cancellation.
+				w.Header().Set("Content-Length", "16")
+				w.WriteHeader(http.StatusOK)
+				if err := http.NewResponseController(w).Flush(); err != nil {
+					t.Errorf("flush response headers: %v", err)
+					return
+				}
+				<-r.Context().Done()
+				select {
+				case requestDone <- r.Context().Err():
+				default:
+				}
+			}))
+			defer func() {
+				cancel()
+				server.CloseClientConnections()
+				server.Close()
+			}()
+
+			readStarted := make(chan struct{})
+			readDone := make(chan error, 1)
+			notifyReadStarted := sync.OnceFunc(func() { close(readStarted) })
+			httpClient := server.Client()
+			transport := httpClient.Transport
+			httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				response, err := transport.RoundTrip(req)
+				if err == nil {
+					response.Body = &observedHTTPBody{
+						ReadCloser:  response.Body,
+						readStarted: notifyReadStarted,
+						readDone:    readDone,
+					}
+				}
+				return response, err
+			})
+			storage, err := NewS3Storage(ctx, &backuppb.S3{
+				Endpoint:        server.URL,
+				Region:          "us-west-2",
+				Bucket:          "bucket",
+				AccessKey:       "none",
+				SecretAccessKey: "none",
+				Provider:        "minio",
+				ForcePathStyle:  true,
+			}, &storeapi.Options{HTTPClient: httpClient})
+			require.NoError(t, err)
+			compressedStorage := WithCompression(storage, compressedio.Zstd, compressedio.DecompressConfig{ZStdDecodeConcurrency: 2})
+			reader, err := compressedStorage.Open(ctx, "test.zst", &storeapi.ReaderOption{PrefetchSize: prefetchSize})
+			require.NoError(t, err)
+			closeDone := make(chan struct{})
+			var closeErr error
+			startClose := sync.OnceFunc(func() {
+				go func() {
+					closeErr = reader.Close()
+					close(closeDone)
+				}()
+			})
+			defer func() {
+				// Force the HTTP read to finish even if Close failed to cancel it.
+				cancel()
+				server.CloseClientConnections()
+				startClose()
+				select {
+				case <-closeDone:
+				case <-time.After(5 * time.Second):
+					t.Error("compressed reader Close did not finish during cleanup")
+				}
+			}()
+
+			select {
+			case <-readStarted:
+			case <-time.After(5 * time.Second):
+				t.Fatal("compressed reader did not start reading the HTTP response body")
+			}
+			select {
+			case err := <-readDone:
+				t.Fatalf("HTTP response body Read finished before cancellation: %v", err)
+			default:
+			}
+			require.NoError(t, ctx.Err())
+			startClose()
+			select {
+			case <-closeDone:
+				require.NoError(t, closeErr)
+			case <-time.After(5 * time.Second):
+				t.Fatal("compressed reader Close is blocked on the HTTP response body")
+			}
+			select {
+			case err := <-readDone:
+				require.ErrorIs(t, err, context.Canceled)
+			default:
+				t.Fatal("compressed reader Close returned before the HTTP response body Read finished")
+			}
+			select {
+			case err := <-requestDone:
+				require.ErrorIs(t, err, context.Canceled)
+			case <-time.After(5 * time.Second):
+				t.Fatal("compressed reader Close did not cancel the HTTP request")
+			}
+			require.NoError(t, ctx.Err())
+		})
+	}
 }
 
 // TestS3ReaderWithRetryFailed check the Read with retry failed after maxRetryTimes.

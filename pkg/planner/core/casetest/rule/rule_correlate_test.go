@@ -318,3 +318,26 @@ func TestCorrelateWithCostFactors(tt *testing.T) {
 		}
 	})
 }
+
+func TestCorrelateLimitedSubqueryKeepsRows(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int not null, b int, key(a))")
+	tk.MustExec("create table t2 (a int not null, b int, key(a))")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3)")
+	tk.MustExec("insert into t2 values (1,10),(2,20)")
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	tk.MustExec("set tidb_opt_hash_join_cost_factor = 1000")
+	tk.MustExec("set tidb_opt_merge_join_cost_factor = 1000")
+	tk.MustExec("set tidb_opt_index_join_cost_factor = 1000")
+	// The correlate round clones the subquery's DataSource before its stats are
+	// derived; the clone's access paths must still get their ranges, or the
+	// probe side becomes a TableDual and the semi join returns no rows.
+	plan := tk.MustQuery("explain format = 'brief' select * from t1 where a in (select a from t2 limit 5)").Rows()
+	for _, row := range plan {
+		require.NotContains(t, fmt.Sprint(row), "TableDual")
+	}
+	tk.MustQuery("select * from t1 where a in (select a from t2 limit 5)").Sort().Check(testkit.Rows("1 1", "2 2"))
+}

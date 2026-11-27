@@ -18,10 +18,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"go.uber.org/zap"
 )
 
@@ -61,9 +63,11 @@ type AnalysisJob interface {
 		sctx sessionctx.Context,
 	) (bool, string)
 
-	// Analyze executes the analyze statement within a transaction.
+	// Analyze executes the analyze statement within a transaction. It runs in the sessions of pool,
+	// and takes the process ID of the statement from procIDs.
 	Analyze(
-		statsHandle statstypes.StatsHandle,
+		pool statsutil.SessionPool,
+		procIDs statsutil.AutoAnalyzeProcIDGenerator,
 		sysProcTracker sysproctrack.Tracker,
 	) error
 
@@ -103,6 +107,17 @@ const (
 	notPartitionedTable = "table is not a partitioned table"
 	partitionNotExist   = "partition does not exist"
 )
+
+func checkTableReadyForAnalyze(tableInfo *model.TableInfo) (bool, string, bool) {
+	if tableInfo == nil || tableInfo.MaterializedView == nil {
+		return true, "", false
+	}
+	initBuildState := tableInfo.MaterializedView.GetInitBuildState()
+	if initBuildState.IsReady() {
+		return true, "", false
+	}
+	return false, initBuildState.AccessErrorMessage(tableInfo.Name.O), true
+}
 
 // isValidToAnalyze checks whether the table is valid to analyze.
 // It checks the last failed analysis duration and the average analysis duration.

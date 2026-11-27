@@ -21,6 +21,7 @@ go_library(
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/intest",

@@ -77,6 +77,7 @@ type GCWorker struct {
 	tikvStore            tikv.Storage
 	pdClient             pd.Client
 	pdGCControllerClient pdgc.InternalController
+	disableGC            bool // Snapshot of the disable-gc startup setting.
 	gcIsRunning          bool
 	lastFinish           time.Time
 	cancel               context.CancelFunc
@@ -115,6 +116,7 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 		tikvStore:            tikvStore,
 		pdClient:             gcPDClient,
 		pdGCControllerClient: gcPDClient.GetGCInternalController(keyspaceID),
+		disableGC:            config.GetGlobalConfig().DisableGC,
 		gcIsRunning:          false,
 		lastFinish:           time.Now(),
 		regionLockResolver:   tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
@@ -521,7 +523,11 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	}
 
 	if !enable {
-		logutil.Logger(ctx).Warn("gc status is disabled.", zap.String("category", "gc worker"))
+		reason := vardef.TiDBGCEnable
+		if w.disableGC {
+			reason = "disable-gc"
+		}
+		logutil.Logger(ctx).Warn("gc status is disabled.", zap.String("category", "gc worker"), zap.String("reason", reason))
 		return false, 0, nil
 	}
 	now, err := w.getOracleTime()
@@ -556,6 +562,9 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 }
 
 func (w *GCWorker) checkGCEnable() (bool, error) {
+	if w.disableGC {
+		return false, nil
+	}
 	return w.loadBooleanWithDefault(gcEnableKey, gcDefaultEnableValue)
 }
 
@@ -1710,14 +1719,22 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 				}
 				mockJ.FillFinishedArgs(&model.DropTableArgs{})
 			} else if strings.HasPrefix(x, "mview-cutover:") {
-				ids := strings.Split(strings.TrimPrefix(x, "mview-cutover:"), ":")
-				if len(ids) != 2 {
+				values := strings.Split(strings.TrimPrefix(x, "mview-cutover:"), ":")
+				if len(values) < 2 || len(values) > 4 {
 					return
 				}
-				oldMViewID, oldErr := strconv.ParseInt(ids[0], 10, 64)
-				shadowTableID, shadowErr := strconv.ParseInt(ids[1], 10, 64)
+				oldMViewID, oldErr := strconv.ParseInt(values[0], 10, 64)
+				shadowTableID, shadowErr := strconv.ParseInt(values[1], 10, 64)
 				if oldErr != nil || shadowErr != nil {
 					return
+				}
+				var oldMLogID int64
+				if len(values) >= 3 {
+					var logErr error
+					oldMLogID, logErr = strconv.ParseInt(values[2], 10, 64)
+					if logErr != nil {
+						return
+					}
 				}
 				mockJ = &model.Job{
 					Version: model.GetJobVerInUse(),
@@ -1725,8 +1742,21 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 					Type:    model.ActionMViewRefreshOutOfPlaceCutover,
 					TableID: oldMViewID,
 				}
+				var newMLogID int64
+				if len(values) == 4 {
+					var logErr error
+					newMLogID, logErr = strconv.ParseInt(values[3], 10, 64)
+					if logErr != nil {
+						return
+					}
+					mockJ.State = model.JobStateCancelled
+				}
 				mockJ.FillArgs(&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
-					OldMViewID: oldMViewID, ShadowTableID: shadowTableID, BuildReadTSO: 1,
+					OldMViewID:    oldMViewID,
+					ShadowTableID: shadowTableID,
+					OldMLogID:     oldMLogID,
+					NewMLogID:     newMLogID,
+					BuildReadTSO:  1,
 				})
 			}
 		default:
@@ -1775,7 +1805,16 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 		if err2 != nil {
 			return err2
 		}
-		physicalTableIDs = append(physicalTableIDs, args.OldMViewID)
+		if historyJob.IsCancelled() {
+			if args.NewMLogID != 0 {
+				physicalTableIDs = append(physicalTableIDs, args.NewMLogID)
+			}
+		} else {
+			physicalTableIDs = append(physicalTableIDs, args.OldMViewID)
+			if args.OldMLogID != 0 {
+				physicalTableIDs = append(physicalTableIDs, args.OldMLogID)
+			}
+		}
 	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 		var args *model.TruncateTableArgs
 		args, err = model.GetFinishedTruncateTableArgs(historyJob)

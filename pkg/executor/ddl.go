@@ -20,12 +20,14 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -106,11 +108,26 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	switch s := e.stmt.(type) {
 	case *ast.CreateTableStmt:
 		if s.TemporaryKeyword == ast.TemporaryLocal {
+			if err := checkLatestSchemaReadOnly(e.Ctx(), s.Table.Schema); err != nil {
+				return err
+			}
 			return e.createSessionTemporaryTable(s)
 		}
 	case *ast.DropTableStmt:
 		if s.IsView {
 			break
+		}
+		// Validate all local targets before dropping any of them.
+		for _, target := range s.Tables {
+			_, local, err := e.getLocalTemporaryTable(target.Schema, target.Name)
+			if err != nil {
+				return err
+			}
+			if local {
+				if err := checkLatestSchemaReadOnly(e.Ctx(), target.Schema); err != nil {
+					return err
+				}
+			}
 		}
 
 		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
@@ -145,6 +162,16 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		// if all tables are local temporary, directly drop those tables.
 		if len(s.Tables) == 0 {
 			return e.dropLocalTemporaryTables(localTempTablesToDrop)
+		}
+	case *ast.TruncateTableStmt:
+		_, local, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+		if err != nil {
+			return err
+		}
+		if local {
+			if err := checkLatestSchemaReadOnly(e.Ctx(), s.Table.Schema); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -269,6 +296,9 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 		return errors.Trace(err)
 	}
 	if exist {
+		if err := checkLatestSchemaReadOnly(e.Ctx(), s.Table.Schema); err != nil {
+			return err
+		}
 		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	}
 	err = e.ddlExecutor.TruncateTable(e.Ctx(), ident)
@@ -348,7 +378,14 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 		return exeerrors.ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
 	}
 
-	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
+	failpoint.InjectCall("afterCreateViewPreprocess", e.Ctx())
+	// Only metadata was read in this transaction; preceding user writes were
+	// already committed above. A read-only transition can cache this transaction's
+	// ID and block the view job until it ends. Start an empty transaction to release
+	// that ID while retaining a context provider for statement completion hooks.
+	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
+		return errors.Trace(err)
+	}
 	return e.ddlExecutor.CreateView(e.Ctx(), s)
 }
 
@@ -450,7 +487,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	var tblInfo *model.TableInfo
 	// Let check table first. Related isssue #46296.
 	if s.Table != nil {
-		job, tblInfo, err = e.getRecoverTableByTableName(s.Table)
+		job, tblInfo, err = e.getRecoverTableByTableName(s.Table, false)
 	} else {
 		job, tblInfo, err = e.getRecoverTableByJobID(s, dom)
 	}
@@ -531,16 +568,32 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
 // it will use the recover snapshot of DDL job to get the dropped/truncated table information.
-func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
+// extraJobTypes lets callers inspect additional candidates to explicitly reject unsupported objects.
+func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error), extraJobTypes ...model.ActionType) (bool, error) {
 	getTable := func(startTS uint64, schemaID int64, tableID int64) (*model.TableInfo, error) {
 		snapMeta := dom.GetSnapshotMeta(startTS)
 		tbl, err := snapMeta.GetTable(schemaID, tableID)
 		return tbl, err
 	}
-	return ddl.GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, fn)
+	return ddl.GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, fn, extraJobTypes...)
 }
 
-func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
+func checkFlashbackTableMaterializedView(tblInfo *model.TableInfo) error {
+	var objectType string
+	switch {
+	case tblInfo.MaterializedView != nil:
+		objectType = "materialized view table"
+	case tblInfo.MaterializedViewLog != nil:
+		objectType = "materialized view log table"
+	case tblInfo.MaterializedViewShadow != nil:
+		objectType = "materialized view shadow table"
+	default:
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FLASHBACK TABLE on " + objectType)
+}
+
+func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName, forFlashback bool) (*model.Job, *model.TableInfo, error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil, nil, err
@@ -552,13 +605,26 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	if schemaName == "" {
 		return nil, nil, errors.Trace(plannererrors.ErrNoDB)
 	}
+	dom := domain.GetDomain(e.Ctx())
+	if forFlashback {
+		is := dom.InfoSchema()
+		if schema, ok := is.SchemaByName(ast.NewCIStr(schemaName)); ok {
+			currentTable, err := is.TableByName(context.Background(), schema.Name, tableName.Name)
+			if err != nil {
+				if !infoschema.ErrTableNotExists.Equal(err) {
+					return nil, nil, err
+				}
+			} else if err := checkFlashbackTableMaterializedView(currentTable.Meta()); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
 	gcSafePoint, err := gcutil.GetGCSafePoint(e.Ctx())
 	if err != nil {
 		return nil, nil, err
 	}
 	var jobInfo *model.Job
 	var tableInfo *model.TableInfo
-	dom := domain.GetDomain(e.Ctx())
 	handleJobAndTableInfo := func(job *model.Job, tblInfo *model.TableInfo) (bool, error) {
 		if tblInfo.Name.L != tableName.Name.L {
 			return false, nil
@@ -568,14 +634,25 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 			return false, nil
 		}
 		if schema.Name.L == schemaName {
+			if forFlashback {
+				if err := checkFlashbackTableMaterializedView(tblInfo); err != nil {
+					return false, err
+				}
+			}
 			tableInfo = tblInfo
 			jobInfo = job
 			return true, nil
 		}
 		return false, nil
 	}
+	var extraJobTypes []model.ActionType
+	if forFlashback {
+		// Inspect MV drops in history order so they cannot be skipped in favor of
+		// an older ordinary table with the same name. The callback rejects them.
+		extraJobTypes = []model.ActionType{model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog, model.ActionDropMaterializedViewShadow}
+	}
 	fn := func(jobs []*model.Job) (bool, error) {
-		return GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
+		return GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo, extraJobTypes...)
 	}
 	err = ddl.IterHistoryDDLJobs(txn, fn)
 	if err != nil {
@@ -615,12 +692,21 @@ func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
-	job, tblInfo, err := e.getRecoverTableByTableName(s.Table)
+	job, tblInfo, err := e.getRecoverTableByTableName(s.Table, true)
 	if err != nil {
 		return err
 	}
 	if len(s.NewName) != 0 {
+		oldTableName := tblInfo.Name
+		tblInfo = tblInfo.Clone()
 		tblInfo.Name = ast.NewCIStr(s.NewName)
+		oldSchemaName := ast.NewCIStr(job.SchemaName)
+		for _, fk := range tblInfo.ForeignKeys {
+			if fk.Version >= model.FKVersion1 &&
+				fk.RefSchema.L == oldSchemaName.L && fk.RefTable.L == oldTableName.L {
+				fk.RefTable = tblInfo.Name
+			}
+		}
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -712,6 +798,35 @@ func (e *DDLExec) getRecoverDBByName(schemaName ast.CIStr) (recoverSchemaInfo *m
 			}
 			if schemaInfo.Name.L != schemaName.L {
 				continue
+			}
+			if job.BinlogInfo == nil || job.BinlogInfo.SchemaVersion <= 0 {
+				return false, errors.New("flashback database: dropped database has no final schema version")
+			}
+			currentMeta := dom.GetSnapshotMeta(txn.StartTS())
+			diff, err := currentMeta.GetSchemaDiff(job.BinlogInfo.SchemaVersion)
+			if err != nil {
+				return false, err
+			}
+			if diff == nil || diff.Version != job.BinlogInfo.SchemaVersion || diff.Type != model.ActionDropSchema || diff.SchemaID != job.SchemaID {
+				return false, errors.New("flashback database: final drop schema diff is missing or inconsistent")
+			}
+			commitTS, err := meta.GetSchemaDiffCommitTS(currentMeta, dom.Store(), diff.Version, txn.StartTS())
+			if err != nil {
+				return false, errors.Annotate(err, "flashback database: cannot determine drop commit timestamp")
+			}
+			if commitTS <= job.StartTS {
+				return false, errors.New("flashback database: invalid drop commit timestamp")
+			}
+			// The job's submission snapshot can precede the last refresh/purge.
+			// Recover both metadata and maintenance state immediately before the
+			// transaction that removed the database and its maintenance records.
+			snapshotTS = commitTS - 1
+			schemaInfo, err = dom.GetSnapshotMeta(snapshotTS).GetDatabase(job.SchemaID)
+			if err != nil {
+				return false, err
+			}
+			if schemaInfo == nil || schemaInfo.Name.L != schemaName.L {
+				return false, errors.New("flashback database: schema metadata missing before drop commit")
 			}
 			recoverSchemaInfo = &model.RecoverSchemaInfo{
 				DBInfo:              schemaInfo,

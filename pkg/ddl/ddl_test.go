@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -42,16 +43,56 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+func TestJobStepStateRestore(t *testing.T) {
+	job := &model.Job{
+		SchemaState: model.StateWriteReorganization,
+		BinlogInfo:  &model.HistoryInfo{SchemaVersion: 1},
+		ResumeReason: &model.JobResumeReason{
+			Type: model.JobResumeReasonKVDiskFull,
+		},
+		MultiSchemaInfo: &model.MultiSchemaInfo{SubJobs: []*model.SubJob{{
+			Type: model.ActionAddColumn, State: model.JobStateRunning, SchemaState: model.StateWriteReorganization,
+		}}},
+		ReorgMeta: &model.DDLReorgMeta{},
+	}
+	restoreAll, _ := snapshotJobStepState(job)
+	job.SchemaState = model.StatePublic
+	job.BinlogInfo.SchemaVersion = 2
+	job.BinlogInfo.TableInfo = &model.TableInfo{ID: 99}
+	job.ResumeReason = nil
+	job.LastSchemaVersion = 2
+	job.MultiSchemaInfo.SubJobs[0].State = model.JobStateDone
+	job.MultiSchemaInfo.SubJobs[0].SchemaState = model.StatePublic
+	job.State = model.JobStateCancelling
+	job.Error = toTError(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("retry"))
+	job.ErrorCount = 1
+	job.ReorgMeta.UseCloudStorage = true
+	restoreAll(job.Error)
+	require.Equal(t, model.StateWriteReorganization, job.SchemaState)
+	require.EqualValues(t, 1, job.BinlogInfo.SchemaVersion)
+	require.Nil(t, job.BinlogInfo.TableInfo)
+	require.True(t, job.HasResumeReason(model.JobResumeReasonKVDiskFull))
+	require.Zero(t, job.LastSchemaVersion)
+	require.Equal(t, model.JobStateRunning, job.MultiSchemaInfo.SubJobs[0].State)
+	require.Equal(t, model.StateWriteReorganization, job.MultiSchemaInfo.SubJobs[0].SchemaState)
+	require.Equal(t, model.JobStateCancelling, job.State)
+	require.ErrorContains(t, job.Error, "retry")
+	require.EqualValues(t, 1, job.ErrorCount)
+	require.True(t, job.ReorgMeta.UseCloudStorage)
+}
 
 func TestDiagnosticModeDisallowsSwitchMDL(t *testing.T) {
 	t.Cleanup(diagnosticmode.SetForTest(true))
@@ -350,7 +391,7 @@ func TestModifyColumn(t *testing.T) {
 		{"int", "int unsigned", nil},
 		{"varchar(10)", "text", nil},
 		{"varbinary(10)", "blob", nil},
-		{"text", "blob", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
+		{"text", "blob", nil},
 		{"varchar(10)", "varchar(8)", nil},
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
@@ -366,18 +407,251 @@ func TestModifyColumn(t *testing.T) {
 		{"varchar(10) character set gbk", "char(10) character set utf8", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
 		{"varchar(10) character set utf8", "char(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
 		{"varchar(10) character set utf8", "varchar(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
+		{"varchar(10) character set gbk collate gbk_bin", "varchar(10) character set gbk collate gbk_chinese_ci", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("change collate from gbk_bin to gbk_chinese_ci")},
 		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
+		{"binary(4)", "char(10)", nil},
+		{"varchar(10)", "varchar(10) character set ascii", nil},
+		{"varchar(10)", "varchar(8) character set ascii", nil},
+		{"char(4) character set utf8mb4", "varchar(10) character set ascii", nil},
+		{"date", "bit(8)", dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("change from original type date to bit(8) is currently unsupported yet")},
 	}
 	for _, tt := range tests {
 		colA := colDefStrToColInfo(t, tt.origin, ctx)
 		colB := colDefStrToColInfo(t, tt.to, ctx)
-		err := checkModifyTypes(colA, colB, false)
+		tbl := &model.TableInfo{Columns: []*model.ColumnInfo{colA}}
+		_, err := analyzeModifyColumn(tbl, colA, colB)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
 		} else {
 			require.EqualError(t, err, tt.err.Error())
 		}
 	}
+
+	t.Run("primaryKeyAndIndexedCollation", func(t *testing.T) {
+		newIndexedTable := func(col *model.ColumnInfo) *model.TableInfo {
+			col.ID = 1
+			col.Offset = 0
+			return &model.TableInfo{
+				Columns: []*model.ColumnInfo{col},
+				Indices: []*model.IndexInfo{{
+					ID:      1,
+					Name:    ast.NewCIStr("idx_a"),
+					Columns: []*model.IndexColumn{{Name: col.Name, Offset: 0, Length: -1}},
+				}},
+			}
+		}
+
+		pkOld := colDefStrToColInfo(t, "int", ctx)
+		pkOld.AddFlag(mysql.PriKeyFlag)
+		pkNew := colDefStrToColInfo(t, "tinyint", ctx)
+		_, err := analyzeModifyColumn(newIndexedTable(pkOld), pkOld, pkNew)
+		require.EqualError(t, err, "[ddl:8200]Unsupported modify column: this column has primary key flag")
+
+		pkCharsetOld := colDefStrToColInfo(t, "varchar(10) character set utf8mb4", ctx)
+		pkCharsetOld.AddFlag(mysql.PriKeyFlag)
+		pkCharsetNew := colDefStrToColInfo(t, "varchar(10) character set ascii", ctx)
+		_, err = analyzeModifyColumn(newIndexedTable(pkCharsetOld), pkCharsetOld, pkCharsetNew)
+		require.EqualError(t, err, "[ddl:8200]Unsupported modify column: this column has primary key flag")
+
+		pkCollateOld := colDefStrToColInfo(t, "varchar(10) collate utf8_bin", ctx)
+		pkCollateOld.AddFlag(mysql.PriKeyFlag)
+		pkCollateNew := colDefStrToColInfo(t, "varchar(10) collate utf8_general_ci", ctx)
+		_, err = analyzeModifyColumn(newIndexedTable(pkCollateOld), pkCollateOld, pkCollateNew)
+		require.EqualError(t, err, "[ddl:8200]Unsupported modify column: this column has primary key flag")
+
+		idxOld := colDefStrToColInfo(t, "varchar(10) collate utf8_bin", ctx)
+		idxNew := colDefStrToColInfo(t, "varchar(10) collate utf8_general_ci", ctx)
+		idxTbl := newIndexedTable(idxOld)
+		change, err := analyzeModifyColumn(idxTbl, idxOld, idxNew)
+		require.NoError(t, err)
+		require.Equal(t, model.ModifyTypeIndexReorg, change)
+		resolved, err := resolveModifyColumnType(idxTbl, idxOld, idxNew, model.ModifyTypeNone, mysql.ModeStrictAllTables)
+		require.NoError(t, err)
+		require.Equal(t, model.ModifyTypeReorg, resolved)
+
+		textOld := colDefStrToColInfo(t, "text collate utf8_bin", ctx)
+		textNew := colDefStrToColInfo(t, "text collate utf8_general_ci", ctx)
+		change, err = analyzeModifyColumn(newIndexedTable(textOld), textOld, textNew)
+		require.NoError(t, err)
+		require.Equal(t, model.ModifyTypeReorg, change)
+
+		reorgOld := colDefStrToColInfo(t, "char(20) collate utf8mb4_bin", ctx)
+		reorgNew := colDefStrToColInfo(t, "varchar(10) collate utf8_unicode_ci", ctx)
+		_, err = analyzeModifyColumn(newIndexedTable(reorgOld), reorgOld, reorgNew)
+		require.NoError(t, err)
+
+		origNewCollate := collate.NewCollationEnabled()
+		t.Cleanup(func() { collate.SetNewCollationEnabledForTest(origNewCollate) })
+
+		collate.SetNewCollationEnabledForTest(false)
+		oldCollatePKOld := colDefStrToColInfo(t, "char(4) character set utf8", ctx)
+		oldCollatePKOld.AddFlag(mysql.PriKeyFlag)
+		oldCollatePKNew := colDefStrToColInfo(t, "varchar(8) character set utf8", ctx)
+		change, err = analyzeModifyColumn(newIndexedTable(oldCollatePKOld), oldCollatePKOld, oldCollatePKNew)
+		require.NoError(t, err)
+		require.Equal(t, model.ModifyTypeNoReorg, change)
+
+		collate.SetNewCollationEnabledForTest(true)
+		newCollateBinPKOld := colDefStrToColInfo(t, "char(4) character set utf8 collate utf8_bin", ctx)
+		newCollateBinPKOld.AddFlag(mysql.PriKeyFlag)
+		newCollateBinPKNew := colDefStrToColInfo(t, "varchar(8) character set utf8 collate utf8_bin", ctx)
+		_, err = analyzeModifyColumn(newIndexedTable(newCollateBinPKOld), newCollateBinPKOld, newCollateBinPKNew)
+		require.EqualError(t, err, "[ddl:8200]Unsupported modify column: this column has primary key flag")
+
+		newCollateCIPKOld := colDefStrToColInfo(t, "char(4) character set utf8 collate utf8_general_ci", ctx)
+		newCollateCIPKOld.AddFlag(mysql.PriKeyFlag)
+		newCollateCIPKNew := colDefStrToColInfo(t, "varchar(8) character set utf8 collate utf8_general_ci", ctx)
+		change, err = analyzeModifyColumn(newIndexedTable(newCollateCIPKOld), newCollateCIPKOld, newCollateCIPKNew)
+		require.NoError(t, err)
+		require.Equal(t, model.ModifyTypeNoReorg, change)
+	})
+
+	t.Run("resolveModifyColumnType", func(t *testing.T) {
+		newTable := func(col *model.ColumnInfo, hasIndex, partitioned, hasTiFlash bool) *model.TableInfo {
+			col.ID = 1
+			col.Offset = 0
+			tbl := &model.TableInfo{Columns: []*model.ColumnInfo{col}}
+			if hasIndex {
+				tbl.Indices = []*model.IndexInfo{{
+					ID:      1,
+					Name:    ast.NewCIStr("idx_a"),
+					Columns: []*model.IndexColumn{{Name: col.Name, Offset: 0, Length: -1}},
+				}}
+			}
+			if partitioned {
+				tbl.Partition = &model.PartitionInfo{}
+			}
+			if hasTiFlash {
+				tbl.TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1}
+			}
+			return tbl
+		}
+
+		for _, tc := range []struct {
+			name        string
+			origin      string
+			to          string
+			hasIndex    bool
+			partitioned bool
+			hasTiFlash  bool
+			storedType  model.ModifyColumnType
+			sqlMode     mysql.SQLMode
+			wantInitial model.ModifyColumnType
+			wantPostPre model.ModifyColumnType
+		}{
+			{
+				name:        "intWidening",
+				origin:      "int",
+				to:          "bigint",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeNoReorg,
+			},
+			{
+				name:        "intWideningNullToNotNull",
+				origin:      "int",
+				to:          "bigint not null",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeNoReorgWithCheck,
+			},
+			{
+				name:        "intNarrowStrict",
+				origin:      "bigint",
+				to:          "int",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeNoReorgWithCheck,
+			},
+			{
+				name:        "intNarrowNonStrict",
+				origin:      "bigint",
+				to:          "int",
+				sqlMode:     mysql.ModeNone,
+				wantInitial: model.ModifyTypeReorg,
+			},
+			{
+				name:        "intNarrowLegacyTypeNull",
+				origin:      "bigint",
+				to:          "int",
+				storedType:  model.ModifyColumnType(mysql.TypeNull),
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeReorg,
+			},
+			{
+				name:        "intNarrowPartitioned",
+				origin:      "bigint",
+				to:          "int",
+				partitioned: true,
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeReorg,
+			},
+			{
+				name:        "intNarrowTiFlash",
+				origin:      "bigint",
+				to:          "int",
+				hasTiFlash:  true,
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeReorg,
+			},
+			{
+				name:        "intSignToggleStatsFallback",
+				origin:      "int",
+				to:          "int unsigned",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeReorg,
+			},
+			{
+				name:        "varcharToCharPrecheckNoIndex",
+				origin:      "varchar(20) collate utf8mb4_bin",
+				to:          "char(10) collate utf8mb4_bin",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypePrecheck,
+				wantPostPre: model.ModifyTypeNoReorgWithCheck,
+			},
+			{
+				name:        "varcharToCharPrecheckIndexedBin",
+				origin:      "varchar(20) collate utf8mb4_bin",
+				to:          "char(10) collate utf8mb4_bin",
+				hasIndex:    true,
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypePrecheck,
+				wantPostPre: model.ModifyTypeIndexReorg,
+			},
+			{
+				name:        "charToVarcharNoIndex",
+				origin:      "char(10) collate utf8mb4_bin",
+				to:          "varchar(20) collate utf8mb4_bin",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeNoReorg,
+			},
+			{
+				name:        "charToVarcharIndexedBin",
+				origin:      "char(10) collate utf8mb4_bin",
+				to:          "varchar(20) collate utf8mb4_bin",
+				hasIndex:    true,
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeIndexReorg,
+			},
+			{
+				name:        "binaryWideningReorg",
+				origin:      "binary(4)",
+				to:          "binary(8)",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeReorg,
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				oldCol := colDefStrToColInfo(t, tc.origin, ctx)
+				newCol := colDefStrToColInfo(t, tc.to, ctx)
+				tbl := newTable(oldCol, tc.hasIndex, tc.partitioned, tc.hasTiFlash)
+				got, err := resolveModifyColumnType(tbl, oldCol, newCol, tc.storedType, tc.sqlMode)
+				require.NoError(t, err)
+				require.Equal(t, tc.wantInitial, got)
+				if tc.wantPostPre != model.ModifyTypeNone {
+					post := resolveModifyColumnTypeAfterPrecheck(tbl, oldCol, newCol, got, tc.sqlMode)
+					require.Equal(t, tc.wantPostPre, post)
+				}
+			})
+		}
+	})
 }
 
 func TestProcessModifyColumnOptionsGenerated(t *testing.T) {
@@ -686,16 +960,24 @@ func TestMergeContinuousKeyRanges(t *testing.T) {
 	}
 }
 
-func TestDetectAndUpdateJobVersion(t *testing.T) {
+func TestDetectAndUpdateClassicCompatibility(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	d := &ddl{ddlCtx: &ddlCtx{ctx: ctx}}
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	d := &ddl{ddlCtx: &ddlCtx{ctx: ctx, store: store}}
 
+	originalDisabled := vardef.IsLegacyECDSASessionTokenDisabled()
 	reset := func() {
 		model.SetJobVerInUse(model.JobVersion1)
 		model.SetGlobalIndexV1Supported(false)
+		vardef.SetLegacyECDSASessionTokenDisabled(kerneltype.IsNextGen())
 	}
-	t.Cleanup(reset)
+	t.Cleanup(func() {
+		reset()
+		vardef.SetLegacyECDSASessionTokenDisabled(originalDisabled)
+	})
 	// other ut in the same address space might change it
 	reset()
 	require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
@@ -703,7 +985,7 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 
 	t.Run("in ut", func(t *testing.T) {
 		reset()
-		d.detectAndUpdateJobVersion()
+		d.detectAndUpdateClassicCompatibility()
 		if testargsv1.ForceV1 {
 			require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
 		} else {
@@ -731,7 +1013,7 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		reset()
 		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.6-alpha-228-g650888fea7-dirty",
 			"8.0.11-TiDB-v9.0.0", "8.0.11-TiDB-8.5.6-beta")
-		d.detectAndUpdateJobVersionOnce()
+		d.detectAndUpdateClassicCompatibilityOnce()
 		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 		require.True(t, model.GetGlobalIndexV1Supported())
 	})
@@ -739,22 +1021,22 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 	t.Run("all support v2 but not global index v1", func(t *testing.T) {
 		reset()
 		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.5.5")
-		d.detectAndUpdateJobVersionOnce()
+		d.detectAndUpdateClassicCompatibilityOnce()
 		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 		require.False(t, model.GetGlobalIndexV1Supported())
 	})
 
 	t.Run("v1 first, later all support v2 and global index v1", func(t *testing.T) {
 		reset()
-		intervalBak := detectJobVerInterval
+		intervalBak := detectClassicCompatibilityInterval
 		t.Cleanup(func() {
-			detectJobVerInterval = intervalBak
+			detectClassicCompatibilityInterval = intervalBak
 		})
-		detectJobVerInterval = time.Millisecond
+		detectClassicCompatibilityInterval = time.Millisecond
 		// unknown version
 		mockGetAllServerInfo(t, "unknown")
 		iterateCnt := 0
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDetectAndUpdateJobVersionOnce", func() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDetectAndUpdateClassicCompatibilityOnce", func() {
 			iterateCnt++
 			if iterateCnt == 1 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
@@ -786,30 +1068,114 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 				require.False(t, model.GetGlobalIndexV1Supported())
 				// upgrade to version supporting global index v1
 				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.6", "8.0.11-TiDB-v8.5.6", "8.0.11-TiDB-v8.5.6")
+			} else if iterateCnt == 7 && kerneltype.IsClassic() {
+				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+				require.True(t, model.GetGlobalIndexV1Supported())
+				require.False(t, vardef.IsLegacyECDSASessionTokenDisabled())
+				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v8.5.9")
 			} else {
 				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 				require.True(t, model.GetGlobalIndexV1Supported())
+				require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
 			}
 		})
-		d.detectAndUpdateJobVersion()
+		d.detectAndUpdateClassicCompatibility()
 		d.wg.Wait()
-		require.EqualValues(t, 7, iterateCnt)
+		if kerneltype.IsClassic() {
+			require.EqualValues(t, 8, iterateCnt)
+		} else {
+			require.EqualValues(t, 7, iterateCnt)
+		}
+	})
+
+	t.Run("legacy ECDSA upgrade gate", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip("NextGen always disables legacy ECDSA")
+		}
+		cases := []struct {
+			name     string
+			versions []string
+			disabled bool
+		}{
+			{name: "empty registry"},
+			{name: "unknown version", versions: []string{"unknown"}},
+			{name: "invalid version", versions: []string{"8.0.11-TiDB-invalid"}},
+			{name: "mixed versions", versions: []string{"8.0.11-TiDB-v8.5.8", "8.0.11-TiDB-v8.5.9"}},
+			{name: "prerelease", versions: []string{"8.0.11-TiDB-v8.5.9-alpha"}, disabled: true},
+			{name: "minimum version", versions: []string{"8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v8.5.9"}, disabled: true},
+			{name: "newer versions", versions: []string{"8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v9.0.0-alpha"}, disabled: true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				reset()
+				store, err := mockstore.NewMockStore()
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, store.Close()) })
+				d := &ddl{ddlCtx: &ddlCtx{ctx: ctx, store: store}}
+				mockGetAllServerInfo(t, tc.versions...)
+				require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
+				require.Equal(t, tc.disabled, vardef.IsLegacyECDSASessionTokenDisabled())
+				txn, err := store.Begin()
+				require.NoError(t, err)
+				disabled, err := meta.NewReader(txn).GetLegacyECDSASessionTokenDisabled()
+				require.NoError(t, err)
+				require.Equal(t, tc.disabled, disabled)
+				require.NoError(t, txn.Rollback())
+			})
+		}
+	})
+
+	t.Run("persist before disabling and never re-enable", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip("NextGen always disables legacy ECDSA")
+		}
+		reset()
+		store, err := mockstore.NewMockStore()
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, store.Close()) })
+		d := &ddl{ddlCtx: &ddlCtx{ctx: ctx, store: store}}
+		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.9")
+		const commitFailpoint = "github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn"
+		testfailpoint.Enable(t, commitFailpoint, `return("no_retry")`)
+		require.ErrorContains(t, d.detectAndUpdateClassicCompatibilityOnce(), "mock commit error")
+		require.False(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		testfailpoint.Disable(t, commitFailpoint)
+		require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		// A restarted node must observe the persisted switch, even with old or
+		// unknown server versions. A completed transition cannot be reversed.
+		vardef.SetLegacyECDSASessionTokenDisabled(false)
+		mockGetAllServerInfo(t, "unknown")
+		require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.8")
+		require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		vardef.SetLegacyECDSASessionTokenDisabled(false)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", `return("invalid JSON")`)
+		require.Error(t, d.detectAndUpdateClassicCompatibilityOnce())
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
 	})
 }
 
 func TestSetGlobalIndexVersionFlag(t *testing.T) {
-	tblInfo := &model.TableInfo{} // non-clustered (zero value)
-	idxInfo := &model.IndexInfo{Global: true, Unique: false}
+	originalSupported := model.GetGlobalIndexV1Supported()
+	t.Run("version_selection", func(t *testing.T) {
+		tblInfo := &model.TableInfo{} // non-clustered (zero value)
+		idxInfo := &model.IndexInfo{Global: true, Unique: false}
 
-	model.SetGlobalIndexV1Supported(false)
-	t.Cleanup(func() { model.SetGlobalIndexV1Supported(false) })
+		model.SetGlobalIndexV1Supported(false)
+		t.Cleanup(func() { model.SetGlobalIndexV1Supported(originalSupported) })
 
-	setGlobalIndexVersion(tblInfo, idxInfo)
-	require.Equal(t, uint8(0), idxInfo.GlobalIndexVersion)
+		setGlobalIndexVersion(tblInfo, idxInfo)
+		require.Equal(t, uint8(0), idxInfo.GlobalIndexVersion)
 
-	model.SetGlobalIndexV1Supported(true)
-	setGlobalIndexVersion(tblInfo, idxInfo)
-	require.Equal(t, model.GlobalIndexVersionV1, idxInfo.GlobalIndexVersion)
+		model.SetGlobalIndexV1Supported(true)
+		setGlobalIndexVersion(tblInfo, idxInfo)
+		require.Equal(t, model.GlobalIndexVersionV1, idxInfo.GlobalIndexVersion)
+	})
+	// Cleanup must preserve the capability negotiated before this test.
+	require.Equal(t, originalSupported, model.GetGlobalIndexV1Supported())
 }
 
 func TestGetJobCheckIntervalForCreateMaterializedView(t *testing.T) {
@@ -971,4 +1337,227 @@ func TestCheckHistoryJobStmtType(t *testing.T) {
 
 	require.True(t, checkHistoryJobStmtType(model.ActionCreateTables, createTableStmt))
 	require.False(t, checkHistoryJobStmtType(model.ActionCreateTables, createMLogStmt))
+}
+
+func TestMaterializedViewLogBaseInitialBuildState(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		state      model.SchemaState
+		buildState model.MViewInitBuildState
+		valid      bool
+	}{
+		{name: "ready", state: model.StatePublic, buildState: model.MViewInitBuildReady, valid: true},
+		{name: "deferred", state: model.StatePublic, buildState: model.MViewInitBuildDeferred},
+		{name: "building", state: model.StatePublic, buildState: model.MViewInitBuildBuilding},
+		{name: "not public", state: model.StateWriteOnly, buildState: model.MViewInitBuildReady},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			info := &model.TableInfo{
+				State:            testCase.state,
+				MaterializedView: &model.MaterializedViewInfo{InitBuildState: testCase.buildState},
+			}
+			require.Equal(t, testCase.valid, isValidMaterializedViewLogBaseTable("test", info))
+		})
+	}
+}
+
+func TestValidateMaterializedViewSourceState(t *testing.T) {
+	base := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("base"),
+		State: model.StatePublic,
+	}
+	require.NoError(t, validateMaterializedViewSourceState("test", base))
+
+	view := base.Clone()
+	view.View = &model.ViewInfo{}
+	require.ErrorContains(t, validateMaterializedViewSourceState("test", view), "is not BASE TABLE")
+
+	building := base.Clone()
+	building.MaterializedView = &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildBuilding}
+	require.ErrorContains(t, validateMaterializedViewSourceState("test", building), "initial build is in progress")
+
+	deferred := base.Clone()
+	deferred.MaterializedView = &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildDeferred}
+	require.ErrorContains(t, validateMaterializedViewSourceState("test", deferred), "initial build has not completed")
+}
+
+func TestValidateMaterializedViewSourceMLog(t *testing.T) {
+	source := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("mv_parent"),
+		State: model.StatePublic,
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{
+			MLogID: 2,
+		},
+	}
+	mlog := &model.TableInfo{
+		ID:                  2,
+		Name:                ast.NewCIStr("$mlog$mv_parent"),
+		State:               model.StatePublic,
+		MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: 1},
+	}
+	require.NoError(t, validateMaterializedViewSourceMLog("test", source, mlog))
+
+	wrongBase := mlog.Clone()
+	wrongBase.MaterializedViewLog.BaseTableID = 3
+	require.ErrorContains(t, validateMaterializedViewSourceMLog("test", source, wrongBase), "is not a materialized view log")
+
+	wrongID := mlog.Clone()
+	wrongID.ID = 3
+	require.ErrorContains(t, validateMaterializedViewSourceMLog("test", source, wrongID), "is not a materialized view log")
+
+	notMLog := mlog.Clone()
+	notMLog.MaterializedViewLog = nil
+	require.ErrorContains(t, validateMaterializedViewSourceMLog("test", source, notMLog), "is not a materialized view log")
+}
+
+func TestOnCreateMaterializedViewBaseCheckNestedSource(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(source, mlog *model.TableInfo)
+		err    string
+	}{
+		{name: "ready"},
+		{name: "building", mutate: func(source, _ *model.TableInfo) {
+			source.MaterializedView.InitBuildState = model.MViewInitBuildBuilding
+		}, err: "initial build is in progress"},
+		{name: "deferred", mutate: func(source, _ *model.TableInfo) {
+			source.MaterializedView.InitBuildState = model.MViewInitBuildDeferred
+		}, err: "initial build has not completed"},
+		{name: "source_not_public", mutate: func(source, _ *model.TableInfo) {
+			source.State = model.StateWriteOnly
+		}, err: "not in public"},
+		{name: "wrong_mlog_source", mutate: func(_, mlog *model.TableInfo) {
+			mlog.MaterializedViewLog.BaseTableID = 99
+		}, err: "invalid materialized view log metadata"},
+		{name: "mlog_not_public", mutate: func(_, mlog *model.TableInfo) {
+			mlog.State = model.StateWriteOnly
+		}, err: "invalid materialized view log metadata"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := mockstore.NewMockStore()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, store.Close()) }()
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+			err = kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+				m := meta.NewMutator(txn)
+				require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+				source := &model.TableInfo{
+					ID: 2, Name: ast.NewCIStr("mv_parent"), State: model.StatePublic,
+					MaterializedView:     &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildReady},
+					MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 3},
+				}
+				mlog := &model.TableInfo{
+					ID: 3, Name: ast.NewCIStr("$mlog$mv_parent"), State: model.StatePublic,
+					MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: source.ID},
+				}
+				if tc.mutate != nil {
+					tc.mutate(source, mlog)
+				}
+				require.NoError(t, m.CreateTableOrView(1, source))
+				require.NoError(t, m.CreateTableOrView(1, mlog))
+				actual, err := onCreateMaterializedViewBaseCheck(m, 1, source.ID, "test")
+				if tc.err == "" {
+					require.NoError(t, err)
+					require.Equal(t, source.ID, actual.ID)
+				} else {
+					require.ErrorContains(t, err, tc.err)
+					require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(err))
+					if validateErr := validateMaterializedViewSourceMLog("test", source, mlog); validateErr != nil {
+						require.True(t, dbterror.ErrInvalidDDLJob.Equal(err))
+						require.ErrorContains(t, err, validateErr.Error())
+					}
+				}
+				return nil
+			})
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateMaterializedViewNestingDepth(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		sharedDepth int
+		cycle       bool
+		missing     bool
+		err         string
+	}{
+		{name: "shared_sources_at_limit", sharedDepth: 13},
+		{name: "shared_sources_above_limit", sharedDepth: 14, err: "materialized view nesting depth exceeds maximum of 16"},
+		{name: "cycle", cycle: true, err: "materialized view nesting depth exceeds maximum of 16"},
+		{name: "missing_source", missing: true, err: "table 99 missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tables := map[int64]*model.TableInfo{1: {ID: 1}}
+			for depth := 1; depth <= tc.sharedDepth; depth++ {
+				id := int64(depth + 1)
+				tables[id] = &model.TableInfo{ID: id, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{id - 1}}}
+			}
+			sharedID := int64(tc.sharedDepth + 1)
+			tables[100] = &model.TableInfo{ID: 100, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{sharedID}}}
+			source := &model.TableInfo{ID: 101, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{sharedID, 100}}}
+			if tc.cycle {
+				source.MaterializedView.BaseTableIDs = []int64{source.ID}
+				tables[source.ID] = source
+			}
+			if tc.missing {
+				source.MaterializedView.BaseTableIDs = []int64{99}
+			}
+			err := validateMaterializedViewNestingDepth(source, func(id int64) (*model.TableInfo, error) {
+				if tbl, ok := tables[id]; ok {
+					return tbl, nil
+				}
+				return nil, fmt.Errorf("table %d missing", id)
+			})
+			if tc.err == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.err)
+			}
+		})
+	}
+}
+
+func TestOnCreateMaterializedViewBaseCheckNestingDepth(t *testing.T) {
+	for _, sourceDepth := range []int{0, 1, 15, 16, 17} {
+		t.Run(fmt.Sprintf("source_depth_%d", sourceDepth), func(t *testing.T) {
+			store, err := mockstore.NewMockStore()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, store.Close()) }()
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+			err = kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+				m := meta.NewMutator(txn)
+				require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+				const mlogID int64 = 100
+				var source *model.TableInfo
+				for depth := 0; depth <= sourceDepth; depth++ {
+					source = &model.TableInfo{
+						ID: int64(depth + 2), Name: ast.NewCIStr(fmt.Sprintf("source_%d", depth)), State: model.StatePublic,
+					}
+					if depth > 0 {
+						source.MaterializedView = &model.MaterializedViewInfo{BaseTableIDs: []int64{source.ID - 1}}
+					}
+					if depth == sourceDepth {
+						source.MaterializedViewBase = &model.MaterializedViewBaseInfo{MLogID: mlogID}
+					}
+					require.NoError(t, m.CreateTableOrView(1, source))
+				}
+				require.NoError(t, m.CreateTableOrView(1, &model.TableInfo{
+					ID: mlogID, Name: ast.NewCIStr("$mlog$source"), State: model.StatePublic,
+					MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: source.ID},
+				}))
+				_, err := onCreateMaterializedViewBaseCheck(m, 1, source.ID, "test")
+				if sourceDepth < 16 {
+					require.NoError(t, err)
+				} else {
+					require.ErrorContains(t, err, "materialized view nesting depth exceeds maximum of 16")
+					require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(err))
+				}
+				return nil
+			})
+			require.NoError(t, err)
+		})
+	}
 }

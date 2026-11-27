@@ -20,6 +20,72 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
+func TestLikeColumnPropagation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	for _, collation := range []string{"utf8mb4_general_ci", "utf8mb4_bin"} {
+		t.Run(collation, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists o, i")
+			tk.MustExec("create table o (k varchar(10) not null) charset utf8mb4 collate " + collation)
+			tk.MustExec("create table i (k varchar(10) not null) charset utf8mb4 collate " + collation)
+			tk.MustExec("insert into o values ('a ')")
+			tk.MustExec("insert into i values ('a')")
+			for _, op := range []string{"like", "ilike"} {
+				t.Run(op, func(t *testing.T) {
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("use test")
+					// Equality ignores trailing spaces, but pattern matching does not.
+					tk.MustQuery("select hex(o.k), hex(i.k), o.k " + op + " 'a_' from o left join i on o.k = i.k").Check(testkit.Rows("6120 61 1"))
+					for _, join := range []string{"o left join i", "i right join o", "o join i"} {
+						tk.MustQuery("select hex(o.k), hex(i.k) from " + join + " on o.k = i.k where o.k " + op + " 'a_'").Check(testkit.Rows("6120 61"))
+						tk.MustQuery("explain format='brief' select hex(o.k), hex(i.k) from " + join + " on o.k = i.k where o.k " + op + " 'a_'").CheckNotContain(op + "(test.i.k")
+						// Also cover a pattern predicate nested under NOT.
+						tk.MustQuery("select hex(o.k), hex(i.k) from " + join + " on o.k = i.k where o.k not " + op + " 'a'").Check(testkit.Rows("6120 61"))
+						// The pattern operand must not be substituted either.
+						tk.MustQuery("select hex(o.k), hex(i.k) from " + join + " on o.k = i.k where 'a ' " + op + " o.k").Check(testkit.Rows("6120 61"))
+					}
+					tk.MustQuery("select hex(o.k), hex(i.k) from o left join i on o.k = i.k and o.k " + op + " 'a_'").Check(testkit.Rows("6120 61"))
+				})
+			}
+		})
+	}
+	for _, collation := range []string{"binary", "utf8mb4_0900_bin"} {
+		t.Run(collation, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists o, i")
+			charset := "utf8mb4"
+			if collation == "binary" {
+				charset = "binary"
+			}
+			tk.MustExec("create table o (k varchar(10) not null) charset " + charset + " collate " + collation)
+			tk.MustExec("create table i (k varchar(10) not null) charset " + charset + " collate " + collation)
+			tk.MustExec("insert into o values ('a ')")
+			tk.MustExec("insert into i values ('a'), ('a ')")
+			for _, op := range []string{"like", "ilike"} {
+				for _, join := range []string{"o left join i", "i right join o", "o join i"} {
+					query := "select hex(o.k), hex(i.k) from " + join + " on o.k = i.k where o.k " + op + " 'a_'"
+					tk.MustQuery(query).Check(testkit.Rows("6120 6120"))
+					tk.MustQuery("explain format='brief' " + query).CheckContain(op + "(test.i.k")
+				}
+			}
+		})
+	}
+	t.Run("numeric_binary_collation", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists o, i")
+		tk.MustExec("create table o (k decimal(4,2) not null)")
+		tk.MustExec("create table i (k decimal(4,1) not null)")
+		tk.MustExec("insert into o values (1)")
+		tk.MustExec("insert into i values (1)")
+		for _, op := range []string{"like", "ilike"} {
+			tk.MustQuery("select o.k, i.k from o left join i on o.k = i.k where o.k " + op + " '1.__'").Check(testkit.Rows("1.00 1.0"))
+		}
+	})
+}
+
 func TestConstantPropagation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

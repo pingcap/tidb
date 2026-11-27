@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -33,29 +34,94 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCreateMaterializedViewValidationCoverage(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+func TestMViewRefreshSourceInfoLifecycle(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("create table t_sources (a int not null, b int not null)")
+	tk.MustExec("insert into t_sources values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_sources (a, b)")
+	tk.MustExec("create materialized view mv_sources (a, s, cnt) refresh fast as select a, sum(b), count(*) from t_sources group by a")
+	tk.MustExec("create materialized view mv_sources_peer (a, cnt) refresh fast as select a, count(*) from t_sources group by a")
+	getID := func(name string) int64 {
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+		require.NoError(t, err)
+		return tbl.Meta().ID
+	}
+	mvID, peerID, mlogID := getID("mv_sources"), getID("mv_sources_peer"), getID("$mlog$t_sources")
+	tk.MustQuery("select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID").Check(testkit.Rows(
+		fmt.Sprintf("%d %d", mvID, mlogID), fmt.Sprintf("%d %d", peerID, mlogID),
+	))
+	tk.MustExec("drop materialized view mv_sources")
+	tk.MustQuery("select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info use index(idx_mlog)").Check(testkit.Rows(fmt.Sprintf("%d %d", peerID, mlogID)))
+	tk.MustExec("drop materialized view mv_sources_peer")
+	tk.MustQuery("select count(*) from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows("0"))
+}
+
+func TestCreateMaterializedViewValidationCoverage(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+08:00'")
 	tk.MustExec("create table t_mv_validation (a int not null, b int not null)")
+	err := tk.ExecToErr("create materialized view mv_no_log (a, cnt) as select a, count(1) from t_mv_validation group by a")
+	require.ErrorContains(t, err, "materialized view log does not exist")
 	tk.MustExec("insert into t_mv_validation values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t_mv_validation (a, b)")
+
+	err = tk.ExecToErr("create materialized view mv_no_count (a, s) as select a, sum(b) from t_mv_validation group by a")
+	require.ErrorContains(t, err, "must contain count(*)/count(1)")
+	err = tk.ExecToErr("create materialized view mv_avg (a, avgv, cnt) as select a, avg(b), count(1) from t_mv_validation group by a")
+	require.ErrorContains(t, err, "unsupported aggregate function")
+	err = tk.ExecToErr("create materialized view mv_rand (a, cnt) as select a, count(1) from t_mv_validation where rand() > 0 group by a")
+	require.ErrorContains(t, err, "WHERE clause must be deterministic")
 
 	// COUNT(column) is supported when the required COUNT(*)/COUNT(1) is also present.
 	tk.MustExec("create materialized view mv_count_column (a, cnt_b, cnt) as select a, count(b), count(1) from t_mv_validation group by a")
 	tk.MustQuery("select a, cnt_b, cnt from mv_count_column order by a").Check(testkit.Rows("1 2 2", "2 1 1"))
 
+	baseTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_mv_validation"))
+	require.NoError(t, err)
+	mvTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_count_column"))
+	require.NoError(t, err)
+	mvInfo := mvTable.Meta().MaterializedView
+	require.NotNil(t, mvInfo)
+	require.Equal(t, []int64{baseTable.Meta().ID}, mvInfo.BaseTableIDs)
+	require.Equal(t, "FAST", mvInfo.RefreshMethod)
+	require.Empty(t, mvInfo.RefreshStartWith)
+	require.Empty(t, mvInfo.RefreshNext)
+	require.Zero(t, mvInfo.AlertWarningSec)
+	require.Zero(t, mvInfo.AlertOverdueSec)
+	require.False(t, mvInfo.AlertRefreshFailed)
+	require.Equal(t, tk.Session().GetSessionVars().SQLMode, mvInfo.DefinitionSQLMode)
+	require.Equal(t, tk.Session().GetSessionVars().SQLMode, mvInfo.RefreshScheduleSQLMode)
+	require.Empty(t, mvInfo.DefinitionTimeZone.Name)
+	require.Equal(t, 8*60*60, mvInfo.DefinitionTimeZone.Offset)
+
 	// Aggregate function names are case-insensitive.
 	tk.MustExec("create materialized view mv_upper_aggregate (a, s, cnt) as select a, SUM(b), COUNT(1) from t_mv_validation group by a")
 	tk.MustQuery("select a, s, cnt from mv_upper_aggregate order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
+	tk.MustExec("create materialized view mv_alias (a, cnt) as select x.a, count(1) from t_mv_validation x where x.b > 0 group by x.a")
+	tk.MustQuery("select a, cnt from mv_alias order by a").Check(testkit.Rows("1 2", "2 1"))
+	tk.MustExec("create materialized view mv_out_alias (k, cnt) as select a as k, count(1) from t_mv_validation group by a")
+	tk.MustQuery("select k, cnt from mv_out_alias order by k").Check(testkit.Rows("1 2", "2 1"))
+
+	tk.MustExec("create table t_mv_sum_time (a int not null, d date not null default '2020-01-01', dt datetime not null default '2020-01-01 00:00:00', ts timestamp not null default '2020-01-01 00:00:00', dur time not null default '00:00:00')")
+	tk.MustExec("create materialized view log on t_mv_sum_time (a, d, dt, ts, dur)")
+	for _, col := range []string{"d", "dt", "ts", "dur"} {
+		err = tk.ExecToErr(fmt.Sprintf("create materialized view mv_sum_%s (a, s, cnt) as select a, sum(%s), count(1) from t_mv_sum_time group by a", col, col))
+		require.ErrorContains(t, err, "does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column", col)
+	}
+
 	// MIN/MAX still require a supporting base-table index, regardless of function case.
 	tk.MustExec("create table t_mv_minmax_validation (a int not null, b int not null, c int not null, index idx_cab(c, a, b))")
 	tk.MustExec("create materialized view log on t_mv_minmax_validation (a, b, c)")
-	err := tk.ExecToErr("create materialized view mv_upper_min (a, b, minc, cnt) as select a, b, MIN(c), COUNT(1) from t_mv_minmax_validation group by a, b")
+	err = tk.ExecToErr("create materialized view mv_upper_min (a, b, minc, cnt) as select a, b, MIN(c), COUNT(1) from t_mv_minmax_validation group by a, b")
 	require.ErrorContains(t, err, "requires base table index whose leading columns cover all GROUP BY columns")
 
 	// Every referenced column must be present in the materialized view log.
@@ -146,10 +212,21 @@ func TestMaterializedViewCommentLength(t *testing.T) {
 	err := tk.ExecToErr(createMVSQL("mv_comment_too_long", commentTooLong))
 	require.ErrorContains(t, err, errTooLongComment("mv_comment_too_long"))
 
+	tk.MustExec(createMVSQL("mv_alter_comment", ""))
+	tk.MustExec(fmt.Sprintf("alter materialized view mv_alter_comment comment = '%s'", commentMaxLen))
+	tk.MustQuery("select length(table_comment) from information_schema.tables where table_schema = 'test' and table_name = 'mv_alter_comment'").Check(testkit.Rows(strconv.Itoa(maxTableCommentLength)))
+	err = tk.ExecToErr(fmt.Sprintf("alter materialized view mv_alter_comment comment = '%s'", commentTooLong))
+	require.ErrorContains(t, err, errTooLongComment("mv_alter_comment"))
+
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec(createMVSQL("mv_comment_truncated", commentTooLong))
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1628|"+errTooLongComment("mv_comment_truncated")))
 	tk.MustQuery("select length(table_comment) from information_schema.tables where table_schema = 'test' and table_name = 'mv_comment_truncated'").Check(testkit.Rows(strconv.Itoa(maxTableCommentLength)))
+
+	tk.MustExec(createMVSQL("mv_alter_comment_truncated", ""))
+	tk.MustExec(fmt.Sprintf("alter materialized view mv_alter_comment_truncated comment = '%s'", commentTooLong))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1628|"+errTooLongComment("mv_alter_comment_truncated")))
+	tk.MustQuery("select length(table_comment) from information_schema.tables where table_schema = 'test' and table_name = 'mv_alter_comment_truncated'").Check(testkit.Rows(strconv.Itoa(maxTableCommentLength)))
 }
 
 func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
@@ -164,6 +241,7 @@ func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 	err = tk.ExecToErr("create materialized view mv_bad_start (a, s, cnt) refresh fast start with 1 next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 	require.ErrorContains(t, err, "REFRESH START WITH expression must return DATE/DATETIME/TIMESTAMP")
 	tk.MustExec("create materialized view mv_date_schedule (a, s, cnt) refresh fast next cast('2030-01-02' as date) as select a, sum(b), count(1) from t group by a")
+	tk.MustExec("create materialized view mv_current_date_schedule (a, s, cnt) refresh fast start with current_date next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 	tk.MustExec("create materialized view mv_ok (a, s, cnt) refresh fast start with now() next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 }
 
@@ -200,8 +278,8 @@ func TestDropMaterializedViewIfExists(t *testing.T) {
 
 	err = tk.ExecToErr("drop materialized view if exists t_drop_if_exists")
 	require.ErrorContains(t, err, "is not MATERIALIZED VIEW")
-	err = tk.ExecToErr("drop materialized view log if exists on mv_drop_if_exists")
-	require.ErrorContains(t, err, "is not BASE TABLE")
+	tk.MustExec("drop materialized view log if exists on mv_drop_if_exists")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test.mv_drop_if_exists'"))
 
 	tk.MustExec("drop materialized view if exists mv_drop_if_exists")
 	tk.MustExec("drop materialized view if exists mv_drop_if_exists")
@@ -231,6 +309,7 @@ func TestAlterMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 	require.ErrorContains(t, err, "REFRESH START WITH expression must return DATE/DATETIME/TIMESTAMP")
 
 	tk.MustExec("alter materialized view mv refresh next cast('2030-01-02' as date)")
+	tk.MustExec("alter materialized view mv refresh start with current_date next date_add(now(), interval 1 hour)")
 	tk.MustExec("alter materialized view mv refresh start with now() next date_add(now(), interval 1 hour)")
 }
 
@@ -246,6 +325,31 @@ func TestCreateMaterializedViewRejectsUnsupportedSelectClauses(t *testing.T) {
 		sql     string
 		errPart string
 	}{
+		{
+			name:    "distinct",
+			sql:     "create materialized view mv_distinct (a, cnt) as select distinct a, count(1) from t group by a",
+			errPart: "does not support SELECT DISTINCT",
+		},
+		{
+			name:    "having",
+			sql:     "create materialized view mv_having (a, cnt) as select a, count(1) from t group by a having count(1) > 0",
+			errPart: "does not support HAVING clause",
+		},
+		{
+			name:    "order by",
+			sql:     "create materialized view mv_order (a, cnt) as select a, count(1) from t group by a order by a",
+			errPart: "does not support ORDER BY clause",
+		},
+		{
+			name:    "limit",
+			sql:     "create materialized view mv_limit (a, cnt) as select a, count(1) from t group by a limit 1",
+			errPart: "does not support LIMIT clause",
+		},
+		{
+			name:    "rollup",
+			sql:     "create materialized view mv_rollup (a, cnt) as select a, count(1) from t group by a with rollup",
+			errPart: "does not support GROUP BY WITH ROLLUP",
+		},
 		{
 			name:    "cte",
 			sql:     "create materialized view mv_cte (a, s, cnt) as with cte as (select a from t) select a, sum(b), count(1) from t group by a",
@@ -437,12 +541,14 @@ func TestMaterializedViewOutOfPlaceCutoverUpdatesMLogDependencies(t *testing.T) 
 	require.NoError(t, err)
 	shadowTableID := shadowTable.Meta().ID
 	lastSuccessReadTSO, lastSuccessReadTSONull := getLastSuccessReadTSO(t, tk, oldMViewID)
+	buildSources, err := mviewutil.ResolveRefreshSources(context.Background(), dom.InfoSchema(), oldMViewID)
+	require.NoError(t, err)
 	oldMViewRevision := oldMView.Meta().Revision
 	const buildReadTSO uint64 = 123456789
 	setRefreshCutoverQueryString(t, tk, "mv_cutover_dependency")
 	require.NoError(t, dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
-		buildReadTSO, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+		buildReadTSO, buildSources, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
 	))
 
 	newMView := mustGetMaterializedView(t, dom, "mv_cutover_dependency")
@@ -481,6 +587,8 @@ func TestMaterializedViewOutOfPlaceCutoverFailureRollsBackMLogDependencies(t *te
 	require.NoError(t, err)
 	shadowTableID := shadowTable.Meta().ID
 	lastSuccessReadTSO, lastSuccessReadTSONull := getLastSuccessReadTSO(t, tk, oldMViewID)
+	buildSources, err := mviewutil.ResolveRefreshSources(context.Background(), dom.InfoSchema(), oldMViewID)
+	require.NoError(t, err)
 	oldMViewRevision := oldMView.Meta().Revision
 
 	const cutoverFailpoint = "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError"
@@ -488,7 +596,7 @@ func TestMaterializedViewOutOfPlaceCutoverFailureRollsBackMLogDependencies(t *te
 	require.NoError(t, failpoint.Enable(cutoverFailpoint, "return"))
 	err = dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
-		123456789, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+		123456789, buildSources, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
 	)
 	require.NoError(t, failpoint.Disable(cutoverFailpoint))
 	require.ErrorContains(t, err, "error after migrating refresh info")
@@ -527,6 +635,8 @@ func TestMaterializedViewOutOfPlaceCutoverPublishEventErrorKeepsRefreshMetadataA
 	require.NoError(t, err)
 	shadowTableID := shadowTable.Meta().ID
 	lastSuccessReadTSO, lastSuccessReadTSONull := getLastSuccessReadTSO(t, tk, oldMViewID)
+	buildSources, err := mviewutil.ResolveRefreshSources(context.Background(), dom.InfoSchema(), oldMViewID)
+	require.NoError(t, err)
 	oldMViewRevision := oldMView.Meta().Revision
 	tk.MustExec(fmt.Sprintf(
 		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, UPDATE_TIME) values (%d, 'test', 'mv_cutover_publish_error', 'warning', UTC_TIMESTAMP())",
@@ -538,7 +648,7 @@ func TestMaterializedViewOutOfPlaceCutoverPublishEventErrorKeepsRefreshMetadataA
 	setRefreshCutoverQueryString(t, tk, "mv_cutover_publish_error")
 	err = dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
-		123456789, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+		123456789, buildSources, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
 	)
 	require.NoError(t, failpoint.Disable(publishEventErrorFailpoint))
 	require.ErrorContains(t, err, "mock publish event error")
@@ -555,7 +665,7 @@ func TestMaterializedViewOutOfPlaceCutoverPublishEventErrorKeepsRefreshMetadataA
 	setRefreshCutoverQueryString(t, tk, "mv_cutover_publish_error")
 	require.NoError(t, dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
-		123456790, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+		123456790, buildSources, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
 	))
 	newMView := mustGetMaterializedView(t, dom, "mv_cutover_publish_error")
 	require.Equal(t, shadowTableID, newMView.Meta().ID)
@@ -604,6 +714,8 @@ func TestMaterializedViewOutOfPlaceCutoverFailureKeepsOldAffinityGroup(t *testin
 	require.NoError(t, err)
 	shadowTableID := shadowTable.Meta().ID
 	lastSuccessReadTSO, lastSuccessReadTSONull := getLastSuccessReadTSO(t, tk, oldMViewID)
+	buildSources, err := mviewutil.ResolveRefreshSources(context.Background(), dom.InfoSchema(), oldMViewID)
+	require.NoError(t, err)
 	// The fixture updates metadata directly, so this test intentionally does not
 	// pass an expected revision to the cutover job.
 
@@ -612,7 +724,7 @@ func TestMaterializedViewOutOfPlaceCutoverFailureKeepsOldAffinityGroup(t *testin
 	setRefreshCutoverQueryString(t, tk, "mv_cutover_affinity")
 	err = dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
-		123456789, nil, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+		123456789, buildSources, nil, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
 	)
 	require.NoError(t, failpoint.Disable(cutoverFailpoint))
 	require.ErrorContains(t, err, "error before commit")
@@ -626,13 +738,85 @@ func TestMaterializedViewOutOfPlaceCutoverFailureKeepsOldAffinityGroup(t *testin
 	setRefreshCutoverQueryString(t, tk, "mv_cutover_affinity")
 	require.NoError(t, dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
-		123456790, nil, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+		123456790, buildSources, nil, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
 	))
 	newMView := mustGetMaterializedView(t, dom, "mv_cutover_affinity")
 	require.Equal(t, shadowTableID, newMView.Meta().ID)
 	groups, err = affinity.GetGroups(context.Background(), []string{oldAffinityGroupID})
 	require.NoError(t, err)
 	require.NotContains(t, groups, oldAffinityGroupID)
+}
+
+func TestMaterializedViewShadowManualDrop(t *testing.T) {
+	for _, dropSource := range []bool{false, true} {
+		t.Run(fmt.Sprintf("source_dropped_%t", dropSource), func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := newMViewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t (a int not null)")
+			tk.MustExec("insert into t values (1)")
+			tk.MustExec("create materialized view log on t (a)")
+			tk.MustExec("create materialized view mv (a, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, count(*) from t group by a")
+			schema, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+			require.True(t, ok)
+			mv, err := dom.InfoSchema().TableByName(context.Background(), schema.Name, ast.NewCIStr("mv"))
+			require.NoError(t, err)
+			now := time.Now()
+			shadowName := func(created time.Time) string {
+				return fmt.Sprintf("__mv_shadow_%d_%d", mv.Meta().ID, created.UnixNano())
+			}
+			ordinaryName := shadowName(now)
+			expiredName := shadowName(now.Add(-8 * 24 * time.Hour))
+			recentName := shadowName(now.Add(-6 * 24 * time.Hour))
+			futureName := shadowName(now.Add(24 * time.Hour))
+			invalidName := fmt.Sprintf("__mv_shadow_%d_invalid", mv.Meta().ID)
+			tk.MustExec(fmt.Sprintf("create table `%s` (a int)", ordinaryName))
+			for _, name := range []string{expiredName, recentName, futureName, invalidName} {
+				shadow := mv.Meta().Clone()
+				shadow.ID = 0
+				shadow.Name = ast.NewCIStr(name)
+				shadow.MaterializedView = nil
+				shadow.MaterializedViewBase = nil
+				shadow.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: mv.Meta().ID}
+				// Creation time comes from the name; all these tables have fresh UpdateTS.
+				require.NoError(t, dom.DDLExecutor().CreateMaterializedViewShadowTable(tk.Session(), schema.ID, schema.Name, shadow))
+			}
+			if dropSource {
+				tk.MustExec("drop materialized view mv")
+			}
+
+			for _, name := range []string{recentName, futureName, invalidName} {
+				err := tk.ExecToErr(fmt.Sprintf("drop table `%s`", name))
+				require.ErrorContains(t, err, "DROP TABLE on materialized view shadow table")
+			}
+
+			// The worker must enforce retention even when executor prechecks are bypassed.
+			recent, err := dom.InfoSchema().TableByName(context.Background(), schema.Name, ast.NewCIStr(recentName))
+			require.NoError(t, err)
+			job := &model.Job{
+				Version:             model.GetJobVerInUse(),
+				SchemaID:            schema.ID,
+				SchemaName:          schema.Name.L,
+				TableID:             recent.Meta().ID,
+				TableName:           recentName,
+				Type:                model.ActionDropTable,
+				BinlogInfo:          &model.HistoryInfo{},
+				InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{Database: schema.Name.L, Table: recentName}},
+			}
+			args := &model.DropTableArgs{Identifiers: []ast.Ident{{Schema: schema.Name, Name: ast.NewCIStr(recentName)}}}
+			err = dom.DDLExecutor().(ddl.ExecutorForTest).DoDDLJobWrapper(tk.Session(), ddl.NewJobWrapperWithArgs(job, args, false))
+			require.ErrorContains(t, err, "DROP TABLE on materialized view shadow table")
+
+			// An expired name with fresh UpdateTS is droppable; ordinary tables have no retention.
+			tk.MustExec(fmt.Sprintf("drop table `%s`, `%s`", expiredName, ordinaryName))
+			tk.MustExec(fmt.Sprintf("drop table if exists `%s`", expiredName))
+			tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Sort().Check(testkit.Rows(recentName, futureName, invalidName))
+			if !dropSource {
+				tk.MustQuery("select * from mv").Check(testkit.Rows("1 1"))
+				require.ErrorContains(t, tk.ExecToErr("drop table mv"), "DROP TABLE on materialized view table")
+			}
+		})
+	}
 }
 
 func TestMaterializedViewShadowCanOnlyBeDroppedByInternalCleanup(t *testing.T) {
@@ -863,6 +1047,25 @@ func TestAlterMaterializedViewAttributesUpdatesAlertThresholds(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t_mv_attr (a int not null, b int not null)")
 	tk.MustExec("create materialized view log on t_mv_attr (a, b)")
+	for _, tt := range []struct {
+		attributes string
+		errPart    string
+	}{
+		{"unknown=1", "unsupported ATTRIBUTES key"},
+		{"mview_alert_warning=-1", "must be non-negative integer seconds"},
+		{"mview_alert_refresh_failed=maybe", "must be yes or no"},
+		{"mview_alert_warning=600,mview_alert_overdue=300", "must be less than or equal"},
+	} {
+		err := tk.ExecToErr(fmt.Sprintf("create materialized view mv_attr_invalid (a, cnt) attributes='%s' as select a, count(1) from t_mv_attr group by a", tt.attributes))
+		require.ErrorContains(t, err, tt.errPart, tt.attributes)
+	}
+	tk.MustExec("create materialized view mv_attr_zero (a, cnt) attributes='mview_alert_warning=0,mview_alert_overdue=0' as select a, count(1) from t_mv_attr group by a")
+	zeroTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_attr_zero"))
+	require.NoError(t, err)
+	require.Zero(t, zeroTable.Meta().MaterializedView.AlertWarningSec)
+	require.Zero(t, zeroTable.Meta().MaterializedView.AlertOverdueSec)
+	require.False(t, zeroTable.Meta().MaterializedView.AlertRefreshFailed)
+
 	tk.MustExec("create materialized view mv_attr (a, s, cnt) refresh fast next date_add(now(), interval 2 hour) attributes='mview_alert_warning=300,mview_alert_overdue=600,mview_alert_refresh_failed=no' as select a, sum(b), count(1) from t_mv_attr group by a")
 
 	getMViewInfo := func() *model.MaterializedViewInfo {
@@ -893,7 +1096,7 @@ func TestAlterMaterializedViewAttributesUpdatesAlertThresholds(t *testing.T) {
 	require.False(t, mvInfo.AlertRefreshFailed)
 	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", mvInfo.RefreshNext)
 
-	err := tk.ExecToErr("alter materialized view mv_attr attributes='unknown=1'")
+	err = tk.ExecToErr("alter materialized view mv_attr attributes='unknown=1'")
 	require.ErrorContains(t, err, "unsupported ATTRIBUTES key")
 	err = tk.ExecToErr("alter materialized view mv_attr attributes='mview_alert_refresh_failed=maybe'")
 	require.ErrorContains(t, err, "must be yes or no")
@@ -914,6 +1117,8 @@ func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
 	require.ErrorContains(t, err, "RENAME TABLE on base table with materialized view log")
 	err = tk.ExecToErr("drop table `$mlog$t_ddl_mv`")
 	require.ErrorContains(t, err, "DROP TABLE on materialized view log table")
+	err = tk.ExecToErr("rename table `$mlog$t_ddl_mv` to `$mlog$t_ddl_mv2`")
+	require.ErrorContains(t, err, "RENAME TABLE on materialized view log table")
 
 	tk.MustExec("create materialized view mv_ddl_mv (a, cnt) as select a, count(1) from t_ddl_mv group by a")
 	tk.MustExec("alter table t_ddl_mv add column c int")
@@ -921,9 +1126,15 @@ func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
 	require.ErrorContains(t, err, "does not support changing charset/collation/nullability of group keys")
 	err = tk.ExecToErr("drop table t_ddl_mv")
 	require.ErrorContains(t, err, "DROP TABLE on base table with materialized view dependencies")
+	err = tk.ExecToErr("rename table t_ddl_mv to t_ddl_mv2")
+	require.ErrorContains(t, err, "RENAME TABLE on base table with materialized view dependencies")
 	err = tk.ExecToErr("alter table mv_ddl_mv add column x int")
 	require.ErrorContains(t, err, "ALTER TABLE on materialized view table")
+	err = tk.ExecToErr("rename table mv_ddl_mv to mv_ddl_mv2")
+	require.ErrorContains(t, err, "RENAME TABLE on materialized view table")
 	err = tk.ExecToErr("alter table `$mlog$t_ddl_mv` add index idx_mlog_b(b)")
+	require.ErrorContains(t, err, "ALTER TABLE on materialized view log table")
+	err = tk.ExecToErr("alter table `$mlog$t_ddl_mv` add column c int")
 	require.ErrorContains(t, err, "ALTER TABLE on materialized view log table")
 	err = tk.ExecToErr("create index idx_mlog_b_create on `$mlog$t_ddl_mv`(b)")
 	require.ErrorContains(t, err, "CREATE INDEX on materialized view log table")

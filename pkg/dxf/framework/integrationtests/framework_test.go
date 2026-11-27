@@ -406,7 +406,7 @@ func TestMaxRuntimeSlots(t *testing.T) {
 				return nil
 			}).Times(1)
 		schedulerExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, nextStep proto.Step) ([][]byte, error) {
+			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ int, nextStep proto.Step) ([][]byte, error) {
 				require.Equal(t, proto.StepOne, nextStep)
 				require.Equal(t, proto.StepPrepared, task.Step)
 				require.Equal(t, []byte(prepareMeta), task.Meta)
@@ -465,7 +465,7 @@ func TestMaxRuntimeSlots(t *testing.T) {
 		).AnyTimes()
 		schedulerExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 		schedulerExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, nextStep proto.Step) ([][]byte, error) {
+			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ int, nextStep proto.Step) ([][]byte, error) {
 				require.Equal(t, proto.StepOne, nextStep)
 				require.Equal(t, proto.StepInit, task.Step)
 				require.Equal(t, []byte(initialTaskMeta), task.Meta)

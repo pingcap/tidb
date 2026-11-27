@@ -25,8 +25,10 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -37,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -511,6 +514,25 @@ func TestWriteSlowLog(t *testing.T) {
 
 	tk.MustExec(`set global tidb_slow_log_rules="Succ:true"`)
 	checkWriteSlowLog(true)
+
+	t.Run("memory cancellation before next is not success", func(t *testing.T) {
+		tk.MustExec("set tidb_slow_log_threshold=0")
+		tk.MustExec("set global tidb_slow_log_rules=''")
+		tk.MustExec("set session tidb_slow_log_rules=''")
+		rs, err := tk.Exec("select * from t")
+		require.NoError(t, err)
+		require.NotNil(t, rs)
+		recorded.TakeAll()
+		killer := &tk.Session().GetSessionVars().SQLKiller
+		killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
+		err = rs.Next(context.Background(), rs.NewChunk(nil))
+		killer.Reset()
+		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err), err)
+		require.NoError(t, rs.Close())
+		entries := recorded.All()
+		require.Len(t, entries, 1)
+		require.Contains(t, entries[0].Message, "Succ: false")
+	})
 }
 
 func TestSlowLogMaxPerSec(t *testing.T) {
@@ -566,6 +588,45 @@ func TestSlowLogMaxPerSec(t *testing.T) {
 	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
 		testkit.Rows("tidb_slow_log_max_per_sec 0"),
 	)
+}
+
+type compilePanicStmt struct {
+	ast.StmtNode
+}
+
+func (*compilePanicStmt) AcceptInPlace(ast.InPlaceVisitor) bool {
+	panic(exeerrors.ErrMemoryExceedForQuery)
+}
+
+func TestCompilePanicSQLRedaction(t *testing.T) {
+	const sql = "SELECT 'compile-secret', 12345"
+	for _, tc := range []struct {
+		mode     string
+		expected string
+	}{
+		{mode: "OFF", expected: sql},
+		{mode: "ON", expected: "select ..."},
+		{mode: "MARKER", expected: "select ‹compile-secret› , ‹12345›"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt(sql, "", "")
+			require.NoError(t, err)
+			sctx := mock.NewContext()
+			sctx.GetSessionVars().EnableRedactLog = tc.mode
+			core, recorded := observer.New(zap.ErrorLevel)
+			ctx := logutil.WithLogger(context.Background(), zap.New(core))
+			compiler := executor.Compiler{Ctx: sctx}
+
+			// Raise a handled panic while preprocessing, so the real recovery log runs.
+			execStmt, err := compiler.Compile(ctx, &compilePanicStmt{StmtNode: stmt})
+			require.Nil(t, execStmt)
+			require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err), "%v", err)
+			entries := recorded.FilterMessage("compile SQL panic").All()
+			require.Len(t, entries, 1)
+			require.Equal(t, tc.expected, entries[0].ContextMap()["SQL"])
+			require.Equal(t, sql, stmt.Text())
+		})
+	}
 }
 
 func BenchmarkCheckSlowThreshold(b *testing.B) {
@@ -802,6 +863,61 @@ func TestDMLMaxExecutionTimeExpiresBeforeExecutorOpen(t *testing.T) {
 type canceledBuildTxnManager struct {
 	sessiontxn.TxnManager
 	onGetForUpdateTS func()
+}
+
+type batchActivationErrorTxnManager struct {
+	sessiontxn.TxnManager
+	failActivation *bool
+}
+
+func (m batchActivationErrorTxnManager) ActivateTxn() (kv.Transaction, error) {
+	if *m.failActivation {
+		return nil, fmt.Errorf("injected transaction activation failure")
+	}
+	return m.TxnManager.ActivateTxn()
+}
+
+func TestBatchReadOnlyActivationError(t *testing.T) {
+	for _, operation := range []string{"Insert", "Delete"} {
+		for _, afterBatch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/afterBatch=%t", operation, afterBatch), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				writer := testkit.NewTestKit(t, store)
+				writer.MustExec("create table test.batch_activation(a int primary key)")
+				writer.MustExec("set global tidb_enable_batch_dml = 1")
+				defer writer.MustExec("set global tidb_enable_batch_dml = 0")
+				writer.MustExec("set tidb_dml_batch_size = 1")
+				sql := "insert into test.batch_activation values (1), (2)"
+				if operation == "Delete" {
+					writer.MustExec(sql)
+					sql = "delete from test.batch_activation"
+				}
+				writer.MustExec("set tidb_batch_" + strings.ToLower(operation) + " = 1")
+				failActivation := !afterBatch
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterBatch"+operation+"NewTxn", func(sessionctx.Context) {
+					failActivation = true
+				})
+				vars := writer.Session().GetSessionVars()
+				manager := sessiontxn.GetTxnManager(writer.Session())
+				defer func() { vars.TxnManager = manager }()
+				vars.TxnManager = batchActivationErrorTxnManager{TxnManager: manager, failActivation: &failActivation}
+				err := writer.ExecToErr(sql)
+				vars.TxnManager = manager
+				require.ErrorContains(t, err, "injected transaction activation failure")
+				require.Equal(t, afterBatch, exeerrors.ErrBatchInsertFail.Equal(err), "%v", err)
+				var expected []string
+				if operation == "Delete" {
+					expected = []string{"1", "2"}
+					if afterBatch {
+						expected = []string{"2"}
+					}
+				} else if afterBatch {
+					expected = []string{"1"}
+				}
+				writer.MustQuery("select * from test.batch_activation order by a").Check(testkit.Rows(expected...))
+			})
+		}
+	}
 }
 
 func (m canceledBuildTxnManager) GetStmtForUpdateTS() (uint64, error) {

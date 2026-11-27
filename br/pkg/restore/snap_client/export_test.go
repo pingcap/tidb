@@ -57,6 +57,7 @@ var (
 func TestMVSystemTablesAreUnrecoverable(t *testing.T) {
 	for _, tableName := range []string{
 		"tidb_mview_refresh_info",
+		"tidb_mview_fast_refresh_source_info",
 		"tidb_mlog_purge_info",
 		"tidb_mview_refresh_hist",
 		"tidb_mview_refresh_alert",
@@ -140,8 +141,9 @@ func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
 	s storeapi.Storage,
 	updateCh glue.Progress,
 	statsConcurrency uint,
+	writer statsWriter,
 ) {
-	rc.registerUpdateMetaAndLoadStats(builder, s, updateCh, statsConcurrency)
+	rc.registerUpdateMetaAndLoadStats(builder, s, updateCh, statsConcurrency, writer)
 }
 
 func (rc *SnapClient) ReplaceTables(

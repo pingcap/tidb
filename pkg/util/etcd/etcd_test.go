@@ -17,6 +17,7 @@ package etcd
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -26,6 +27,30 @@ import (
 func testSetupOriginal(t *testing.T) (context.Context, *clientv3.Client, *integration.ClusterV3) {
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	return context.Background(), cluster.RandClient(), cluster
+}
+
+// TestEtcdOpenTelemetryCompatibility ensures embedded etcd still builds and
+// serves RPCs after upgrading OpenTelemetry dependencies.
+func TestEtcdOpenTelemetryCompatibility(t *testing.T) {
+	integration.BeforeTest(t)
+	ctx, cli, cluster := testSetupOriginal(t)
+	t.Cleanup(func() { cluster.Terminate(t) })
+
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	putResp, err := cli.Put(ctx, "otel-compatibility", "value")
+	require.NoError(t, err)
+
+	// Exercise both unary and streaming RPCs.
+	watch := cli.Watch(ctx, "otel-compatibility", clientv3.WithRev(putResp.Header.Revision))
+	select {
+	case resp := <-watch:
+		require.NoError(t, resp.Err())
+		require.Len(t, resp.Events, 1)
+		require.Equal(t, "value", string(resp.Events[0].Kv.Value))
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
 }
 
 func TestSetEtcdCliByNamespace(t *testing.T) {

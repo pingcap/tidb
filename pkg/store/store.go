@@ -15,6 +15,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strings"
@@ -74,10 +75,10 @@ func Register(tp config.StoreType, driver kv.Driver) error {
 //
 // The engine should be registered before creating storage.
 func New(path string) (kv.Storage, error) {
-	return newStoreWithRetry(path, util.DefaultMaxRetries)
+	return newStoreWithRetry(context.Background(), path, util.DefaultMaxRetries)
 }
 
-func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
+func newStoreWithRetry(ctx context.Context, path string, maxRetries int) (kv.Storage, error) {
 	storeURL, err := url.Parse(path)
 	if err != nil {
 		return nil, err
@@ -91,7 +92,7 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 
 	var s kv.Storage
 	samLogger := logutil.SampleLoggerFactory(30*time.Second, 1, zap.String("path", path))()
-	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
+	err = util.RunWithRetryContext(ctx, maxRetries, util.RetryInterval, func() (bool, error) {
 		logutil.BgLogger().Info("new store", zap.String("path", path))
 		s, err = d.Open(path)
 		if err != nil {
@@ -198,6 +199,12 @@ func mustInitStorage(keyspaceName string) kv.Storage {
 
 // InitStorage initializes the kv.Storage for the given keyspace name.
 func InitStorage(keyspaceName string) (kv.Storage, error) {
+	return InitStorageWithContext(context.Background(), keyspaceName)
+}
+
+// InitStorageWithContext observes cancellation before each attempt to open the
+// keyspace store and during retry backoff. An in-progress driver open runs to completion.
+func InitStorageWithContext(ctx context.Context, keyspaceName string) (kv.Storage, error) {
 	cfg := config.GetGlobalConfig()
 	var fullPath string
 	if keyspaceName == "" {
@@ -205,5 +212,5 @@ func InitStorage(keyspaceName string) (kv.Storage, error) {
 	} else {
 		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", cfg.Store, cfg.Path, keyspaceName)
 	}
-	return New(fullPath)
+	return newStoreWithRetry(ctx, fullPath, util.DefaultMaxRetries)
 }

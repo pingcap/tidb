@@ -22,13 +22,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	util2 "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/server/v3/etcdserver"
@@ -38,6 +42,29 @@ import (
 )
 
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
+
+func TestCrossKeyspaceSessionMetricCardinality(t *testing.T) {
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	cli := cluster.RandClient()
+	createRuntimeSessions := func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		id := uuid.NewString()
+		info := serverinfo.NewCrossKSSyncer(id, func() uint64 { return 0 }, cli, nil, "tenant")
+		require.NoError(t, info.NewSessionAndStoreServerInfo(ctx))
+		defer info.RevokeSession()
+		schema := schemaver.NewEtcdSyncer(cli, id)
+		require.NoError(t, schema.Init(ctx))
+		schema.Close()
+	}
+	createRuntimeSessions()
+	count := testutil.CollectAndCount(metrics.NewSessionHistogram)
+	require.GreaterOrEqual(t, count, 2)
+	createRuntimeSessions()
+	require.Equal(t, count, testutil.CollectAndCount(metrics.NewSessionHistogram))
+}
 
 func TestSyncerSimple(t *testing.T) {
 	vardef.SetEnableMDL(false)

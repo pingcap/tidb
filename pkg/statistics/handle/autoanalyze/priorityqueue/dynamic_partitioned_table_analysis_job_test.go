@@ -52,7 +52,7 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 
-	job.Analyze(handle, dom.SysProcTracker())
+	job.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -98,7 +98,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 
 	valid, _ := job.ValidateAndPrepare(tk.Session())
 	require.True(t, valid)
-	job.Analyze(handle, dom.SysProcTracker())
+	job.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker())
 	// Check the result of analyze index.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))

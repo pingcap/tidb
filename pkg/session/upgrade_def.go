@@ -547,6 +547,12 @@ const (
 
 	// version320 adds restore name routing identity to mysql.tidb_restore_registry.
 	version320 = 320
+
+	// version321 creates the materialized view input-log baseline table.
+	version321 = 321
+
+	// version322 creates storage-class transition history for legacy NextGen keyspaces.
+	version322 = 322
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -560,7 +566,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version320
+var currentBootstrapVersion int64 = version322
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -755,6 +761,8 @@ var (
 		{version: version318, fn: upgradeToVer318},
 		{version: version319, fn: upgradeToVer319},
 		{version: version320, fn: upgradeToVer320},
+		{version: version321, fn: upgradeToVer321},
+		{version: version322, fn: upgradeToVer322},
 	}
 )
 
@@ -2390,4 +2398,23 @@ func upgradeToVer320(s sessionapi.Session, _ int64) {
 		ADD UNIQUE INDEX unique_registration_params_v2 (
 			filter_hash, route_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`, dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params", dbterror.ErrCantDropFieldOrKey)
+}
+
+func upgradeToVer321(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, metadef.CreateTiDBMViewFastRefreshSourceInfoTable)
+}
+
+func upgradeToVer322(s sessionapi.Session, _ int64) {
+	if kerneltype.IsClassic() {
+		return
+	}
+	store := s.GetStore()
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	terror.MustNil(err)
+	isLegacyNextGen, err := meta.NewReader(store.GetSnapshot(ver)).IsLegacyNextGen()
+	terror.MustNil(err)
+	if isLegacyNextGen {
+		// Legacy keyspaces skip the reserved-ID NextGen schema bootstrap.
+		doReentrantDDL(s, metadef.CreateTiDBStorageClassTransitionHistoryTable)
+	}
 }

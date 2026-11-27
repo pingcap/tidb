@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -407,6 +409,45 @@ func TestTableFromMeta(t *testing.T) {
 
 	_, err = tables.AllocHandle(context.Background(), tk.Session().GetTableCtx(), tb)
 	require.Error(t, err)
+}
+
+func TestShardRowIDAllocationStep(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
+	tk.MustExec("set @@tidb_shard_allocate_step = 3")
+
+	// Seed only the session's random source. INSERT and transaction activation
+	// still decide when to draw a new shard.
+	//
+	// This seed gives distinct 15-bit prefixes to the expected allocation groups
+	// within each scenario. If the shard hash or encoding changes intentionally,
+	// check for collisions among those prefixes and pick a new seed if needed.
+	// Keep the expected row groups unless the allocation or transaction reset
+	// semantics change.
+	generator := tk.Session().GetSessionVars().GetRowIDShardGenerator()
+	*generator = *variable.NewRowIDShardGenerator(rand.New(rand.NewSource(12345)), 3) // #nosec G404
+	const rowsByShard = "select group_concat(a order by a) from t group by _tidb_rowid >> 48 order by min(a)"
+
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11)")
+	tk.MustQuery(rowsByShard).Check(testkit.Rows("1,2,3", "4,5,6", "7,8,9", "10,11"))
+
+	tk.MustExec("truncate table t")
+	tk.MustExec("set @@tidb_shard_allocate_step = 5")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustExec("insert into t values (4), (5), (6)")
+	tk.MustExec("insert into t values (7), (8), (9)")
+	tk.MustExec("insert into t values (10)")
+	tk.MustExec("commit")
+	tk.MustQuery(rowsByShard).Check(testkit.Rows("1,2,3,4,5,6", "7,8,9,10"))
+
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values (10)")
+	tk.MustExec("insert into t values (11)")
+	tk.MustExec("insert into t values (12)")
+	tk.MustQuery(rowsByShard).Check(testkit.Rows("10", "11", "12"))
 }
 
 func TestTableFromMetaWithCollateUsesFixedMode(t *testing.T) {

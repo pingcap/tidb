@@ -16,16 +16,26 @@ package ddl
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	utillogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -46,6 +56,12 @@ func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 	dbInfo := args.DBInfo
+	if dbInfo.ReadOnly {
+		if err := checkSchemaReadOnlyCompatibility(jobCtx.ctx); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+	}
 	dbInfo.ID = schemaID
 	dbInfo.State = model.StateNone
 
@@ -161,6 +177,247 @@ func onModifySchemaDefaultPlacement(jobCtx *jobContext, job *model.Job) (ver int
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 	return ver, nil
+}
+
+// checkSchemaReadOnlyBeforeJob closes the gap between statement preprocessing
+// and execution of a queued DDL. Shared dependencies are read sources.
+func checkSchemaReadOnlyBeforeJob(jobCtx *jobContext, job *model.Job) error {
+	for _, target := range job.GetInvolvingSchemaInfo() {
+		if target.Mode != model.ExclusiveInvolving || target.Database == model.InvolvingNone || target.Database == model.InvolvingAll {
+			continue
+		}
+		db, ok := jobCtx.infoCache.GetLatest().SchemaByName(ast.NewCIStr(target.Database))
+		if !ok {
+			continue // Let the operation report its normal missing-schema error.
+		}
+		db, err := jobCtx.metaMut.GetDatabase(db.ID)
+		failpoint.InjectCall("afterSchemaReadOnlyPrecheckRead", job, &err)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if db != nil && db.ReadOnly {
+			return infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O)
+		}
+	}
+	return nil
+}
+
+func checkSchemaReadOnlyCompatibility(ctx context.Context) error {
+	servers, err := infosync.GetAllServerInfo(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(servers) == 0 {
+		return errors.New("cannot determine whether all TiDB nodes support database read-only mode")
+	}
+	for _, server := range servers {
+		if server == nil || !server.SchemaReadOnly {
+			return errors.New("some TiDB nodes do not support database read-only mode; finish upgrading all nodes before enabling it")
+		}
+	}
+	return nil
+}
+
+func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(jobCtx.metaMut, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if job.SchemaState == model.StateNone && dbInfo.ReadOnly == args.ReadOnly {
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
+	}
+	// A failed step discards its metadata writes but persists job progress.
+	// Retry publication if that happened before the flag became effective.
+	if job.SchemaState == model.StatePendingReadOnly && dbInfo.ReadOnly != args.ReadOnly {
+		job.SchemaState = model.StateNone
+	}
+	// If the database is set to read-write from read-only, we don't need the middle state.
+	if dbInfo.ReadOnly && !args.ReadOnly {
+		// Record progress before any metadata mutation, including on panic paths.
+		job.SchemaState = model.StatePendingReadOnly
+		dbInfo.ReadOnly = args.ReadOnly
+		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
+		ver, err = updateSchemaVersion(jobCtx, job)
+		failpoint.Inject("mockErrorOnModifySchemaReadOnly2ReadWrite", func() {
+			err = errors.New("mock error at read only to read write")
+		})
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
+	}
+	trxTableName := infoschema.ClusterTableTiDBTrx
+	failpoint.Inject("mockModifySchemaReadOnlyDDL", func() {
+		trxTableName = infoschema.TableTiDBTrx
+	})
+
+	switch job.SchemaState {
+	case model.StateNone:
+		if err := checkSchemaReadOnlyCompatibility(jobCtx.ctx); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		// In-flight physical ingestion may continue writing after the database
+		// becomes read-only. This is expected behavior in the current version:
+		// IMPORT INTO checks read-only mode only at statement entry. This behavior
+		// may change in future versions.
+		// Rollback can skip StateNone only because all mutations follow this assignment.
+		job.SchemaState = model.StatePendingReadOnly
+		dbInfo.ReadOnly = args.ReadOnly
+		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		ver, err = updateSchemaVersion(jobCtx, job)
+		failpoint.Inject("mockErrorOnModifySchemaReadOnlyStateNone", func() {
+			err = errors.New("mock error at StateNone")
+		})
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	case model.StatePendingReadOnly:
+		sessCtx, err := w.sessPool.Get()
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		defer w.sessPool.Put(sessCtx)
+		session := sess.NewSession(sessCtx)
+		sampleLogger := utillogutil.SampleLoggerFactory(time.Second, 5, zap.String(utillogutil.LogFieldCategory, "ddl"))
+		uncommittedTxn, err := getUncommittedTxnIDs(jobCtx, session, dbInfo.ID, trxTableName, args.DDLStartTS)
+		failpoint.Inject("mockErrorOnModifySchemaReadOnlyStatePendingReadOnly", func() {
+			err = errors.New("mock error at StatePendingReadOnly")
+		})
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// check and wait all uncommitted txn
+		ticker := time.NewTicker(300 * time.Millisecond)
+		defer ticker.Stop()
+		for len(uncommittedTxn) > 0 {
+			select {
+			case <-ticker.C:
+				// The cluster table enumerates all connections even with an ID
+				// predicate, so confirm the whole pending set with one scan.
+				txnIDs := make([]string, 0, len(uncommittedTxn))
+				for txnID := range uncommittedTxn {
+					txnIDs = append(txnIDs, strconv.FormatInt(txnID, 10))
+				}
+				sql := fmt.Sprintf("SELECT ID FROM INFORMATION_SCHEMA.%s WHERE ID IN (%s)", trxTableName, strings.Join(txnIDs, ","))
+				rows, err := executeReadOnlyTxnQuery(jobCtx.stepCtx, session, sql, "check if txns committed")
+				if err != nil {
+					return ver, errors.Trace(err)
+				}
+				active := make(map[int64]struct{}, len(rows))
+				for _, row := range rows {
+					active[row.GetInt64(0)] = struct{}{}
+				}
+				for txnID := range uncommittedTxn {
+					if _, ok := active[txnID]; !ok {
+						delete(uncommittedTxn, txnID)
+						continue
+					}
+					sampleLogger().Info("uncommitted txn block read only ddl",
+						zap.Int64("txn ID", txnID),
+						zap.Int64("job ID", job.ID),
+					)
+				}
+				failpoint.InjectCall("checkUncommittedTxns", uncommittedTxn)
+			case <-jobCtx.stepCtx.Done():
+				return ver, errors.Trace(jobCtx.stepCtx.Err())
+			}
+		}
+
+		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+	}
+	return ver, nil
+}
+
+func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, targetDBID int64, trxTableName string, ddlStartTS uint64) (map[int64]struct{}, error) {
+	var currTS = uint64(0)
+	err := kv.RunInNewTxn(jobCtx.ctx, jobCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
+		currTS = txn.StartTS()
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sql := fmt.Sprintf(
+		"SELECT RELATED_TABLE_IDS, ID FROM INFORMATION_SCHEMA.%s "+
+			"WHERE ID != %d "+ // exclude current ddl
+			"AND ID < %d", // exclude new transactions
+		trxTableName,
+		ddlStartTS,
+		currTS,
+	)
+	t := time.Now()
+	r, err := executeReadOnlyTxnQuery(jobCtx.stepCtx, sess, sql, "get uncommitted txn id")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	queryDur := time.Since(t)
+	ids := make(map[int64]struct{})
+	for _, row := range r {
+		txnID := row.GetInt64(1)
+		relatedTableIDs := row.GetString(0)
+		if relatedTableIDs == "" {
+			continue
+		}
+		tblIDs := strings.Split(relatedTableIDs, ",")
+		for _, tblID := range tblIDs {
+			id, err := strconv.Atoi(tblID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			// A transaction can retain IDs dropped after MDL was disabled. Read
+			// authoritative metadata in the target database so those IDs and IDs
+			// from other databases are skipped without hiding storage errors.
+			tblInfo, err := jobCtx.metaMut.GetTable(targetDBID, int64(id))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if tblInfo != nil {
+				ids[txnID] = struct{}{}
+				break
+			}
+		}
+	}
+	jobCtx.logger.Info("get uncommitted txn id",
+		zap.Int("txn count", len(ids)),
+		zap.Duration("query time", queryDur),
+		zap.Duration("parse time", time.Since(t)-queryDur))
+	return ids, nil
+}
+
+// executeReadOnlyTxnQuery requires a complete cluster transaction scan. RPC
+// failures are warnings rather than SQL errors for cluster information tables.
+func executeReadOnlyTxnQuery(ctx context.Context, session *sess.Session, sql, label string) ([]chunk.Row, error) {
+	rows, err := session.Execute(ctx, sql, label)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	failpoint.InjectCall("afterReadOnlyTxnQuery", session.Context, sql, &rows)
+	warnings := session.GetSessionVars().StmtCtx.GetWarnings()
+	if len(warnings) > 0 {
+		return nil, errors.Annotate(warnings[0].Err, "incomplete transaction scan for database read-only transition")
+	}
+	return rows, nil
 }
 
 func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -371,6 +628,17 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
 			}
 		}
+		if err = setRecoverGCBarrier(jobCtx.stepCtx, w, job.ID, recoverSchemaInfo.SnapshotTS); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		renewCtx, stopBarrierRenew, barrierRenewErr := startRecoverGCBarrierRenewer(jobCtx.stepCtx, w, job.ID, recoverSchemaInfo.SnapshotTS)
+		defer stopBarrierRenew()
+		origStepCtx := jobCtx.stepCtx
+		jobCtx.stepCtx = renewCtx
+		defer func() {
+			jobCtx.stepCtx = origStepCtx
+		}()
 
 		recoverTbls := recoverSchemaInfo.RecoverTableInfos
 		if recoverSchemaInfo.LoadTablesOnExecute {
@@ -380,14 +648,20 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			tables, err2 := snapMeta.ListTables(jobCtx.stepCtx, sid)
 			if err2 != nil {
 				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err2)
+				return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err2)
+			}
+			if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+				return ver, err
 			}
 			recoverTbls = make([]*model.RecoverTableInfo, 0, len(tables))
 			for _, tblInfo := range tables {
+				if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+					return ver, err
+				}
 				autoIDs, err3 := snapMeta.GetAutoIDAccessors(sid, tblInfo.ID).Get()
 				if err3 != nil {
 					job.State = model.JobStateCancelled
-					return ver, errors.Trace(err3)
+					return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err3)
 				}
 				recoverTbls = append(recoverTbls, &model.RecoverTableInfo{
 					SchemaID:      sid,
@@ -401,35 +675,66 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			}
 		}
 
+		if schemaInfo.Name.L != recoverSchemaInfo.OldSchemaName.L {
+			for _, recoverInfo := range recoverTbls {
+				if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+					return ver, err
+				}
+				if err = rewriteRecoveredViewSchema(recoverInfo.TableInfo, recoverSchemaInfo.OldSchemaName, schemaInfo.Name); err != nil {
+					job.State = model.JobStateCancelled
+					return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
+				}
+			}
+		}
+
+		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+			return ver, err
+		}
 		dbInfo := schemaInfo.Clone()
 		dbInfo.State = model.StatePublic
 		err = jobCtx.metaMut.CreateDatabase(dbInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 		// check GC safe point
 		err = checkSafePoint(w, recoverSchemaInfo.SnapshotTS)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
+		}
+
+		if err = w.removeRecoverSchemaGCDeleteRange(jobCtx, recoverSchemaInfo.DropJobID, recoverTbls); err != nil {
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 
 		for _, recoverInfo := range recoverTbls {
+			if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+				return ver, err
+			}
 			if recoverInfo.TableInfo.TTLInfo != nil {
 				// force disable TTL job schedule for recovered table
 				recoverInfo.TableInfo.TTLInfo.Enable = false
 			}
-			ver, err = w.recoverTable(jobCtx.stepCtx, jobCtx.metaMut, job, recoverInfo)
+			ver, err = w.recoverTable(jobCtx, jobCtx.metaMut, job, recoverInfo)
 			if err != nil {
-				return ver, errors.Trace(err)
+				return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 			}
+		}
+		if err = w.recoverSchemaMaterializedViewInfos(jobCtx, recoverTbls, recoverSchemaInfo.SnapshotTS); err != nil {
+			if dbterror.ErrInvalidDDLJob.Equal(err) {
+				job.State = model.JobStateCancelled
+			}
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
+		}
+		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+			return ver, err
 		}
 		schemaInfo.State = model.StatePublic
 		// use to update InfoSchema
 		job.SchemaID = schemaInfo.ID
 		ver, err = updateSchemaVersion(jobCtx, job)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 		// Finish this job.
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, schemaInfo)
@@ -439,6 +744,35 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 		return ver, errors.Errorf("invalid db state %v", schemaInfo.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+// removeRecoverSchemaGCDeleteRange deletes gc_delete_range entries once per
+// shared DropJobID for the database recovery instead of repeating per table.
+func (w *worker) removeRecoverSchemaGCDeleteRange(
+	jobCtx *jobContext,
+	schemaDropJobID int64,
+	recoverTbls []*model.RecoverTableInfo,
+) error {
+	if schemaDropJobID != 0 {
+		return w.removeRecoverGCDeleteRange(jobCtx, schemaDropJobID)
+	}
+	if len(recoverTbls) == 0 {
+		return nil
+	}
+	seenDropJobIDs := make(map[int64]struct{}, 1)
+	for _, recoverInfo := range recoverTbls {
+		if recoverInfo.DropJobID == 0 {
+			continue
+		}
+		if _, ok := seenDropJobIDs[recoverInfo.DropJobID]; ok {
+			continue
+		}
+		seenDropJobIDs[recoverInfo.DropJobID] = struct{}{}
+		if err := w.removeRecoverGCDeleteRange(jobCtx, recoverInfo.DropJobID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *worker) dropSchemaTTLTablesFromExternalWorkload(

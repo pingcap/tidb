@@ -17,7 +17,6 @@ go_library(
         "//br/pkg/utils",
         "//pkg/meta/model",
         "//pkg/objstore/storeapi",
-        "//pkg/statistics/handle",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/util",
         "//pkg/tablecodec",
@@ -48,7 +47,7 @@ go_test(
     ],
     embed = [":metautil"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 19,
     deps = [
         "//br/pkg/utils",
         "//pkg/meta/model",

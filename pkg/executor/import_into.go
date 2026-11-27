@@ -16,24 +16,35 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	goerrors "errors"
 	"fmt"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -44,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -92,6 +104,16 @@ func inheritMViewMaintenanceFlag(parent, child sessionctx.Context) {
 	)
 }
 
+// Open implements the Executor Open interface.
+func (e *ImportIntoExec) Open(ctx context.Context) error {
+	// Reject new user imports before opening children so maintenance admission
+	// does not start query execution or submit tasks.
+	if kerneltype.IsNextGen() && config.GetGlobalConfig().MaintenanceMode && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		return exeerrors.ErrMaintenanceMode.GenWithStackByArgs("IMPORT INTO")
+	}
+	return e.BaseExecutor.Open(ctx)
+}
+
 // Next implements the Executor Next interface.
 func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.MaxChunkSize())
@@ -100,11 +122,12 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		// need to return an empty req to indicate all results have been written
 		return nil
 	}
-	importPlan, err := importer.NewImportPlan(ctx, e.userSctx, e.plan, e.tbl)
+	importPlan, err := NewImportPlan(ctx, e.userSctx, e.plan, e.tbl)
 	if err != nil {
 		return err
 	}
-	astArgs := importer.ASTArgsFromImportPlan(e.plan)
+	importPlan.SchemaReadOnlyBypass = privilege.CanWriteReadOnlySchema(e.userSctx, ast.NewCIStr(importPlan.DBName).L)
+	astArgs := astArgsFromImportPlan(e.plan)
 	if err = ValidateImportIntoColAssignmentsWithEncodeCtx(importPlan, astArgs.ColumnAssignments); err != nil {
 		return err
 	}
@@ -115,13 +138,17 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	}
 	e.controller = controller
 
-	if e.selectExec != nil {
+	if runsQueryOnWorker(e.plan) {
+		if err := e.prepareQuery(ctx); err != nil {
+			return err
+		}
+	} else if e.selectExec != nil {
 		// `import from select` doesn't return rows, so no need to set dataFilled.
 		return e.importFromSelect(ctx)
 	}
 
-	useAsyncPrepare := importinto.ShouldUseAsyncPrepare(e.controller.Plan)
-	if !useAsyncPrepare {
+	useAsyncPrepare := importer.ShouldUseAsyncPrepare(e.controller.Plan)
+	if e.controller.DataSourceType == importer.DataSourceTypeFile && !useAsyncPrepare {
 		if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 			return err2
 		}
@@ -163,6 +190,9 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		if err = e.waitTask(ctx, jobID, task); err != nil {
 			return err
 		}
+	}
+	if e.controller.DataSourceType == importer.DataSourceTypeQuery {
+		return e.fillQueryInfo(ctx, jobID, task.ID)
 	}
 	return e.fillJobInfo(ctx, jobID, req)
 }
@@ -232,25 +262,183 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 }
 
 func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase, error) {
-	importFromServer, err := objstore.IsLocalPath(e.controller.Path)
-	if err != nil {
-		// since we have checked this during creating controller, this should not happen.
-		return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
-	}
 	logutil.Logger(ctx).Info("get job importer", zap.Stringer("param", e.controller.Parameters),
 		zap.Bool("dist-task-enabled", vardef.EnableDistTask.Load()))
-	if importFromServer {
-		chunkMap, err2 := e.controller.PopulateChunks(ctx)
-		if err2 != nil {
-			return 0, nil, err2
+	if e.controller.DataSourceType == importer.DataSourceTypeFile {
+		importFromServer, err := objstore.IsLocalPath(e.controller.Path)
+		if err != nil {
+			// The URI was checked while creating the controller.
+			return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(importdef.ImportIntoDataSource, err.Error())
 		}
-		return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, chunkMap)
+		if importFromServer {
+			chunkMap, err := e.controller.PopulateChunks(ctx)
+			if err != nil {
+				return 0, nil, err
+			}
+			return submitStandaloneImportTask(ctx, e.controller.Plan, e.stmt, chunkMap)
+		}
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
 	if vardef.EnableDistTask.Load() {
-		return importinto.SubmitTask(ctx, e.controller.Plan, e.stmt)
+		return SubmitImportTask(ctx, e.controller.Plan, e.stmt)
 	}
-	return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, nil)
+	return submitStandaloneImportTask(ctx, e.controller.Plan, e.stmt, nil)
+}
+
+// submitStandaloneImportTask submits a task to the distribute framework that only runs on the current node.
+// when import from server-disk, pass engine chunks too, as scheduler might run on another
+// node where we can't access the data files.
+func submitStandaloneImportTask(ctx context.Context, plan *importer.Plan, stmt string, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return 0, nil, err
+	}
+	return doSubmitImportTask(ctx, plan, stmt, serverInfo, chunkMap)
+}
+
+// SubmitImportTask submits a task to the distribute framework that runs on all managed nodes.
+func SubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *proto.TaskBase, error) {
+	return doSubmitImportTask(ctx, plan, stmt, nil, nil)
+}
+
+func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
+	var instances []*serverinfo.ServerInfo
+	if instance != nil {
+		instances = append(instances, instance)
+	}
+	// we use taskManager to submit task, user might not have the privilege to system tables.
+	taskManager, err := dxfstorage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	taskMeta := &taskinfo.TaskMeta{
+		Plan:              *plan,
+		Stmt:              stmt,
+		EligibleInstances: instances,
+		ChunkMap:          chunkMap,
+	}
+	extraParams := proto.ExtraParams{ManualRecovery: plan.ManualRecovery}
+	asyncPrepare := importer.ShouldUseAsyncPrepare(plan)
+	if asyncPrepare {
+		extraParams.PrepareMode = proto.PrepareModeRequired
+		// below params will be filled later in async prepare, init to 1 temporarily.
+		plan.ThreadCnt = 1
+		plan.MaxNodeCnt = 1
+	}
+	planCtx := planner.PlanCtx{
+		Ctx:        ctx,
+		TaskType:   proto.ImportInto,
+		ThreadCnt:  plan.ThreadCnt,
+		MaxNodeCnt: plan.MaxNodeCnt,
+	}
+	var (
+		jobID, taskID int64
+	)
+	var runningOnUserKS bool
+	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		runningOnUserKS = kv.IsUserKS(se.GetStore())
+		var err2 error
+		exec := se.GetSQLExecutor()
+		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
+			plan.User, plan.GroupKey, plan.Parameters, plan.TotalFileSize)
+		if err2 != nil {
+			return err2
+		}
+		if kerneltype.IsClassic() {
+			if plan.SchemaReadOnlyBypass {
+				defer privilege.WithInternalSchemaReadOnlyBypass(se, ast.NewCIStr(plan.DBName).L)()
+			}
+			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
+			if err2 != nil {
+				return err2
+			}
+		}
+		// in classical kernel or if we are inside SYSTEM keyspace itself, we
+		// submit the task to DXF in the same transaction as creating the job.
+		if kerneltype.IsClassic() || kv.IsSystemKS(se.GetStore()) {
+			taskMeta.JobID = jobID
+			planCtx.SessionCtx = se
+			planCtx.TaskKey = taskkey.ForJob(jobID)
+			planCtx.Keyspace = plan.Keyspace
+			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, taskManager); err2 != nil {
+				return err2
+			}
+		}
+		return nil
+	}); err != nil {
+		return 0, nil, err
+	}
+	// in next-gen kernel and we are not running in SYSTEM KS, we submit the task
+	// to DXF service after creating the job, as DXF service runs in SYSTEM keyspace.
+	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
+	dxfTaskMgr := taskManager
+	if runningOnUserKS {
+		failpoint.InjectCall("afterUserImportJobCreatedBeforeDXFTask", jobID)
+		var err2 error
+		dxfTaskMgr, err2 = dxfstorage.GetDXFSvcTaskMgr()
+		if err2 != nil {
+			return 0, nil, err2
+		}
+		if err2 = dxfTaskMgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			taskMeta.JobID = jobID
+			planCtx.SessionCtx = se
+			planCtx.TaskKey = taskkey.ForJob(jobID)
+			planCtx.Keyspace = plan.Keyspace
+			var err2 error
+			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, dxfTaskMgr); err2 != nil {
+				return err2
+			}
+			return nil
+		}); err2 != nil {
+			return 0, nil, err2
+		}
+	}
+	handle.NotifyTaskChange()
+	task, err := dxfTaskMgr.GetTaskBaseByID(ctx, taskID)
+	if err != nil {
+		return 0, nil, err
+	}
+	logFields := []zap.Field{
+		zap.Int64("job-id", jobID),
+		zap.String("task-key", task.Key),
+		zap.Int64("task-id", task.ID),
+		zap.Bool("global-sort", plan.IsGlobalSort()),
+		zap.Bool("async-prepare", asyncPrepare),
+	}
+	if !asyncPrepare {
+		logFields = append(logFields,
+			zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
+			zap.Int("thread-cnt", plan.ThreadCnt),
+			zap.Int("max-node-cnt", plan.MaxNodeCnt),
+		)
+	}
+	logutil.BgLogger().Info("job submitted to task queue", logFields...)
+
+	return jobID, task, nil
+}
+
+func submitTask2DXF(taskMeta *taskinfo.TaskMeta, extraParams proto.ExtraParams, planCtx planner.PlanCtx,
+	taskMgr *dxfstorage.TaskManager) (int64, error) {
+	meta, err := json.Marshal(taskMeta)
+	if err != nil {
+		return 0, err
+	}
+	// Use the supplied session and task manager to preserve the caller's
+	// transaction boundary.
+	return taskMgr.CreateTaskWithSession(
+		planCtx.Ctx,
+		planCtx.SessionCtx,
+		planCtx.TaskKey,
+		planCtx.TaskType,
+		planCtx.Keyspace,
+		planCtx.ThreadCnt,
+		handle.GetTargetScope(),
+		planCtx.MaxNodeCnt,
+		extraParams,
+		meta,
+	)
 }
 
 // waitTask waits for the task to finish.
@@ -276,6 +464,9 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	}
 	defer CloseSession(newSCtx)
 	inheritMViewMaintenanceFlag(e.userSctx, newSCtx)
+	if privilege.CanWriteReadOnlySchema(e.userSctx, ast.NewCIStr(e.controller.Plan.DBName).L) {
+		defer privilege.WithInternalSchemaReadOnlyBypass(newSCtx, ast.NewCIStr(e.controller.Plan.DBName).L)()
+	}
 
 	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2
@@ -313,36 +504,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	})
 	eg.Go(func() error {
 		defer close(selectedChunkCh)
-		fields := exec.RetTypes(e.selectExec)
-		var idAllocator int64
-		chkSize := e.selectExec.InitCap()
-		maxChkSize := e.selectExec.MaxChunkSize()
-		for {
-			// rows will be consumed concurrently, we cannot use chunk pool in session ctx.
-			chk := chunk.New(e.selectExec.RetFieldTypes(), chkSize, maxChkSize)
-			err := exec.Next(egCtx, e.selectExec, chk)
-			if err != nil {
-				return err
-			}
-			if chk.NumRows() == 0 {
-				break
-			}
-			select {
-			case selectedChunkCh <- importer.QueryChunk{
-				Fields:      fields,
-				Chk:         chk,
-				RowIDOffset: idAllocator,
-			}:
-				idAllocator += int64(chk.NumRows())
-			case <-egCtx.Done():
-				return egCtx.Err()
-			}
-			if chkSize < maxChkSize {
-				chkSize = chkSize * 2
-				chkSize = min(chkSize, maxChkSize)
-			}
-		}
-		return nil
+		return sendQueryChunks(egCtx, e.selectExec, selectedChunkCh)
 	})
 	if err := eg.Wait(); err != nil {
 		return err
@@ -426,7 +588,7 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 	if err != nil {
 		return err
 	}
-	taskKey := importinto.TaskKey(jobID)
+	taskKey := taskkey.ForJob(jobID)
 	_, err = manager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	if err == nil {
 		if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
@@ -473,4 +635,96 @@ func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
 		}
 		return nil
 	})
+}
+
+// runsQueryOnWorker returns whether the SELECT of plan runs on a DXF worker
+// instead of the submitting session.
+func runsQueryOnWorker(plan *plannercore.ImportInto) bool {
+	return plan.SelectPlan != nil && kerneltype.IsNextGen()
+}
+
+// prepareQuery captures the SELECT for the query step on a DXF worker.
+func (e *ImportIntoExec) prepareQuery(ctx context.Context) error {
+	if !e.userSctx.GetSessionVars().InMViewMaintenance {
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("IMPORT INTO FROM SELECT outside materialized view maintenance")
+	}
+	if e.controller.IsLocalSort() {
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("IMPORT INTO FROM SELECT without global sort storage")
+	}
+	query, err := importer.CaptureQuerySource(e.userSctx, e.plan.Stmt)
+	if err != nil {
+		return err
+	}
+	return e.controller.InitQuerySource(ctx, query)
+}
+
+// fillQueryInfo preserves the affected-row response of IMPORT FROM SELECT.
+func (e *ImportIntoExec) fillQueryInfo(ctx context.Context, jobID, taskID int64) error {
+	e.dataFilled = true
+	mgr, err := dxfstorage.GetDXFSvcTaskMgr()
+	if err != nil {
+		return err
+	}
+	finished, err := mgr.GetTaskByIDWithHistory(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	// waitTask also returns when the task is paused.
+	if finished.State != proto.TaskStateSucceed {
+		return errors.Errorf("import task %d stopped in state %s", taskID, finished.State)
+	}
+	var meta taskinfo.TaskMeta
+	if err := json.Unmarshal(finished.Meta, &meta); err != nil {
+		return err
+	}
+	stmtCtx := e.userSctx.GetSessionVars().StmtCtx
+	stmtCtx.SetAffectedRows(uint64(meta.Summary.ImportedRows))
+	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %d", meta.Summary.ImportedRows, jobID))
+	return nil
+}
+
+// NewImportPlan adapts a SQL plan to resolved input.
+func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*importer.Plan, error) {
+	failpoint.InjectCall("NewImportPlan", plan)
+	options := make([]*importer.ImportOption, len(plan.Options))
+	for i, opt := range plan.Options {
+		option := &importer.ImportOption{Name: opt.Name}
+		if opt.Value != nil {
+			value, ok := opt.Value.(*expression.Constant)
+			if !ok {
+				return nil, exeerrors.ErrInvalidOptionVal.GenWithStackByArgs(opt.Name)
+			}
+			option.Value = value
+		}
+		options[i] = option
+	}
+	return importer.NewImportPlanFromInput(ctx, userSctx, &importer.Input{
+		DBName:             plan.Table.Schema.L,
+		DBID:               plan.Table.DBInfo.ID,
+		TableInfo:          tbl.Meta(),
+		Path:               plan.Path,
+		Format:             plan.Format,
+		DataSourceType:     getDataSourceType(plan),
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		Options:            options,
+	})
+}
+
+// astArgsFromImportPlan creates ASTArgs from plan.
+func astArgsFromImportPlan(plan *plannercore.ImportInto) *importer.ASTArgs {
+	// FileLocRef are not used in ImportIntoStmt, OnDuplicate not used now.
+	return &importer.ASTArgs{
+		FileLocRef:         ast.FileLocServerOrRemote,
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		OnDuplicate:        ast.OnDuplicateKeyHandlingReplace,
+	}
+}
+
+func getDataSourceType(p *plannercore.ImportInto) importer.DataSourceType {
+	if p.SelectPlan != nil {
+		return importer.DataSourceTypeQuery
+	}
+	return importer.DataSourceTypeFile
 }

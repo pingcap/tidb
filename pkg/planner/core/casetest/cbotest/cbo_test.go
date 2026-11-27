@@ -51,7 +51,7 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 		tk.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 		tk.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		var input []string
 		var output []struct {
 			SQL  string
@@ -373,7 +373,7 @@ func TestTableDual(t *testing.T) {
 		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		var input []string
 		var output []struct {
 			SQL  string
@@ -410,7 +410,7 @@ func TestEstimation(t *testing.T) {
 			tk.MustExec("delete from t where a = ?", i)
 		}
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		var input []string
 		var output []struct {
 			SQL  string
@@ -595,7 +595,7 @@ func TestOutdatedAnalyze(t *testing.T) {
 		tk.MustExec("insert into t select * from t")
 		tk.MustExec("insert into t select * from t")
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		var input []struct {
 			SQL                          string
 			EnablePseudoForOutdatedStats bool
@@ -642,8 +642,8 @@ func TestNullCount(t *testing.T) {
 			tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 		}
 		h := dom.StatsHandle()
-		h.Clear()
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		h.ClearForTest()
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		for i := 2; i < 4; i++ {
 			testdata.OnRecord(func() {
 				output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
@@ -687,8 +687,8 @@ func testInconsistentEstimation(t *testing.T, tk *testkit.TestKit, dom *domain.D
 	tk.MustExec("analyze table t all columns with 2 buckets ")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
-	dom.StatsHandle().Clear()
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	dom.StatsHandle().ClearForTest()
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
 	var input []string
 	var output []struct {
 		SQL  string

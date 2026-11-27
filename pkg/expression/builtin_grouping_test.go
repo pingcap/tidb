@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -101,4 +103,36 @@ func TestGrouping(t *testing.T) {
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(testCase.expectResult), actualResult, comment)
 	}
+}
+
+func TestGroupingFuncEqual(t *testing.T) {
+	ctx := createContext(t)
+	newGrouping := func(mode tipb.GroupingMode, marks ...map[uint64]struct{}) *ScalarFunction {
+		// Every grouping function over the same expand shares the same gid arg.
+		gid := &Column{UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+		init := func(sf *ScalarFunction) (*ScalarFunction, error) {
+			return sf, sf.Function.(*BuiltinGroupingImplSig).SetMetadata(mode, marks)
+		}
+		f, err := NewFunctionWithInit(ctx, ast.Grouping, types.NewFieldType(mysql.TypeLonglong), init, gid)
+		require.NoError(t, err)
+		return f.(*ScalarFunction)
+	}
+	// grouping(a) and grouping(b) of `group by a, b with rollup` differ only in the marks.
+	ga := newGrouping(tipb.GroupingMode_ModeNumericCmp, map[uint64]struct{}{1: {}})
+	gb := newGrouping(tipb.GroupingMode_ModeNumericCmp, map[uint64]struct{}{0: {}})
+	require.True(t, ga.Equal(ctx, newGrouping(tipb.GroupingMode_ModeNumericCmp, map[uint64]struct{}{1: {}})))
+	require.False(t, ga.Equal(ctx, gb))
+	require.False(t, gb.Equal(ctx, ga))
+	// different mode.
+	require.False(t, ga.Equal(ctx, newGrouping(tipb.GroupingMode_ModeBitAnd, map[uint64]struct{}{1: {}})))
+	// different number of marks, i.e. grouping(a) vs grouping(a, b).
+	require.False(t, ga.Equal(ctx, newGrouping(tipb.GroupingMode_ModeNumericCmp, map[uint64]struct{}{1: {}}, map[uint64]struct{}{0: {}})))
+	// the same marks in a different order, i.e. grouping(a, b) vs grouping(b, a).
+	ab := newGrouping(tipb.GroupingMode_ModeNumericCmp, map[uint64]struct{}{1: {}}, map[uint64]struct{}{0: {}})
+	ba := newGrouping(tipb.GroupingMode_ModeNumericCmp, map[uint64]struct{}{0: {}}, map[uint64]struct{}{1: {}})
+	require.False(t, ab.Equal(ctx, ba))
+	// the result must be the same once the hashcodes are cached.
+	require.NotEqual(t, ga.HashCode(), gb.HashCode())
+	require.False(t, ga.Equal(ctx, gb))
+	require.True(t, ga.Equal(ctx, newGrouping(tipb.GroupingMode_ModeNumericCmp, map[uint64]struct{}{1: {}})))
 }

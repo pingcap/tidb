@@ -21,6 +21,16 @@ socket = "/tmp/tidb-{Port}.sock"
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "45s"
 
+# Prevent this TiDB's GC worker from advancing transaction and GC safepoints.
+# Startup-only; restart TiDB after changing this option.
+# When true, overrides tidb_gc_enable; SQL can still read and change that variable.
+# For a cluster-wide freeze, configure and restart every TiDB instance that can
+# advance safepoints, including instances added later, and wait for all previously
+# issued GC requests to finish.
+# This does not roll back existing safepoints or stop physical GC and range
+# cleanup allowed by them.
+disable-gc = false
+
 # When create table, split a separated region for it. It is recommended to
 # turn off this option if there will be a large number of tables created.
 split-table = true

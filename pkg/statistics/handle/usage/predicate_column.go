@@ -25,28 +25,54 @@ import (
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
-// statsUsageImpl implements statstypes.StatsUsage.
-type statsUsageImpl struct {
-	statsHandle statstypes.StatsHandle
+// predicateColumnsGetter implements statstypes.PredicateColumnsGetter in the sessions of a pool.
+type predicateColumnsGetter struct {
+	pool utilstats.SessionPool
+}
+
+// newPredicateColumnsGetter creates a statstypes.PredicateColumnsGetter that reads in the
+// sessions of pool. It needs no stats cache.
+func newPredicateColumnsGetter(pool utilstats.SessionPool) *predicateColumnsGetter {
+	return &predicateColumnsGetter{pool: pool}
+}
+
+// Tracker tracks the table deltas and the usage of column and index stats, and dumps them to KV.
+type Tracker struct {
+	*predicateColumnsGetter
+
+	pool       utilstats.SessionPool
+	lease      utilstats.LeaseGetter
+	locks      statstypes.LockedTablesGetter
+	tableStats statstypes.NonPseudoPhysicalTableStatsGetter
 
 	// idxUsageCollector contains all the index usage collectors required by session.
 	idxUsageCollector *indexusage.Collector
 
-	// SessionStatsList contains all the stats collector required by session.
-	*SessionStatsList
+	// sessionStats contains all the stats collector required by session.
+	sessionStats *SessionStatsList
 }
 
-// NewStatsUsageImpl creates a statstypes.StatsUsage.
-func NewStatsUsageImpl(statsHandle statstypes.StatsHandle) statstypes.StatsUsage {
-	return &statsUsageImpl{
-		statsHandle:       statsHandle,
-		idxUsageCollector: indexusage.NewCollector(),
-		SessionStatsList:  NewSessionStatsList()}
+// NewTracker creates a Tracker that dumps the stats usage in the sessions of pool. It skips the
+// tables that locks gives, and reads the table stats from tableStats.
+func NewTracker(
+	pool utilstats.SessionPool,
+	lease utilstats.LeaseGetter,
+	locks statstypes.LockedTablesGetter,
+	tableStats statstypes.NonPseudoPhysicalTableStatsGetter,
+) *Tracker {
+	return &Tracker{
+		predicateColumnsGetter: newPredicateColumnsGetter(pool),
+		pool:                   pool,
+		lease:                  lease,
+		locks:                  locks,
+		tableStats:             tableStats,
+		idxUsageCollector:      indexusage.NewCollector(),
+		sessionStats:           NewSessionStatsList()}
 }
 
 // LoadColumnStatsUsage returns all columns' usage information.
-func (u *statsUsageImpl) LoadColumnStatsUsage(loc *time.Location) (colStatsMap map[model.TableItemID]statstypes.ColStatsTimeInfo, err error) {
-	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+func (u *Tracker) LoadColumnStatsUsage(loc *time.Location) (colStatsMap map[model.TableItemID]statstypes.ColStatsTimeInfo, err error) {
+	err = utilstats.CallWithSCtx(u.pool.SPool(), func(sctx sessionctx.Context) error {
 		colStatsMap, err = predicatecolumn.LoadColumnStatsUsage(sctx, loc)
 		return err
 	})
@@ -54,8 +80,8 @@ func (u *statsUsageImpl) LoadColumnStatsUsage(loc *time.Location) (colStatsMap m
 }
 
 // GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
-func (u *statsUsageImpl) GetPredicateColumns(tableID int64) (columnIDs []int64, err error) {
-	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+func (g *predicateColumnsGetter) GetPredicateColumns(tableID int64) (columnIDs []int64, err error) {
+	err = utilstats.CallWithSCtx(g.pool.SPool(), func(sctx sessionctx.Context) error {
 		columnIDs, err = predicatecolumn.GetPredicateColumns(sctx, tableID)
 		return err
 	}, utilstats.FlagWrapTxn)

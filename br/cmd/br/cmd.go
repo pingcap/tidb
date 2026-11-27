@@ -134,7 +134,7 @@ func DefineCommonFlags(cmd *cobra.Command) {
 		"Set the log format")
 	cmd.PersistentFlags().Bool(FlagRedactLog, false,
 		"Set whether to redact sensitive info in log, already deprecated by --redact-info-log")
-	cmd.PersistentFlags().Bool(FlagRedactInfoLog, false,
+	cmd.PersistentFlags().Bool(FlagRedactInfoLog, true,
 		"Set whether to redact sensitive info in log")
 	cmd.PersistentFlags().String(FlagStatusAddr, "",
 		"Set the HTTP listening address for the status report service. Set to empty string to disable")

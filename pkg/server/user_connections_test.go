@@ -62,75 +62,89 @@ func TestUserConnectionCount(t *testing.T) {
 		AuthHostname: "%",
 	}
 
+	var releases []func()
+	acquireConnection := func() error {
+		release, err := cc.increaseUserConnectionsCount()
+		if err == nil {
+			releases = append(releases, release)
+		}
+		return err
+	}
+	releaseConnection := func() {
+		last := len(releases) - 1
+		releases[last]()
+		releases = releases[:last]
+	}
+
 	// test1: global MAX_USER_CONNECTIONS = 0 and max_user_conections = 0 in mysql.user for `zak`@`%`
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
+	require.NoError(t, acquireConnection())
+	require.NoError(t, acquireConnection())
+	require.NoError(t, acquireConnection())
 	require.Equal(t, cc.getUserConnectionCount(sess.User), 3)
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
+	releaseConnection()
+	releaseConnection()
+	releaseConnection()
 	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
 
 	// test2: global MAX_USER_CONNECTIONS = 0 and max_user_conections = 2 in mysql.user for `zak`@`%`
 	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 2")
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.ErrorContains(t, cc.increaseUserConnectionsCount(),
+	require.NoError(t, acquireConnection())
+	require.NoError(t, acquireConnection())
+	require.ErrorContains(t, acquireConnection(),
 		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
 	require.Equal(t, cc.getUserConnectionCount(sess.User), 2)
-	cc.decreaseUserConnectionCount()
+	releaseConnection()
 
-	cc.decreaseUserConnectionCount()
+	releaseConnection()
 	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
 
 	// test3: global MAX_USER_CONNECTIONS = 3 and max_user_conections = 0 in mysql.user for `zak`@`%`
 	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 0")
 	tk.MustExec("set global max_user_connections = 3")
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.ErrorContains(t, cc.increaseUserConnectionsCount(),
+	require.NoError(t, acquireConnection())
+	require.NoError(t, acquireConnection())
+	require.NoError(t, acquireConnection())
+	require.ErrorContains(t, acquireConnection(),
 		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
 	require.Equal(t, cc.getUserConnectionCount(sess.User), 3)
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
+	releaseConnection()
+	releaseConnection()
+	releaseConnection()
 	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
 
 	// test4: global MAX_USER_CONNECTIONS = 2 and max_user_conections = 3 in mysql.user for `zak`@`%`
 	// the max_user_connection attribute has a higher priority than global MAX_USER_CONNECTIONS.
 	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 3")
 	tk.MustExec("set global max_user_connections = 2")
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.ErrorContains(t, cc.increaseUserConnectionsCount(),
+	require.NoError(t, acquireConnection())
+	require.NoError(t, acquireConnection())
+	require.NoError(t, acquireConnection())
+	require.ErrorContains(t, acquireConnection(),
 		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
 	require.Equal(t, cc.getUserConnectionCount(sess.User), 3)
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
+	releaseConnection()
+	releaseConnection()
+	releaseConnection()
 	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
 
 	// test5: global MAX_USER_CONNECTIONS = 3 and max_user_conections = 2 in mysql.user for `zak`@`%`
 	// the max_user_connection attribute has a higher priority than global MAX_USER_CONNECTIONS.
 	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 2")
 	tk.MustExec("set global max_user_connections = 3")
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.ErrorContains(t, cc.increaseUserConnectionsCount(),
+	require.NoError(t, acquireConnection())
+	require.NoError(t, acquireConnection())
+	require.ErrorContains(t, acquireConnection(),
 		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
 	require.Equal(t, cc.getUserConnectionCount(sess.User), 2)
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
+	releaseConnection()
+	releaseConnection()
 	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
 
 	// test6: the user zak@127.0.0.1 and zak@127.0.0.2 have same limit(zak@127.0.0.1 + zap@127.0.0.2 <= 3).
 	tk.MustExec("set global max_user_connections = 0")
 	tk.MustExec("ALTER USER `zak`@`%` WITH MAX_USER_CONNECTIONS 3")
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.Nil(t, cc.increaseUserConnectionsCount())
+	require.NoError(t, acquireConnection())
+	require.NoError(t, acquireConnection())
 	sess2 := cc.ctx.GetSessionVars()
 	sess2.User = &auth.UserIdentity{
 		Username:     "zak",
@@ -138,12 +152,36 @@ func TestUserConnectionCount(t *testing.T) {
 		AuthUsername: "zak",
 		AuthHostname: "%",
 	}
-	require.Nil(t, cc.increaseUserConnectionsCount())
-	require.ErrorContains(t, cc.increaseUserConnectionsCount(),
+	require.NoError(t, acquireConnection())
+	require.ErrorContains(t, acquireConnection(),
 		"[server:1203]User zak@% has exceeded the 'max_user_connections' resource")
 	require.Equal(t, cc.getUserConnectionCount(sess.User), 3)
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
-	cc.decreaseUserConnectionCount()
+	releaseConnection()
+	releaseConnection()
+	releaseConnection()
 	require.Equal(t, cc.getUserConnectionCount(sess.User), 0)
+
+	t.Run("release retains the original account after changing user", func(t *testing.T) {
+		tk.MustExec("CREATE USER `other`@`%`")
+		originalUser := sess.User
+		releaseOriginal, err := cc.increaseUserConnectionsCount()
+		require.NoError(t, err)
+
+		sess.User = &auth.UserIdentity{
+			Username:     "other",
+			Hostname:     "127.0.0.1",
+			AuthUsername: "other",
+			AuthHostname: "%",
+		}
+		releaseOther, err := cc.increaseUserConnectionsCount()
+		require.NoError(t, err)
+		require.Equal(t, 1, cc.getUserConnectionCount(originalUser))
+		require.Equal(t, 1, cc.getUserConnectionCount(sess.User))
+
+		releaseOriginal()
+		require.Equal(t, 0, cc.getUserConnectionCount(originalUser))
+		require.Equal(t, 1, cc.getUserConnectionCount(sess.User))
+		releaseOther()
+		require.Equal(t, 0, cc.getUserConnectionCount(sess.User))
+	})
 }

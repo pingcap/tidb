@@ -33,7 +33,7 @@ import (
 
 // PlanGenerator is used to generate new Plan Candidates for this specified query.
 type PlanGenerator interface {
-	Generate(defaultSchema, sql, charset, collation string) (plans []*BindingPlanInfo, err error)
+	Generate(defaultSchema, sql, charset, collation, redactLog string) (plans []*BindingPlanInfo, err error)
 }
 
 // planGenerator implements PlanGenerator.
@@ -43,7 +43,10 @@ type planGenerator struct {
 }
 
 // Generate generates new plans for the given SQL statement.
-func (g *planGenerator) Generate(defaultSchema, sql, charset, collation string) (plans []*BindingPlanInfo, err error) {
+// redactLog is the caller's tidb_redact_log value. Plan text must follow it:
+// pooled sessions otherwise keep the process default, which does not match the
+// session that issued EXPLAIN EXPLORE.
+func (g *planGenerator) Generate(defaultSchema, sql, charset, collation, redactLog string) (plans []*BindingPlanInfo, err error) {
 	// TODO: only support SQL starting with SELECT for now, support other types of SQLs later.
 	// TODO: make this check more strict.
 	sql = strings.TrimSpace(sql)
@@ -53,6 +56,11 @@ func (g *planGenerator) Generate(defaultSchema, sql, charset, collation string) 
 	}
 
 	err = callWithSCtx(g.sPool, false, func(sctx sessionctx.Context) error {
+		vars := sctx.GetSessionVars()
+		origRedactLog := vars.EnableRedactLog
+		vars.EnableRedactLog = redactLog
+		defer func() { vars.EnableRedactLog = origRedactLog }()
+
 		genedPlans, err := generatePlanWithSCtx(sctx, defaultSchema, sql, charset, collation)
 		if err != nil {
 			return err

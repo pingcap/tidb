@@ -4,7 +4,7 @@ go_library(
     name = "globalstats",
     srcs = [
         "global_stats.go",
-        "global_stats_async.go",
+        "global_stats_merger.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/globalstats",
     visibility = ["//visibility:public"],

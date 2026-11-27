@@ -43,6 +43,12 @@ const (
 
 // NewSession creates a new etcd session.
 func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client, retryCnt, ttl int) (*concurrency.Session, error) {
+	return NewSessionWithMetricLabel(ctx, logPrefix, logPrefix, etcdCli, retryCnt, ttl)
+}
+
+// NewSessionWithMetricLabel creates an etcd session and records its duration with a
+// stable component label when logPrefix contains instance-specific information.
+func NewSessionWithMetricLabel(ctx context.Context, logPrefix, metricLabel string, etcdCli *clientv3.Client, retryCnt, ttl int) (*concurrency.Session, error) {
 	var err error
 
 	var etcdSession *concurrency.Session
@@ -71,7 +77,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 		startTime := time.Now()
 		etcdSession, err = concurrency.NewSession(etcdCli,
 			concurrency.WithTTL(ttl), concurrency.WithContext(ctx))
-		metrics.NewSessionHistogram.WithLabelValues(logPrefix, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		metrics.NewSessionHistogram.WithLabelValues(metricLabel, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err == nil {
 			break
 		}

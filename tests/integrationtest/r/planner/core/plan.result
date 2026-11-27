@@ -305,6 +305,33 @@ t	CREATE TABLE `t` (
   `d` int DEFAULT NULL,
   KEY `a` (`a`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+create index hypo_expr type hypo on t ((b + 1));
+explain select b + 1 from t where b + 1 = 42;
+id	estRows	task	access object	operator info
+IndexReader_6	10000.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	10000.00	cop[tikv]	table:t, index:hypo_expr(`b` + 1)	range:[42,42], keep order:false, stats:pseudo
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
+  `c` int DEFAULT NULL,
+  `d` int DEFAULT NULL,
+  KEY `a` (`a`),
+  KEY `hypo_expr` ((`b` + 1)) /* HYPO INDEX */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select * from t;
+a	b	c	d
+drop hypo index hypo_expr on t;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
+  `c` int DEFAULT NULL,
+  `d` int DEFAULT NULL,
+  KEY `a` (`a`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
 create table t (a int);
 explain select a from t where a = 1;

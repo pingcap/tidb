@@ -507,6 +507,27 @@ func TestMemBufferCleanupMemoryLeak(t *testing.T) {
 }
 
 func TestPanicOnRollbackKilledTxn(t *testing.T) {
+	t.Run("commit cleanup", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(id int)")
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into t values(1)")
+		for range 6 {
+			tk.MustExec("insert into t select * from t")
+		}
+		tracker := memory.NewTracker(-1, -1)
+		tracker.IsRootTrackerOfSess = true
+		tracker.Killer = &sqlkiller.SQLKiller{}
+		tk.Session().GetSessionVars().MemTracker.AttachTo(tracker)
+		tracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
+		var err error
+		require.NotPanics(t, func() { err = tk.Session().CommitTxn(context.Background()) })
+		require.NoError(t, err)
+		tracker.Killer.Reset()
+		tk.MustQuery("select count(*) from t").Check(testkit.Rows("64"))
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

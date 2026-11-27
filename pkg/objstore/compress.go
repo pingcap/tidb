@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"go.uber.org/multierr"
 )
 
 type withCompression struct {
@@ -35,7 +36,10 @@ type withCompression struct {
 	decompressCfg compressedio.DecompressConfig
 }
 
-// WithCompression returns an Storage with compress option
+// WithCompression returns a Storage with compression enabled. Closing a compressed
+// reader cancels its context, stops the decoder, and then closes the source.
+// With asynchronous decoding, inner must unblock pending reads when the context
+// passed to Open is canceled.
 func WithCompression(inner storeapi.Storage, compressionType compressedio.CompressType, cfg compressedio.DecompressConfig) storeapi.Storage {
 	if compressionType == compressedio.NoCompression {
 		return inner
@@ -62,15 +66,18 @@ func (w *withCompression) Create(ctx context.Context, name string, o *storeapi.W
 }
 
 func (w *withCompression) Open(ctx context.Context, path string, o *storeapi.ReaderOption) (objectio.Reader, error) {
+	ctx, cancel := context.WithCancel(ctx)
 	fileReader, err := w.Storage.Open(ctx, path, o)
 	if err != nil {
+		cancel()
 		return nil, errors.Trace(err)
 	}
 	uncompressReader, err := InterceptDecompressReader(fileReader, w.compressType, w.decompressCfg)
 	if err != nil {
-		return nil, errors.Trace(err)
+		cancel()
+		return nil, errors.Trace(multierr.Append(err, fileReader.Close()))
 	}
-	return uncompressReader, nil
+	return &readerWithCancel{Reader: uncompressReader, cancel: cancel}, nil
 }
 
 func (w *withCompression) WriteFile(ctx context.Context, name string, data []byte) error {
@@ -97,6 +104,7 @@ func (w *withCompression) ReadFile(ctx context.Context, name string) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
+	defer compressBf.Close()
 	return io.ReadAll(compressBf)
 }
 
@@ -104,17 +112,34 @@ func (w *withCompression) PresignFile(ctx context.Context, fileName string, expi
 	return w.Storage.PresignFile(ctx, fileName, expire)
 }
 
-// compressReader is a wrapper for compress.Reader
+type readerWithCancel struct {
+	objectio.Reader
+	cancel context.CancelFunc
+}
+
+func (r *readerWithCancel) Close() error {
+	// Interrupt source reads and retries before waiting for the decoder to stop.
+	r.cancel()
+	return r.Reader.Close()
+}
+
+// compressReader owns both the source reader and, when present, its decoder.
 type compressReader struct {
 	io.Reader
 	io.Seeker
 	io.Closer
+	decoder io.Closer
 }
 
 // InterceptDecompressReader intercepts the reader and wraps it with a decompress
 // reader on the given Reader. Note that the returned
 // Reader does not have the property that Seek(0, io.SeekCurrent)
 // equals total bytes Read() if the decompress reader is used.
+// On success, closing the returned reader closes both the decoder and fileReader.
+// On failure, fileReader remains the caller's responsibility.
+// With asynchronous decoding, the caller must interrupt pending source reads
+// (for example, by canceling their context) before closing the returned reader.
+// Close waits for the decoder to stop before closing fileReader.
 func InterceptDecompressReader(
 	fileReader objectio.Reader,
 	compressType compressedio.CompressType,
@@ -128,13 +153,16 @@ func InterceptDecompressReader(
 		return nil, errors.Trace(err)
 	}
 	return &compressReader{
-		Reader: r,
-		Closer: fileReader,
-		Seeker: fileReader,
+		Reader:  r,
+		Closer:  fileReader,
+		Seeker:  fileReader,
+		decoder: r,
 	}, nil
 }
 
 // NewLimitedInterceptReader creates a decompress reader with limit n.
+// With asynchronous decoding, the caller must interrupt pending source reads
+// before Close, as required by InterceptDecompressReader.
 func NewLimitedInterceptReader(
 	fileReader objectio.Reader,
 	compressType compressedio.CompressType,
@@ -163,8 +191,12 @@ func (c *compressReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (c *compressReader) Close() error {
-	err := c.Closer.Close()
-	return err
+	// The decoder exclusively owns source reads until its workers have stopped.
+	var err error
+	if c.decoder != nil {
+		err = c.decoder.Close()
+	}
+	return multierr.Append(err, c.Closer.Close())
 }
 
 func (c *compressReader) GetFileSize() (int64, error) {

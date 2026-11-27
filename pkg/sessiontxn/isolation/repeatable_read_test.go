@@ -34,8 +34,11 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfork"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func newDeadLockError(isRetryable bool) error {
@@ -133,6 +136,61 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterQuery, lockErr)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
 	require.Nil(t, err)
+}
+
+func TestPessimisticDeadlockLogRedaction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+	sessVars := tk.Session().GetSessionVars()
+	originalMode := sessVars.EnableRedactLog
+	originalGlobalMode := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() {
+		sessVars.EnableRedactLog = originalMode
+		errors.RedactLogEnabled.Store(originalGlobalMode)
+	})
+
+	for _, isolationLevel := range []string{ast.RepeatableRead, ast.ReadCommitted} {
+		tk.MustExec("rollback")
+		tk.MustExec(fmt.Sprintf("set @@tx_isolation = '%s'", isolationLevel))
+		tk.MustExec("begin pessimistic")
+		provider := sessiontxn.GetTxnManager(tk.Session()).GetContextProvider()
+		for _, tc := range []struct {
+			mode       string
+			globalMode string
+			expected   string
+		}{
+			{mode: "OFF", globalMode: "ON", expected: "646561646c6f636b2d6b6579"},
+			{mode: "ON", globalMode: "OFF", expected: ""},
+			{mode: "MARKER", globalMode: "OFF", expected: "‹646561646c6f636b2d6b6579›"},
+		} {
+			// The log must use the session mode even when the process-wide mode differs.
+			sessVars.EnableRedactLog = tc.mode
+			errors.RedactLogEnabled.Store(tc.globalMode)
+			core, recorded := observer.New(zap.InfoLevel)
+			ctx := logutil.WithLogger(context.Background(), zap.New(core))
+			require.NoError(t, provider.OnStmtStart(ctx, nil))
+			deadlock := &tikverr.ErrDeadlock{
+				Deadlock: &kvrpcpb.Deadlock{
+					LockTs:          123,
+					LockKey:         []byte("deadlock-key"),
+					DeadlockKeyHash: 456,
+				},
+				IsRetryable: true,
+			}
+			action, err := provider.OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterPessimisticLock, deadlock)
+			require.NoError(t, err)
+			require.Equal(t, sessiontxn.StmtActionRetryReady, action)
+			entries := recorded.FilterMessage("single statement deadlock, retry statement").All()
+			require.Len(t, entries, 1)
+			fields := entries[0].ContextMap()
+			require.Equal(t, tc.expected, fields["lockKey"], "%s, %s", isolationLevel, tc.mode)
+			require.Equal(t, sessVars.TxnCtx.StartTS, fields["txn"])
+			require.Equal(t, uint64(123), fields["lockTS"])
+			require.Equal(t, uint64(456), fields["deadlockKeyHash"])
+			require.Equal(t, []byte("deadlock-key"), deadlock.LockKey)
+		}
+	}
 }
 
 func TestRepeatableReadProviderTS(t *testing.T) {

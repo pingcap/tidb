@@ -157,7 +157,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if req.MaxExecutionTime > 0 {
 		// If the request has a MaxExecutionTime, we need to set the deadline of the context.
 		var cancel context.CancelFunc
-		boCtx, cancel = context.WithTimeout(boCtx, time.Duration(req.MaxExecutionTime)*time.Millisecond)
+		boCtx, cancel = context.WithTimeoutCause(boCtx, time.Duration(req.MaxExecutionTime)*time.Millisecond, exeerrors.ErrMaxExecTimeExceeded)
 		defer func() {
 			cancel()
 		}()
@@ -570,6 +570,11 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 		locs, err = cache.SplitKeyRangesByBuckets(bo, ranges)
 	}
 	if err != nil {
+		// Region lookup may format cancellation errors as text, losing the error chain.
+		// Check the context cause to recover the statement timeout.
+		if context.Cause(ctx) == exeerrors.ErrMaxExecTimeExceeded {
+			return nil, exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+		}
 		return nil, errors.Trace(err)
 	}
 	if opt.skipBuckets {
@@ -1689,7 +1694,7 @@ func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, ta
 	var cancel context.CancelFunc
 	boCtx := ctx
 	if worker.req.MaxExecutionTime > 0 {
-		boCtx, cancel = context.WithTimeout(boCtx, time.Duration(worker.req.MaxExecutionTime)*time.Millisecond)
+		boCtx, cancel = context.WithTimeoutCause(boCtx, time.Duration(worker.req.MaxExecutionTime)*time.Millisecond, exeerrors.ErrMaxExecTimeExceeded)
 	}
 	newbo := backoff.NewBackofferWithVars(boCtx, boMaxSleep, worker.vars)
 	backoffermap[task.region.GetID()] = newbo
@@ -1996,7 +2001,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.GetTotalSleep(), backoffTypes)
 	}
 	if regionErr := getRegionError(bo.GetCtx(), resp); regionErr != nil {
-		logStr += fmt.Sprintf(" region_err:%s", regionErr.String())
+		logStr += fmt.Sprintf(" region_err:%s", redact.RegionError(regionErr))
 	}
 	// resp might be nil, but it is safe to call resp.GetXXX here.
 	detailV2 := resp.GetExecDetailsV2()
@@ -2248,7 +2253,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, lockHints *req
 			return &copTaskResult{resp: resp}, nil
 		}
 		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
-			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
+			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, redact.RegionError(regionErr))
 		if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2546,7 +2551,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints
 		if regionErr := getRegionError(bo.GetCtx(), batchResp); regionErr != nil {
 			worker.handleBatchBucketVersionNotMatch(bo, task, regionErr)
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
-				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
+				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, redact.RegionError(regionErr))
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 				return batchRespList, nil, errors.Trace(err)
 			}
@@ -2596,8 +2601,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints
 				// TODO: add bucket version in log
 				//zap.Uint64("latestBucketsVer", batchResp.GetLatestBucketsVersion()),
 				zap.Int("rangeNums", task.ranges.Len()),
-				zap.ByteString("firstRangeStartKey", firstRangeStartKey),
-				zap.ByteString("lastRangeEndKey", lastRangeEndKey),
+				keyField("firstRangeStartKey", firstRangeStartKey),
+				keyField("lastRangeEndKey", lastRangeEndKey),
 				zap.String("storeAddr", task.storeAddr),
 				zap.Error(err))
 			if strings.Contains(err.Error(), "write conflict") {
@@ -2631,8 +2636,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints
 				zap.Uint64("regionConfVer", task.region.GetConfVer()),
 				zap.Uint64("bucketsVer", task.bucketsVer),
 				zap.Int("rangeNums", task.ranges.Len()),
-				zap.ByteString("firstRangeStartKey", firstRangeStartKey),
-				zap.ByteString("lastRangeEndKey", lastRangeEndKey),
+				keyField("firstRangeStartKey", firstRangeStartKey),
+				keyField("lastRangeEndKey", lastRangeEndKey),
 				zap.String("storeAddr", task.storeAddr))
 		}
 		fallbackNum++
@@ -2685,7 +2690,7 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockHints *request
 		}))
 	} else {
 		logutil.Logger(bo.GetCtx()).Debug("coprocessor encounters lock",
-			zap.Stringer("lock", lockErr))
+			zap.Stringer("lock", redact.LockInfo(lockErr)))
 	}
 	var locks []*txnlock.Lock
 	if sharedLocks := lockErr.GetSharedLockInfos(); len(sharedLocks) > 0 {

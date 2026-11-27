@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/autoid"
@@ -345,30 +346,41 @@ func TestBackoffCtxAware(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(start), 2*backoffMin)
 
 	// With a canceled ctx, Backoff should return immediately.
-	bo.Reset()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	synctest.Test(t, func(t *testing.T) {
+		bo := backoffer{}
+		bo.Reset()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
 
-	start = time.Now()
-	err = bo.Backoff(ctx)
-	require.Error(t, err)
-	require.ErrorIs(t, err, context.Canceled)
-	require.Less(t, time.Since(start), 10*time.Millisecond, "Backoff should return immediately on canceled ctx")
+		start := time.Now()
+		err := bo.Backoff(ctx)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Zero(t, time.Since(start), "Backoff should return without advancing time for canceled ctx")
+	})
 
 	// With a valid ctx that gets canceled during sleep, Backoff should return early.
-	bo.Reset()
-	ctx, cancel = context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(5 * time.Millisecond)
-		cancel()
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		bo := backoffer{Duration: backoffMax / 2}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		backoffErr := make(chan error, 1)
+		go func() {
+			backoffErr <- bo.Backoff(ctx)
+		}()
 
-	start = time.Now()
-	err = bo.Backoff(ctx)
-	// Backoff may or may not return an error depending on timing,
-	// but it should not block for the full duration (100ms at max).
-	require.Less(t, time.Since(start), 50*time.Millisecond, "Backoff should return early when ctx is canceled during sleep")
-	_ = err
+		// Wait until Backoff is blocked in its timer/context select without advancing time.
+		synctest.Wait()
+		select {
+		case err := <-backoffErr:
+			t.Fatalf("Backoff returned before cancellation: %v", err)
+		default:
+		}
+		start := time.Now()
+		cancel()
+		err := <-backoffErr
+		require.ErrorIs(t, err, context.Canceled)
+		require.Zero(t, time.Since(start), "Backoff should return before the timer expires")
+	})
 }
 
 func TestAutoIDRPCRetryPolicy(t *testing.T) {

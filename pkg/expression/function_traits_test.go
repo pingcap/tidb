@@ -237,6 +237,7 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"sign",
 		"sin",
 		"sm3", // TiDB specific?
+		"soundex",
 		"space",
 		"sqrt",
 		"str_to_date",

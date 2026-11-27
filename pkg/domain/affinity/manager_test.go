@@ -164,7 +164,7 @@ func TestGetAffinityGroupsFallbackByEscapedQueryLen(t *testing.T) {
 	manager := &pdManager{Client: client}
 
 	id := strings.Repeat("/", 1365)
-	ids := []string{id}
+	ids := []string{"short", id}
 	client.On("GetAllAffinityGroups", mock.Anything).Return(
 		map[string]*pdhttp.AffinityGroupState{
 			id:      affinityGroupState(id),
@@ -202,6 +202,101 @@ func TestGetAffinityGroupsFallbackWhenIDsQueryUnsupported(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
+func TestGetAffinityGroupsBatches(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		count      int
+		suffix     string
+		batchSizes []int
+	}{
+		{name: "ID count and duplicates", count: 250, batchSizes: []int{100, 100, 50}},
+		{name: "escaped query bytes", count: 30, suffix: strings.Repeat("/", 200), batchSizes: []int{6, 6, 6, 6, 6}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &mockPDClient{}
+			manager := &pdManager{Client: client}
+			ids := make([]string, test.count)
+			expected := make(map[string]*pdhttp.AffinityGroupState, test.count)
+			for i := range ids {
+				ids[i] = fmt.Sprintf("g%03d%s", i, test.suffix)
+				expected[ids[i]] = affinityGroupState(ids[i])
+			}
+			start := 0
+			for _, size := range test.batchSizes {
+				batch := ids[start : start+size]
+				require.LessOrEqual(t, len(batch), maxAffinityGroupIDsCount)
+				require.LessOrEqual(t, affinityGroupIDsEscapedQueryLen(batch), maxAffinityGroupIDsQueryLen)
+				client.On("GetAffinityGroups", mock.Anything, batch).Return(filterAffinityGroups(expected, batch), nil).Once()
+				start += size
+			}
+			ids = append(ids, ids[0], ids[len(ids)-1])
+			original := append([]string(nil), ids...)
+			result, err := manager.GetAffinityGroups(context.Background(), ids)
+			require.NoError(t, err)
+			require.Equal(t, expected, result)
+			require.Equal(t, original, ids)
+			client.AssertExpectations(t)
+			client.AssertNumberOfCalls(t, "GetAffinityGroups", len(test.batchSizes))
+			client.AssertNotCalled(t, "GetAllAffinityGroups", mock.Anything)
+		})
+	}
+}
+
+func TestGetAffinityGroupsBatchesCompatibility(t *testing.T) {
+	ids := make([]string, 250)
+	allGroups := make(map[string]*pdhttp.AffinityGroupState, len(ids)+1)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("g%03d", i)
+		allGroups[ids[i]] = affinityGroupState(ids[i])
+	}
+	allGroups["unrequested"] = affinityGroupState("unrequested")
+	expected := filterAffinityGroups(allGroups, ids)
+
+	t.Run("unsupported query on a later batch", func(t *testing.T) {
+		client := &mockPDClient{}
+		manager := &pdManager{Client: client}
+		client.On("GetAffinityGroups", mock.Anything, ids[:100]).Return(filterAffinityGroups(allGroups, ids[:100]), nil).Once()
+		client.On("GetAffinityGroups", mock.Anything, ids[100:200]).Return(nil, pdStatusErr(http.StatusBadRequest)).Once()
+		client.On("GetAllAffinityGroups", mock.Anything).Return(allGroups, nil).Once()
+		result, err := manager.GetAffinityGroups(context.Background(), ids)
+		require.NoError(t, err)
+		require.Equal(t, expected, result)
+		client.AssertExpectations(t)
+		client.AssertNumberOfCalls(t, "GetAffinityGroups", 2)
+		client.AssertNumberOfCalls(t, "GetAllAffinityGroups", 1)
+	})
+
+	for name, response := range map[string]map[string]*pdhttp.AffinityGroupState{
+		"PD ignores query with unrequested groups": allGroups,
+		"PD ignores query with requested groups":   expected,
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &mockPDClient{}
+			manager := &pdManager{Client: client}
+			client.On("GetAffinityGroups", mock.Anything, ids[:100]).Return(response, nil).Once()
+			result, err := manager.GetAffinityGroups(context.Background(), ids)
+			require.NoError(t, err)
+			require.Equal(t, expected, result)
+			client.AssertExpectations(t)
+			client.AssertNumberOfCalls(t, "GetAffinityGroups", 1)
+			client.AssertNotCalled(t, "GetAllAffinityGroups", mock.Anything)
+		})
+	}
+
+	t.Run("non compatibility error on a later batch", func(t *testing.T) {
+		client := &mockPDClient{}
+		manager := &pdManager{Client: client}
+		client.On("GetAffinityGroups", mock.Anything, ids[:100]).Return(filterAffinityGroups(allGroups, ids[:100]), nil).Once()
+		client.On("GetAffinityGroups", mock.Anything, ids[100:200]).Return(nil, context.Canceled).Once()
+		result, err := manager.GetAffinityGroups(context.Background(), ids)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Nil(t, result)
+		client.AssertExpectations(t)
+		client.AssertNumberOfCalls(t, "GetAffinityGroups", 2)
+		client.AssertNotCalled(t, "GetAllAffinityGroups", mock.Anything)
+	})
+}
+
 func TestGetAffinityGroupsFallbackForHTTPServiceError(t *testing.T) {
 	ctx := context.Background()
 	client := &mockPDClient{}
@@ -229,12 +324,24 @@ func TestAffinityGroupIDsEscapedQueryLenBoundary(t *testing.T) {
 	require.Equal(t, maxAffinityGroupIDsQueryLen+3, affinityGroupIDsEscapedQueryLen([]string{strings.Repeat("/", 1365)}))
 }
 
-func TestShouldUseGetAllAffinityGroupsByIDCount(t *testing.T) {
-	ids := make([]string, maxAffinityGroupIDsCount+1)
-	for i := range ids {
-		ids[i] = fmt.Sprintf("g%d", i)
+func TestGetAffinityGroupsBatchQueryBoundary(t *testing.T) {
+	client := &mockPDClient{}
+	manager := &pdManager{Client: client}
+	ids := []string{strings.Repeat("/", 1364), "other"}
+	expected := map[string]*pdhttp.AffinityGroupState{
+		ids[0]: affinityGroupState(ids[0]),
+		ids[1]: affinityGroupState(ids[1]),
 	}
-	require.True(t, shouldUseGetAllAffinityGroups(ids))
+	for _, id := range ids {
+		client.On("GetAffinityGroups", mock.Anything, []string{id}).Return(
+			map[string]*pdhttp.AffinityGroupState{id: expected[id]}, nil,
+		).Once()
+	}
+	result, err := manager.GetAffinityGroups(context.Background(), ids)
+	require.NoError(t, err)
+	require.Equal(t, expected, result)
+	client.AssertExpectations(t)
+	client.AssertNotCalled(t, "GetAllAffinityGroups", mock.Anything)
 }
 
 func TestIsPDHTTPStatusErrorMatchByCodeOnly(t *testing.T) {
@@ -253,4 +360,25 @@ func pdStatusErr(statusCode int) error {
 
 func pdHTTPServiceErr(msg string) error {
 	return terror.ClassDomain.Synthesize(terror.ErrCode(errno.ErrHTTPServiceError), fmt.Sprintf("HTTP request failed with status %s", msg))
+}
+
+func TestCreateGroupsIfNotExistsNilContextForwardsNonNil(t *testing.T) {
+	prevManager, prevClient := manager, pdClient
+	t.Cleanup(func() {
+		manager = prevManager
+		pdClient = prevClient
+	})
+	client := &mockPDClient{}
+	InitManager(client)
+
+	groups := map[string][]pdhttp.AffinityGroupKeyRange{
+		"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+	}
+	client.On("CreateAffinityGroups", mock.MatchedBy(func(ctx context.Context) bool {
+		return ctx != nil
+	}), groups, 1).Return(map[string]*pdhttp.AffinityGroupState{"g1": affinityGroupState("g1")}, nil).Once()
+
+	//nolint:staticcheck // SA1012: intentionally test nil context normalization
+	require.NoError(t, CreateGroupsIfNotExists(nil, groups))
+	client.AssertExpectations(t)
 }

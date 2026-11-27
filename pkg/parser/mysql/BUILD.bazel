@@ -34,6 +34,6 @@ go_test(
     ],
     embed = [":mysql"],
     flaky = True,
-    shard_count = 11,
+    shard_count = 12,
     deps = ["@com_github_stretchr_testify//require"],
 )

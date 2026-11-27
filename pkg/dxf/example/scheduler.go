@@ -59,7 +59,7 @@ func (s *schedulerImpl) OnTick(context.Context, *proto.Task) {
 }
 
 func (s *schedulerImpl) OnNextSubtasksBatch(_ context.Context, _ storage.TaskHandle,
-	task *proto.Task, _ []string, nextStep proto.Step) (subtaskMetas [][]byte, err error) {
+	task *proto.Task, _ int, nextStep proto.Step) (subtaskMetas [][]byte, err error) {
 	switch nextStep {
 	case proto.StepOne, proto.StepTwo:
 		metas := make([][]byte, s.subtaskCount)

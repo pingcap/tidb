@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/affinity"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
@@ -32,6 +34,8 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
 	codec := e.Ctx().GetStore().GetCodec()
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 
 	var (
 		fieldPatternsLike collate.WildcardPattern
@@ -59,6 +63,10 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 
 		for _, tblInfo := range result.TableInfos {
 			if tblInfo.Affinity == nil {
+				continue
+			}
+			// Use mysql.AllPrivMask to stay consistent with SHOW PLACEMENT visibility checks.
+			if checker != nil && !checker.RequestVerification(activeRoles, result.DBName.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
 				continue
 			}
 

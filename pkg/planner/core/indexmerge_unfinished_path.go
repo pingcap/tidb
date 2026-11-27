@@ -200,7 +200,7 @@ func initUnfinishedPathsFromExpr(
 
 		// case 2: try to use the previous logic to handle mv index
 		if isMVIndexPath(path) {
-			accessFilters, remainingFilters, tp := collectFilters4MVIndex(ds.SCtx(), cnfItems, idxCols)
+			accessFilters, remainingFilters, tp := collectFilters4MVIndex(ds.SCtx(), cnfItems, idxCols, path.Index)
 			if len(accessFilters) > 0 && (tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 				ret[i].initedWithValidRange = true
 				ret[i].usableFilters = accessFilters
@@ -378,6 +378,7 @@ func buildIntoAccessPath(
 					ds.SCtx(),
 					unfinishedPath.usableFilters,
 					idxCols,
+					unfinishedPath.path.Index,
 				)
 				if len(accessFilters) == 0 {
 					continue

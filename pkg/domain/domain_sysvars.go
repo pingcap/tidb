@@ -46,6 +46,19 @@ func (do *Domain) initDomainSysVars() {
 	variable.SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
 	variable.SetLowResolutionTSOUpdateInterval = do.setLowResolutionTSOUpdateInterval
 
+	setMVServiceTaskMaxConcurrencyFunc := do.setMVServiceTaskMaxConcurrency
+	variable.SetMVServiceTaskMaxConcurrency.Store(&setMVServiceTaskMaxConcurrencyFunc)
+	setMVServiceRefreshTaskConcurrencyRatioFunc := do.setMVServiceRefreshTaskConcurrencyRatio
+	variable.SetMVServiceRefreshTaskConcurrencyRatio.Store(&setMVServiceRefreshTaskConcurrencyRatioFunc)
+	setMVServiceTaskThresholdCPUFunc := do.setMVServiceTaskThresholdCPU
+	variable.SetMVServiceTaskThresholdCPU.Store(&setMVServiceTaskThresholdCPUFunc)
+	setMVServiceTaskThresholdMemoryFunc := do.setMVServiceTaskThresholdMemory
+	variable.SetMVServiceTaskThresholdMemory.Store(&setMVServiceTaskThresholdMemoryFunc)
+	setMVServiceMViewRefreshHistRetentionFunc := do.setMVServiceMViewRefreshHistRetention
+	variable.SetMVServiceMViewRefreshHistRetention.Store(&setMVServiceMViewRefreshHistRetentionFunc)
+	setMVServiceMLogPurgeHistRetentionFunc := do.setMVServiceMLogPurgeHistRetention
+	variable.SetMVServiceMLogPurgeHistRetention.Store(&setMVServiceMLogPurgeHistRetentionFunc)
+
 	variable.ChangeSchemaCacheSize = do.isSyncer.ChangeSchemaCacheSize
 
 	variable.ChangePDMetadataCircuitBreakerErrorRateThresholdRatio = changePDMetadataCircuitBreakerErrorRateThresholdRatio
@@ -58,7 +71,7 @@ func (do *Domain) setStatsCacheCapacity(c int64) {
 	if statsHandle == nil { // from test
 		return
 	}
-	do.StatsHandle().SetStatsCacheCapacity(c)
+	do.StatsHandle().Cache().SetStatsCacheCapacity(c)
 }
 
 func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
@@ -90,16 +103,8 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 		}
 		vardef.EnablePDFollowerHandleRegion.Store(val)
 	case vardef.TiDBTSOClientRPCMode:
-		var concurrency int
-
-		switch sVal {
-		case vardef.TSOClientRPCModeDefault:
-			concurrency = 1
-		case vardef.TSOClientRPCModeParallel:
-			concurrency = 2
-		case vardef.TSOClientRPCModeParallelFast:
-			concurrency = 4
-		default:
+		concurrency := vardef.TSOClientRPCModeToConcurrency(sVal)
+		if concurrency == 0 {
 			return variable.ErrWrongValueForVar.GenWithStackByArgs(name, sVal)
 		}
 
@@ -162,4 +167,50 @@ func changePDMetadataCircuitBreakerErrorRateThresholdRatio(errorRateRatio uint32
 	tikv.ChangePDRegionMetaCircuitBreakerSettings(func(config *circuitbreaker.Settings) {
 		config.ErrorRateThresholdPct = errorRateRatio
 	})
+}
+
+func (do *Domain) setMVServiceTaskMaxConcurrency(maxConcurrency int) {
+	if do.GetMVService() == nil {
+		return
+	}
+	do.mvService.SetTaskMaxConcurrency(maxConcurrency)
+}
+
+func (do *Domain) setMVServiceRefreshTaskConcurrencyRatio(ratio float64) {
+	if do.GetMVService() == nil {
+		return
+	}
+	do.mvService.SetRefreshTaskConcurrencyRatio(ratio)
+}
+
+func (do *Domain) setMVServiceTaskThresholdCPU(threshold float64) {
+	if do.GetMVService() == nil {
+		return
+	}
+	cfg := do.mvService.GetTaskBackpressureConfig()
+	cfg.CPUThreshold = threshold
+	_ = do.mvService.SetTaskBackpressureConfig(cfg)
+}
+
+func (do *Domain) setMVServiceTaskThresholdMemory(threshold float64) {
+	if do.GetMVService() == nil {
+		return
+	}
+	cfg := do.mvService.GetTaskBackpressureConfig()
+	cfg.MemThreshold = threshold
+	_ = do.mvService.SetTaskBackpressureConfig(cfg)
+}
+
+func (do *Domain) setMVServiceMViewRefreshHistRetention(retention time.Duration) {
+	if do.GetMVService() == nil {
+		return
+	}
+	_ = do.mvService.SetMViewRefreshHistRetention(retention)
+}
+
+func (do *Domain) setMVServiceMLogPurgeHistRetention(retention time.Duration) {
+	if do.GetMVService() == nil {
+		return
+	}
+	_ = do.mvService.SetMLogPurgeHistRetention(retention)
 }

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -57,7 +56,7 @@ func execOptionForAnalyzeVersion(statsVer int, needVersionRewriteWarn bool, sql 
 // AutoAnalyze executes the auto analyze task.
 func AutoAnalyze(
 	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
+	procIDs statsutil.AutoAnalyzeProcIDGenerator,
 	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
 	needVersionRewriteWarn bool,
@@ -65,7 +64,7 @@ func AutoAnalyze(
 	params ...any,
 ) bool {
 	startTime := time.Now()
-	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
+	_, _, err := RunAnalyzeStmt(sctx, procIDs, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -89,7 +88,7 @@ func AutoAnalyze(
 // RunAnalyzeStmt executes the analyze statement.
 func RunAnalyzeStmt(
 	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
+	procIDs statsutil.AutoAnalyzeProcIDGenerator,
 	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
 	needVersionRewriteWarn bool,
@@ -99,7 +98,7 @@ func RunAnalyzeStmt(
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	autoAnalyzeTracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)
-	autoAnalyzeProcID := statsHandle.AutoAnalyzeProcID()
+	autoAnalyzeProcID := procIDs.AutoAnalyzeProcID()
 	optFuncs := []sqlexec.OptionFuncAlias{
 		execOptionForAnalyzeVersion(statsVer, needVersionRewriteWarn, sql, params...),
 		sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
@@ -111,7 +110,7 @@ func RunAnalyzeStmt(
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("panic in execAnalyzeStmt", zap.Any("error", r), zap.Stack("stack"))
 		}
-		statsHandle.ReleaseAutoAnalyzeProcID(autoAnalyzeProcID)
+		procIDs.ReleaseAutoAnalyzeProcID(autoAnalyzeProcID)
 	}()
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
 }

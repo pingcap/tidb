@@ -362,8 +362,8 @@ func TestTTLAutoAnalyze(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
-	require.True(t, h.HandleAutoAnalyze())
+	require.NoError(t, h.Cache().Update(context.Background(), is))
+	require.True(t, h.AutoAnalyze().HandleAutoAnalyze())
 }
 
 func TestTriggerTTLJob(t *testing.T) {
@@ -403,7 +403,8 @@ func TestTriggerTTLJob(t *testing.T) {
 		if !stmt.Ctx.GetSessionVars().InRestrictedSQL {
 			return
 		}
-		sql := stmt.GetTextToLog(false)
+		// Classify the original SQL independently of log redaction.
+		sql := stmt.Text()
 		ruMu.Lock()
 		defer ruMu.Unlock()
 		if strings.HasPrefix(sql, "SELECT LOW_PRIORITY SQL_NO_CACHE") {

@@ -113,6 +113,8 @@ type PhysicalTableScan struct {
 	// that are pushed down to table scan from selection by late materialization.
 	LateMaterializationFilterCondition []expression.Expression
 	LateMaterializationSelectivity     float64
+	// ForcedLateMaterializationFilterColumnIDs records the columns specified by TIFLASH_LM_FILTER hints.
+	ForcedLateMaterializationFilterColumnIDs []int64
 
 	Table   *model.TableInfo    `plan-cache-clone:"shallow"`
 	Columns []*model.ColumnInfo `plan-cache-clone:"shallow"`
@@ -181,16 +183,17 @@ const emptyPhysicalTableScanSize = int64(unsafe.Sizeof(PhysicalTableScan{}))
 func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
 	ds := s.Source
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         ds.Columns,
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		isPartition:     ds.PartitionDefIdx != nil,
-		PhysicalTableID: ds.PhysicalTableID,
-		Ranges:          s.Ranges,
-		AccessCondition: s.AccessConds,
-		TblCols:         ds.TblCols,
-		TblColHists:     ds.TblColHists,
+		Table:                                    ds.TableInfo,
+		Columns:                                  ds.Columns,
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		isPartition:                              ds.PartitionDefIdx != nil,
+		PhysicalTableID:                          ds.PhysicalTableID,
+		Ranges:                                   s.Ranges,
+		AccessCondition:                          s.AccessConds,
+		TblCols:                                  ds.TblCols,
+		TblColHists:                              ds.TblColHists,
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(s.SCtx(), s.QueryBlockOffset())
 	ts.SetStats(stats)
 	ts.SetSchema(schema.Clone())
@@ -203,21 +206,22 @@ func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *exp
 // GetOriginalPhysicalTableScan is to get PhysicalTableScan
 func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64) {
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         slices.Clone(ds.Columns),
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		isPartition:     ds.PartitionDefIdx != nil,
-		PhysicalTableID: ds.PhysicalTableID,
-		Ranges:          path.Ranges,
-		AccessCondition: path.AccessConds,
-		StoreType:       path.StoreType,
-		HandleCols:      ds.HandleCols,
-		TblCols:         ds.TblCols,
-		TblColHists:     ds.TblColHists,
-		constColsByCond: path.ConstCols,
-		Prop:            prop,
-		FilterCondition: slices.Clone(path.TableFilters),
+		Table:                                    ds.TableInfo,
+		Columns:                                  slices.Clone(ds.Columns),
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		isPartition:                              ds.PartitionDefIdx != nil,
+		PhysicalTableID:                          ds.PhysicalTableID,
+		Ranges:                                   path.Ranges,
+		AccessCondition:                          path.AccessConds,
+		StoreType:                                path.StoreType,
+		HandleCols:                               ds.HandleCols,
+		TblCols:                                  ds.TblCols,
+		TblColHists:                              ds.TblColHists,
+		constColsByCond:                          path.ConstCols,
+		Prop:                                     prop,
+		FilterCondition:                          slices.Clone(path.TableFilters),
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	rowCount := path.CountAfterAccess
@@ -307,6 +311,7 @@ func (p *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	clonedScan.AccessCondition = util.CloneExprs(p.AccessCondition)
 	clonedScan.FilterCondition = util.CloneExprs(p.FilterCondition)
 	clonedScan.LateMaterializationFilterCondition = util.CloneExprs(p.LateMaterializationFilterCondition)
+	clonedScan.ForcedLateMaterializationFilterColumnIDs = slices.Clone(p.ForcedLateMaterializationFilterColumnIDs)
 	clonedScan.PlanPartInfo = p.PlanPartInfo.Clone()
 	if p.Table != nil {
 		clonedScan.Table = p.Table.Clone()
@@ -381,6 +386,7 @@ func (p *PhysicalTableScan) MemoryUsage() (sum int64) {
 	for _, cond := range p.LateMaterializationFilterCondition {
 		sum += cond.MemoryUsage()
 	}
+	sum += int64(cap(p.ForcedLateMaterializationFilterColumnIDs)) * size.SizeOfInt64
 	for _, rang := range p.Ranges {
 		sum += rang.MemUsage()
 	}
@@ -865,14 +871,15 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 func BuildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expression.Expression,
 	totalRowCount float64, matchProp bool) (base.PhysicalPlan, []expression.Expression, bool, error) {
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         slices.Clone(ds.Columns),
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		PhysicalTableID: ds.PhysicalTableID,
-		HandleCols:      ds.HandleCols,
-		TblCols:         ds.TblCols,
-		TblColHists:     ds.TblColHists,
+		Table:                                    ds.TableInfo,
+		Columns:                                  slices.Clone(ds.Columns),
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		PhysicalTableID:                          ds.PhysicalTableID,
+		HandleCols:                               ds.HandleCols,
+		TblCols:                                  ds.TblCols,
+		TblColHists:                              ds.TblColHists,
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetIsPartition(ds.PartitionDefIdx != nil)
 	ts.SetSchema(ds.Schema().Clone())

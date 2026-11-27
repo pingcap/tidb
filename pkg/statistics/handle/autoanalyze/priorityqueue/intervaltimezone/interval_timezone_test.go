@@ -45,26 +45,26 @@ func TestLastFailedAnalysisDurationUseCorrectTimezone(t *testing.T) {
 	tk.MustExec("set @@global.time_zone='Europe/Berlin';")
 
 	h := dom.StatsHandle()
-	pool := h.SPool()
+	pool := h.Pool().SPool()
 
-	// Step 1: Insert a pending job using the StatsHandle API.
+	// Step 1: Insert a pending job using the AutoAnalyze API.
 	job := &statistics.AnalyzeJob{
 		DBName:    "db_reset",
 		TableName: "tbl_reset",
 		JobInfo:   "test job",
 	}
-	require.NoError(t, h.InsertAnalyzeJob(job, "test-instance", 1))
+	require.NoError(t, h.AutoAnalyze().InsertAnalyzeJob(job, "test-instance", 1))
 	require.NotNil(t, job.ID)
 
 	// Step 2: Start the job.
 	// The session should reset its time zone to the global value (Europe/Berlin).
 	// If it keeps the contaminated system time zone, the start time will be wrong.
-	h.StartAnalyzeJob(job)
+	h.AutoAnalyze().StartAnalyzeJob(job)
 
 	time.Sleep(2 * time.Second) // Ensure some time passes.
 
 	// Step 3: Mark the job as failed.
-	h.FinishAnalyzeJob(job, errors.New("test error"), statistics.TableAnalysisJob)
+	h.AutoAnalyze().FinishAnalyzeJob(job, errors.New("test error"), statistics.TableAnalysisJob)
 
 	// Step 4: Query via the stats session pool.
 	var dur time.Duration

@@ -21,8 +21,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -34,7 +36,12 @@ import (
 	brutils "github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -681,4 +688,73 @@ func TestBuildKeyRangesFromSchemasReplace(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWaitUntilSchemaReloadWaitsForTargetVersion(t *testing.T) {
+	ctx := context.Background()
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	dom := domain.NewDomain(store, 45*time.Second, 0, 0, func() (pools.Resource, error) {
+		return nil, errors.New("mock factory should not be called")
+	})
+	require.NoError(t, dom.Init(func(*domain.Domain) (pools.Resource, error) {
+		return nil, nil
+	}, nil))
+	t.Cleanup(dom.Close)
+	require.False(t, dom.IsLeaseExpired())
+
+	origInterval, origTimeout := waitInfoSchemaReloadCheckInterval, waitInfoSchemaReloadTimeout
+	waitInfoSchemaReloadCheckInterval = 5 * time.Millisecond
+	waitInfoSchemaReloadTimeout = 25 * time.Millisecond
+	t.Cleanup(func() {
+		waitInfoSchemaReloadCheckInterval = origInterval
+		waitInfoSchemaReloadTimeout = origTimeout
+	})
+
+	// Even when the domain's lease is still valid, waitUntilSchemaReload must not
+	// succeed before InfoSchema reaches the target version.
+	loadedVer := dom.InfoSchema().SchemaMetaVersion()
+	err = waitUntilSchemaReload(ctx, dom, loadedVer+100)
+	require.ErrorContains(t, err, "failed to wait until schema reload")
+
+	// Simulate meta restore advancing the persisted schema version in storage.
+	var bumpedVer int64
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		var err1 error
+		bumpedVer, err1 = m.GenSchemaVersions(5)
+		if err1 != nil {
+			return err1
+		}
+		return m.SetSchemaDiff(&model.SchemaDiff{
+			Version:             bumpedVer,
+			Type:                model.ActionNone,
+			SchemaID:            -1,
+			TableID:             -1,
+			RegenerateSchemaMap: true,
+		})
+	}))
+
+	// Advance the raw schema version counter without writing a diff (simulating an
+	// unrelated DDL reserving a version before committing/writing its diff).
+	// currentStorageSchemaVersion must still target the latest loadable version.
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		_, err1 := meta.NewMutator(txn).GenSchemaVersions(1)
+		return err1
+	}))
+
+	targetVer, err := currentStorageSchemaVersion(ctx, store)
+	require.NoError(t, err)
+	require.Equal(t, bumpedVer, targetVer)
+
+	// Once the domain reloads the target schema version, waiting succeeds without
+	// blocking on the un-diffed version.
+	require.NoError(t, dom.Reload())
+	require.Equal(t, bumpedVer, dom.InfoSchema().SchemaMetaVersion())
+	waitInfoSchemaReloadTimeout = time.Second
+	require.NoError(t, waitUntilSchemaReload(ctx, dom, targetVer))
 }

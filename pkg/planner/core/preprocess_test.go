@@ -122,6 +122,23 @@ func TestValidator(t *testing.T) {
 	}{
 		{"select ?", false, parser.ErrSyntax},
 		{"select ?", true, nil},
+		// TABLE and VALUES use SelectStmt without SelectStmtOpts.
+		{"table t", false, nil},
+		{"values row(1)", false, nil},
+		{"explain table t", false, nil},
+		// Keep error precedence and skipped binding subtrees covered here.
+		{"create table new_t as select SQL_CALC_FOUND_ROWS 1", false,
+			errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"insert into missing_t select SQL_CALC_FOUND_ROWS 1", false,
+			infoschema.ErrTableNotExists.GenWithStackByArgs("test", "missing_t")},
+		{"select * from missing_t where (select SQL_CALC_FOUND_ROWS 1)", false,
+			infoschema.ErrTableNotExists.GenWithStackByArgs("test", "missing_t")},
+		{"select SQL_CALC_FOUND_ROWS * from missing_t where (select SQL_CALC_FOUND_ROWS 1)", false,
+			plannererrors.ErrCantUseOptionHere.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")},
+		{"select SQL_CALC_FOUND_ROWS * from t for update of missing_t", false,
+			plannererrors.ErrUnknownTable.GenWithStackByArgs("missing_t", "locking clause")},
+		{"create global binding for select SQL_CALC_FOUND_ROWS a from t using select SQL_CALC_FOUND_ROWS a from t", false, nil},
+		{"drop global binding for select SQL_CALC_FOUND_ROWS a from t", false, nil},
 		{"create table t(id int not null auto_increment default 2, key (id))", true,
 			errors.New("[types:1067]Invalid default value for 'id'")},
 		{"create table t(id int not null default 2 auto_increment, key (id))", true,
@@ -338,6 +355,15 @@ func TestValidator(t *testing.T) {
 		{"SELECT CAST(1 AS DATETIME(31));", true, types.ErrTooBigPrecision.GenWithStackByArgs(31, "CAST", types.MaxFsp)},
 
 		// TABLESAMPLE
+		{"select * from t tablesample regions();", false, nil},
+		{"select * from t tablesample regions(0 rows);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions(0 percent);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions(100 percent);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions(1);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions() repeatable (0);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions(1 rows) repeatable (1);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions(? rows);", true, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions() repeatable (?);", true, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli();", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(23 percent) repeatable (23);", false, expression.ErrInvalidTableSample},
@@ -395,6 +421,14 @@ func TestValidator(t *testing.T) {
 		// {"CREATE TABLE t(a int, COLUMNAR INDEX(b) USING VECTOR)", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
 		{"CREATE TABLE t(c TEXT, FULLTEXT INDEX (t) WITH PARSER foo)", false, errors.New(`[ddl:8200]Unsupported parser 'foo'`)},
 		{"CREATE TABLE t(c TEXT, FULLTEXT INDEX (t) USING HNSW)", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for FULLTEXT INDEX`)},
+		{"CREATE TABLE t(g POINT NOT NULL SRID 4326, SPATIAL KEY sk (g))", false, errors.New(`[ddl:8200]SPATIAL index is not supported`)},
+		{"CREATE TABLE t(g GEOMETRY NOT NULL, SPATIAL INDEX (g))", false, errors.New(`[ddl:8200]SPATIAL index is not supported`)},
+		{"CREATE TABLE t(g GEOMETRY NOT NULL, SPATIAL (g))", false, errors.New(`[ddl:8200]SPATIAL index is not supported`)},
+		{"ALTER TABLE t ADD SPATIAL INDEX ai (g)", false, errors.New(`[ddl:8200]SPATIAL index is not supported`)},
+		{"SELECT CAST(0x00000000010100000000000000000000000000000000000000 AS POINT)", false, errors.New(`[planner:1235]This version of TiDB doesn't yet support 'spatial type casts'`)},
+		{"SELECT CONVERT(0x00, MULTIPOLYGON)", false, errors.New(`[planner:1235]This version of TiDB doesn't yet support 'spatial type casts'`)},
+		{"SELECT CAST('[]' AS POINT ARRAY)", false, errors.New(`[planner:1235]This version of TiDB doesn't yet support 'spatial type casts'`)},
+		{"SELECT JSON_SUM_CRC32('[]' AS POINT ARRAY)", false, errors.New(`[planner:1235]This version of TiDB doesn't yet support 'spatial type casts'`)},
 
 		// The following columnar index usages are valid, they only fail due to table not found.
 		{"CREATE VECTOR INDEX ident USING HNSW ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
@@ -405,6 +439,25 @@ func TestValidator(t *testing.T) {
 		// LATERAL derived tables pass preprocessing; validation happens in the planner.
 		{"SELECT * FROM t, LATERAL (SELECT t.a) AS dt", false, nil},
 		{"SELECT * FROM t LEFT JOIN LATERAL (SELECT t.a) AS dt ON true", false, nil},
+
+		// _tidb_commit_ts reads do not depend on tidb_mview_enable.
+		{"SELECT _tidb_commit_ts FROM t WHERE a = 1", false, nil},
+		{"SELECT a FROM t WHERE _tidb_commit_ts > 0", false, nil},
+		{"SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t", false, nil},
+		{"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0", false, nil},
+		{"UPDATE t SET a = (_tidb_commit_ts > 0)", false, nil},
+		{"INSERT INTO t (a) SELECT _tidb_commit_ts FROM t", false, nil},
+		{"UPDATE t SET t._tidb_commit_ts = 1", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t (_TIDB_COMMIT_TS) VALUES (1)", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t (_tidb_commit_ts) SELECT a FROM t", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t SET _tidb_commit_ts = 1", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE _tidb_commit_ts = 1", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"DELETE FROM t WHERE _tidb_commit_ts > 0", false, nil},
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -414,6 +467,25 @@ func TestValidator(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	for _, tt := range tests {
 		runSQL(t, tk.Session(), is, tt.sql, tt.inPrepare, tt.err)
+	}
+
+	// The same access boundary applies when materialized view DDL is enabled.
+	tk.MustExec("set tidb_mview_enable = on")
+	for _, sql := range []string{
+		"SELECT _tidb_commit_ts FROM t WHERE a = 1",
+		"SELECT a FROM t WHERE _tidb_commit_ts > 0",
+		"SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t",
+		"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0",
+		"DELETE FROM t WHERE _tidb_commit_ts > 0",
+		"DELETE FROM t WHERE _tidb_commit_ts > 0 AND _tidb_commit_ts <= 1 LIMIT 1",
+	} {
+		runSQL(t, tk.Session(), is, sql, false, nil)
+	}
+	for _, sql := range []string{
+		"UPDATE t SET _tidb_commit_ts = 1",
+	} {
+		runSQL(t, tk.Session(), is, sql, false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now"))
 	}
 }
 

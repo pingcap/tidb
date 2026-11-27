@@ -25,13 +25,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -97,17 +97,21 @@ func currentOldCertValidTime() time.Duration {
 
 // SessionToken represents the token used to authenticate with the new server.
 type SessionToken struct {
-	Username   string    `json:"username"`
+	Username string `json:"username"`
+	// Omit an empty hostname so re-marshalling tokens from older servers
+	// preserves the original signed payload, which has no hostname field.
+	Hostname   string    `json:"hostname,omitempty"`
 	SignTime   time.Time `json:"sign-time"`
 	ExpireTime time.Time `json:"expire-time"`
 	Signature  []byte    `json:"signature,omitempty"`
 }
 
-// CreateSessionToken creates a token for the proxy.
-func CreateSessionToken(username string) (*SessionToken, error) {
+// CreateSessionToken creates a token bound to the matched privilege account for the proxy.
+func CreateSessionToken(username, hostname string) (*SessionToken, error) {
 	now := getNow()
 	token := &SessionToken{
 		Username:   username,
+		Hostname:   hostname,
 		SignTime:   now,
 		ExpireTime: now.Add(currentTokenLifetime()),
 	}
@@ -122,7 +126,7 @@ func CreateSessionToken(username string) (*SessionToken, error) {
 }
 
 // ValidateSessionToken validates the token sent from the proxy.
-func ValidateSessionToken(tokenBytes []byte, username string) (err error) {
+func ValidateSessionToken(tokenBytes []byte, username, hostname string) (err error) {
 	var token SessionToken
 	if err = json.Unmarshal(tokenBytes, &token); err != nil {
 		return errors.Trace(err)
@@ -147,8 +151,14 @@ func ValidateSessionToken(tokenBytes []byte, username string) (err error) {
 	if token.SignTime.Add(currentTokenLifetime()).Before(now) {
 		return ErrCannotMigrateSession.GenWithStackByArgs("token lifetime is too long", token.SignTime.String())
 	}
-	if !strings.EqualFold(username, token.Username) {
+	// Privilege records identify accounts by exact username and matched host.
+	if username != token.Username {
 		return ErrCannotMigrateSession.GenWithStackByArgs("username does not match", username, token.Username)
+	}
+	// Older servers issue tokens without a hostname. Allow those tokens during
+	// rolling upgrades, and enforce host binding when the token includes it.
+	if token.Hostname != "" && hostname != token.Hostname {
+		return ErrCannotMigrateSession.GenWithStackByArgs("hostname does not match", hostname, token.Hostname)
 	}
 	return nil
 }
@@ -318,6 +328,11 @@ func (sc *signingCert) sign(content []byte) ([]byte, error) {
 		}
 	case *ecdsa.PrivateKey:
 		signer = key
+		// ECDSA expects a digest and truncates inputs longer than the curve order.
+		// Hash the complete payload so every token field is authenticated.
+		hashed := sha256.Sum256(content)
+		content = hashed[:]
+		opts = crypto.SHA256
 	default:
 		return nil, errors.Errorf("not supported private key type '%s' for signing", certInfo.cert.SignatureAlgorithm.String())
 	}
@@ -336,11 +351,20 @@ func (sc *signingCert) checkSignature(content, signature []byte) error {
 			break
 		}
 		switch certInfo.privKey.(type) {
-		// ESDSA is special: `PrivateKey.Sign` doesn't match with `Certificate.CheckSignature`.
+		// ECDSA is special: `PrivateKey.Sign` doesn't match with `Certificate.CheckSignature`.
 		case *ecdsa.PrivateKey:
-			if !ecdsa.VerifyASN1(certInfo.cert.PublicKey.(*ecdsa.PublicKey), content, signature) {
-				err = errors.New("x509: ECDSA verification failure")
+			key := certInfo.cert.PublicKey.(*ecdsa.PublicKey)
+			hashed := sha256.Sum256(content)
+			if ecdsa.VerifyASN1(key, hashed[:], signature) {
+				return nil
 			}
+			// Older servers sign raw JSON, which ECDSA truncates to a curve-order
+			// prefix and can leave timestamps unauthenticated. Accept it only
+			// during an upgrade; new tokens always sign the full payload digest.
+			if !vardef.IsLegacyECDSASessionTokenDisabled() && ecdsa.VerifyASN1(key, content, signature) {
+				return nil
+			}
+			err = errors.New("x509: ECDSA verification failure")
 		default:
 			err = certInfo.cert.CheckSignature(certInfo.cert.SignatureAlgorithm, content, signature)
 		}

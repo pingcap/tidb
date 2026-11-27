@@ -5,7 +5,6 @@ package split
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	goerrors "errors"
 	"time"
 
@@ -320,7 +319,7 @@ func PaginateScanRegion(
 ) ([]*RegionInfo, error) {
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) > 0 {
 		return nil, errors.Annotatef(berrors.ErrInvalidRange, "startKey > endKey, startKey: %s, endkey: %s",
-			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+			redact.Key(startKey), redact.Key(endKey))
 	}
 
 	var (
@@ -405,7 +404,7 @@ func ScanRegionsWithRetry(
 ) ([]*RegionInfo, error) {
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) > 0 {
 		return nil, errors.Annotatef(berrors.ErrInvalidRange, "startKey > endKey, startKey: %s, endkey: %s",
-			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+			redact.Key(startKey), redact.Key(endKey))
 	}
 
 	var regions []*RegionInfo
@@ -572,10 +571,10 @@ func getSplitKeysOfRegions(
 	endOfLastRegion := sortedRegions[len(sortedRegions)-1].Region.GetEndKey()
 	if !bytes.Equal(lastKey, endOfLastRegion) {
 		log.Error("in getSplitKeysOfRegions, regions don't cover all keys",
-			zap.String("firstKey", hex.EncodeToString(sortedKeys[0])),
-			zap.String("lastKey", hex.EncodeToString(lastKey)),
-			zap.String("firstRegionStartKey", hex.EncodeToString(sortedRegions[0].Region.GetStartKey())),
-			zap.String("lastRegionEndKey", hex.EncodeToString(endOfLastRegion)),
+			logutil.Key("firstKey", sortedKeys[0]),
+			logutil.Key("lastKey", lastKey),
+			logutil.Key("firstRegionStartKey", sortedRegions[0].Region.GetStartKey()),
+			logutil.Key("lastRegionEndKey", endOfLastRegion),
 		)
 	}
 	return splitKeyMap

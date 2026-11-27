@@ -16,6 +16,7 @@ package physicalop
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -360,6 +361,9 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 	if p.IndexInfo == nil && !p.TblInfo.HasClusteredIndex() && len(p.PartitionNames) == 1 {
 		for i, def := range pi.Definitions {
 			if def.Name.L == p.PartitionNames[0].L {
+				if slices.Contains(pi.IDsInDDLToIgnore(), def.ID) {
+					return true, nil
+				}
 				idx := i
 				p.PartitionIdx = &idx
 				break

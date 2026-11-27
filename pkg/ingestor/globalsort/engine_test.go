@@ -223,21 +223,23 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 	}})
 	extEngine := NewExternalEngine(
 		ctx,
-		store,
-		dataFiles,
-		statFiles,
-		[]byte{1},
-		[]byte{3},
-		[][]byte{{1}, {2}, {3}},
-		[][]byte{{1}, {2}, {3}},
+		&EngineConfig{
+			ExtStore:      store,
+			DataFiles:     dataFiles,
+			StatFiles:     statFiles,
+			StartKey:      []byte{1},
+			EndKey:        []byte{3},
+			JobKeys:       [][]byte{{1}, {2}, {3}},
+			SplitKeys:     [][]byte{{1}, {2}, {3}},
+			TotalFileSize: 2,
+			TotalKVCount:  2,
+			CheckHotspot:  true,
+			MemCapacity:   4 * units.MiB,
+			OnDup:         engineapi.OnDuplicateKeyIgnore,
+			FilePrefix:    "/",
+		},
 		1,
 		123,
-		2,
-		2,
-		true,
-		4*units.MiB,
-		engineapi.OnDuplicateKeyIgnore,
-		"/",
 	)
 	t.Cleanup(func() {
 		require.NoError(t, extEngine.Close())
@@ -319,18 +321,23 @@ func TestEngineOnDup(t *testing.T) {
 	getEngineFn := func(store storeapi.Storage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
 		return NewExternalEngine(
 			ctx,
-			store, inDataFiles, inStatFiles,
-			[]byte{1}, []byte{5},
-			[][]byte{{1}, {2}, {3}, {4}, {5}},
-			[][]byte{{1}, {3}, {5}},
+			&EngineConfig{
+				ExtStore:      store,
+				DataFiles:     inDataFiles,
+				StatFiles:     inStatFiles,
+				StartKey:      []byte{1},
+				EndKey:        []byte{5},
+				JobKeys:       [][]byte{{1}, {2}, {3}, {4}, {5}},
+				SplitKeys:     [][]byte{{1}, {3}, {5}},
+				TotalFileSize: 456,
+				TotalKVCount:  789,
+				CheckHotspot:  true,
+				MemCapacity:   16 * units.GiB,
+				OnDup:         onDup,
+				FilePrefix:    "/",
+			},
 			10,
 			123,
-			456,
-			789,
-			true,
-			16*units.GiB,
-			onDup,
-			"/",
 		)
 	}
 
@@ -495,18 +502,23 @@ func TestLoadIngestDataMultiBatch(t *testing.T) {
 	jobKeys := [][]byte{{1}, {3}, {5}, {7}, {9}}
 	extEngine := NewExternalEngine(
 		ctx,
-		store, dataFiles, statFiles,
-		[]byte{1}, []byte{9},
-		jobKeys,
-		[][]byte{{1}, {5}, {9}},
+		&EngineConfig{
+			ExtStore:      store,
+			DataFiles:     dataFiles,
+			StatFiles:     statFiles,
+			StartKey:      []byte{1},
+			EndKey:        []byte{9},
+			JobKeys:       jobKeys,
+			SplitKeys:     [][]byte{{1}, {5}, {9}},
+			TotalFileSize: 456,
+			TotalKVCount:  8,
+			CheckHotspot:  true,
+			MemCapacity:   16 * units.GiB,
+			OnDup:         engineapi.OnDuplicateKeyError,
+			FilePrefix:    "/",
+		},
 		2, // workerConcurrency — forces 2 batches
 		123,
-		456,
-		8,
-		true,
-		16*units.GiB,
-		engineapi.OnDuplicateKeyError,
-		"/",
 	)
 	t.Cleanup(func() {
 		require.NoError(t, extEngine.Close())

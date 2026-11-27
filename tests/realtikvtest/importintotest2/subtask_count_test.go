@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -70,7 +70,7 @@ func (s *mockGCSSuite) TestStepSubtaskCount() {
 	// only 1 node is required in post process step.
 	s.Equal(status.TiDBWorker.RequiredCount, 1)
 
-	taskKey := importinto.TaskKey(int64(jobID))
+	taskKey := taskkey.ForJob(int64(jobID))
 	mgr, err := storage.GetTaskManager()
 	s.NoError(err)
 	task, err := mgr.GetTaskByKeyWithHistory(ctx, taskKey)

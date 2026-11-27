@@ -59,7 +59,7 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 		}
 
 		tableName := fmt.Sprintf("%s.%s", table.Schema.L, table.Name.L)
-		msg, err := h.LockPartitions(tid, tableName, pidNames)
+		msg, err := h.Locker().LockPartitions(tid, tableName, pidNames)
 		if err != nil {
 			return err
 		}
@@ -72,7 +72,7 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 			return err
 		}
 
-		msg, err := h.LockTables(tableWithPartitions)
+		msg, err := h.Locker().LockTables(tableWithPartitions)
 		if err != nil {
 			return err
 		}

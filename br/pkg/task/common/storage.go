@@ -60,6 +60,11 @@ func DecodeBackupMeta(metaData []byte, cipherInfo *backuppb.CipherInfo) (*backup
 
 	var iv []byte
 	if ci.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
+		if len(metaData) < metautil.CrypterIvLen {
+			return nil, errors.Errorf(
+				"encrypted backupmeta is too short: got %d bytes, need at least %d bytes for IV",
+				len(metaData), metautil.CrypterIvLen)
+		}
 		iv = metaData[:metautil.CrypterIvLen]
 	}
 	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], &ci, iv)

@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -112,7 +113,7 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 		"LoadSysVarCacheLoop",
 		"LoadBindingLoop",
 		"LoadStatsDiagnostic",
-		"(*statsSyncLoad).SubLoadWorker",
+		"syncload.(*Loader).SubLoadWorker",
 
 		// SQL listener and the diagnostic HTTP allowlist.
 		"server.(*Server).Run",
@@ -138,9 +139,10 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 		require.Equal(t, "@", marker)
 		require.Positive(t, count)
 		checked += count
-		if !hasFrames {
-			// debug=1 suppresses runtime.goexit even when it is the only frame.
-			// Resolve the raw PCs so no other frameless stack escapes the allowlist.
+		if !hasFrames || isRuntimeGoexitGroup(groupHeader) {
+			// A goroutine can be sampled after its user function has returned,
+			// in runtime.goexit or runtime.goexit1. debug=1 hides runtime.goexit.
+			// Resolve every raw PC so only runtime exit stacks bypass the allowlist.
 			require.True(t, isRuntimeGoexitGroup(groupHeader), "goroutine group has no frames: %s", group)
 			continue
 		}
@@ -176,7 +178,7 @@ func isRuntimeGoexitGroup(header []byte) bool {
 		// expanding a stack containing known frames.
 		frames := runtime.CallersFrames([]uintptr{uintptr(pc)})
 		frame, more := frames.Next()
-		if frame.Function != "runtime.goexit" || more {
+		if (frame.Function != "runtime.goexit" && frame.Function != "runtime.goexit1") || more {
 			return false
 		}
 	}
@@ -221,7 +223,10 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
-	t.Cleanup(dom.Close)
+	// The startup timeout path closes the Domain early; Domain.Close must not
+	// run twice.
+	closeDom := sync.OnceFunc(dom.Close)
+	t.Cleanup(closeDom)
 
 	cfg := config.NewConfig()
 	cfg.Host = "127.0.0.1"
@@ -237,7 +242,9 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 
 	runErr := make(chan error, 1)
 	go func() {
-		runErr <- server.Run(nil)
+		// Pass the Domain as cmd/tidb-server does, so force-init-stats holds
+		// the listener until the diagnostic initial stats load has finished.
+		runErr <- server.Run(dom)
 	}()
 	select {
 	case <-tidbserver.RunInGoTestChan:
@@ -245,8 +252,32 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 		server.Close()
 		require.NoError(t, err)
 	case <-time.After(10 * time.Second):
+		// Closing the server does not release Run from its InitStatsDone wait;
+		// closing the Domain does. Let Run finish before the globals are restored.
+		closeDom()
+		runReturned := false
+		select {
+		case <-tidbserver.RunInGoTestChan:
+		case <-runErr:
+			runReturned = true
+		case <-time.After(10 * time.Second):
+		}
 		server.Close()
+		if !runReturned {
+			select {
+			case <-runErr:
+			case <-time.After(10 * time.Second):
+			}
+		}
 		require.FailNow(t, "timed out waiting for TiDB server to start")
+	}
+	// The goroutine allowlist check is only meaningful once the asynchronous
+	// stats load and its SQL workers are gone.
+	select {
+	case <-dom.StatsHandle().InitStatsDone:
+	default:
+		server.Close()
+		require.FailNow(t, "initial stats load still running after the listener started")
 	}
 
 	t.Cleanup(func() {

@@ -310,7 +310,7 @@ func constructIndexJoinStatic(
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType,
-		ExpectedCnt:       physicalop.CalcChildExpectedCnt(p.SCtx(), prop, outerStats.RowCount, p.StatsInfo().RowCount),
+		ExpectedCnt:       physicalop.CalcChildExpectedCnt(p.SCtx(), prop.ExpectedCnt, !prop.IsSortItemEmpty(), outerStats.RowCount, p.StatsInfo().RowCount),
 		SortItems:         prop.SortItems,
 		CTEProducerStatus: prop.CTEProducerStatus,
 		NoCopPushDown:     prop.NoCopPushDown,
@@ -705,13 +705,13 @@ func buildDataSource2IndexScanByIndexJoinProp(
 		if path.IsTablePath() {
 			return false
 		}
-		// if path is index path. index path currently include two kind of, one is normal, and the other is mv index.
-		// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
-		// on mvi, it will return many index rows which breaks handle-unique attribute here.
+		// If path is an MV index path like mvi(a, json, b), a prefix scan with range [1,1] on mvi can
+		// return many index rows and break the handle-unique attribute here.
 		//
-		// the basic rule is that: mv index can be and can only be accessed by indexMerge operator. (embedded handle duplication)
+		// The basic rule is that MV index can be and can only be accessed by indexMerge operator.
+		// Partial index paths that remain here have already passed predicate checking.
 		if !path.IsIndexJoinUnapplicable() {
-			return true // not a MVIndex path, it can successfully be index join probe side.
+			return true
 		}
 		return false
 	}
@@ -722,7 +722,11 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 	accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, prop.IndexJoinProp, indexJoinResult)
 	var innerTask base.Task
-	if !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
+	var matchResult property.PhysicalPropMatchResult
+	if !prop.IsSortItemEmpty() {
+		matchResult, _ = matchProperty(ds, indexJoinResult.chosenPath, prop)
+	}
+	if matchResult == property.PropMatched {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
 	} else {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
@@ -773,7 +777,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 		accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, prop.IndexJoinProp, indexJoinResult)
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
-		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
+		if matchResult, _ := matchProperty(ds, indexJoinResult.chosenPath, prop); matchResult == property.PropMatched {
 			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
 		} else {
 			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
@@ -794,7 +798,11 @@ func buildDataSource2TableScanByIndexJoinProp(
 		// For IntHandle (integer primary key), it's always a unique match.
 		maxOneRow := true
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
-		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
+		var matchResult property.PhysicalPropMatchResult
+		if !prop.IsSortItemEmpty() {
+			matchResult, _ = matchProperty(ds, chosenPath, prop)
+		}
+		if matchResult == property.PropMatched {
 			// The int handle is a single-column unique key, so the join key fully decides the range
 			// and no rows-after-access floor applies.
 			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
@@ -903,18 +911,19 @@ func constructDS2TableScanTask(
 		return nil
 	}
 	ts := physicalop.PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         ds.Columns,
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		FilterCondition: filterConds,
-		Ranges:          ranges,
-		RangeInfo:       rangeInfo,
-		KeepOrder:       keepOrder,
-		Desc:            desc,
-		PhysicalTableID: ds.PhysicalTableID,
-		TblCols:         ds.TblCols,
-		TblColHists:     ds.TblColHists,
+		Table:                                    ds.TableInfo,
+		Columns:                                  ds.Columns,
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		FilterCondition:                          filterConds,
+		Ranges:                                   ranges,
+		RangeInfo:                                rangeInfo,
+		KeepOrder:                                keepOrder,
+		Desc:                                     desc,
+		PhysicalTableID:                          ds.PhysicalTableID,
+		TblCols:                                  ds.TblCols,
+		TblColHists:                              ds.TblColHists,
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetIsPartition(ds.PartitionDefIdx != nil)
 	ts.SetSchema(ds.Schema().Clone())
@@ -1134,13 +1143,14 @@ func constructDS2IndexScanTask(
 	if !path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := physicalop.PhysicalTableScan{
-			Columns:         ds.Columns,
-			Table:           is.Table,
-			TableAsName:     ds.TableAsName,
-			DBName:          ds.DBName,
-			PhysicalTableID: ds.PhysicalTableID,
-			TblCols:         ds.TblCols,
-			TblColHists:     ds.TblColHists,
+			Columns:                                  ds.Columns,
+			Table:                                    is.Table,
+			TableAsName:                              ds.TableAsName,
+			DBName:                                   ds.DBName,
+			PhysicalTableID:                          ds.PhysicalTableID,
+			TblCols:                                  ds.TblCols,
+			TblColHists:                              ds.TblColHists,
+			ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		ts.SetSchema(is.DataSourceSchema.Clone())
 		ts.SetIsPartition(ds.PartitionDefIdx != nil)
@@ -2411,7 +2421,7 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 	// inner side produces enough matching rows (same logic used by IndexJoin).
 	outerExpectedCnt := math.MaxFloat64
 	if !prop.IsSortItemEmpty() {
-		outerExpectedCnt = physicalop.CalcChildExpectedCnt(la.SCtx(), prop, stats0.RowCount, la.StatsInfo().RowCount)
+		outerExpectedCnt = physicalop.CalcChildExpectedCnt(la.SCtx(), prop.ExpectedCnt, true, stats0.RowCount, la.StatsInfo().RowCount)
 	}
 
 	apply := physicalop.PhysicalApply{

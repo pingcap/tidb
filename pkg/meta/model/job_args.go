@@ -184,11 +184,16 @@ type ModifySchemaArgs struct {
 	// used for modify schema placement policy.
 	// might be nil, means set it to default.
 	PolicyRef *PolicyRefInfo `json:"policy_ref,omitempty"`
+	// used for modify schema read only state.
+	ReadOnly   bool   `json:"read_only,omitempty"`
+	DDLStartTS uint64 `json:"ddl_start_ts,omitempty"`
 }
 
 func (a *ModifySchemaArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionModifySchemaCharsetAndCollate {
 		return []any{a.ToCharset, a.ToCollate}
+	} else if job.Type == ActionModifySchemaReadOnly {
+		return []any{a.ReadOnly, a.DDLStartTS}
 	}
 	return []any{a.PolicyRef}
 }
@@ -196,6 +201,8 @@ func (a *ModifySchemaArgs) getArgsV1(job *Job) []any {
 func (a *ModifySchemaArgs) decodeV1(job *Job) error {
 	if job.Type == ActionModifySchemaCharsetAndCollate {
 		return errors.Trace(job.decodeArgs(&a.ToCharset, &a.ToCollate))
+	} else if job.Type == ActionModifySchemaReadOnly {
+		return errors.Trace(job.decodeArgs(&a.ReadOnly, &a.DDLStartTS))
 	}
 	return errors.Trace(job.decodeArgs(&a.PolicyRef))
 }
@@ -315,8 +322,8 @@ func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
 // when dropping multiple objects, each object will have a separate job
 type DropTableArgs struct {
 	// The following fields are only for DROP TABLE and materialized view drop jobs.
-	// when dropping multiple tables, the Identifiers is the same, but each drop-table
-	// runs in a separate job.
+	// New DROP TABLE submissions carry the current identifier. The executor uses
+	// the full statement list for admission checks before submitting independent jobs.
 	Identifiers []ast.Ident `json:"identifiers,omitempty"`
 	FKCheck     bool        `json:"fk_check,omitempty"`
 
@@ -783,29 +790,41 @@ func GetAlterMaterializedViewLogPurgeArgs(job *Job) (*AlterMaterializedViewLogPu
 	return getOrDecodeArgs[*AlterMaterializedViewLogPurgeArgs](&AlterMaterializedViewLogPurgeArgs{}, job)
 }
 
+// MViewRefreshSource records a physical input binding at a refresh computation snapshot.
+// MLogID is zero when the source has no materialized view log.
+type MViewRefreshSource struct {
+	TableID int64 `json:"table_id"`
+	MLogID  int64 `json:"mlog_id"`
+}
+
 // RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs contains the metadata
 // needed to atomically replace an MV with its freshly built shadow table.
 type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
-	OldMViewID                         int64   `json:"old_mview_id,omitempty"`
-	ShadowTableID                      int64   `json:"shadow_table_id,omitempty"`
-	BuildReadTSO                       uint64  `json:"build_read_tso,omitempty"`
-	ExpectedOldMViewRevision           *uint64 `json:"expected_old_mview_revision,omitempty"`
-	ExpectedLastSuccessReadTSO         uint64  `json:"expected_last_success_read_tso,omitempty"`
-	ExpectedLastSuccessReadTSONull     bool    `json:"expected_last_success_read_tso_null,omitempty"`
-	NextRefreshUnixSeconds             *int64  `json:"next_refresh_unix_seconds,omitempty"`
-	ShouldUpdateNextRefreshUnixSeconds bool    `json:"should_update_next_refresh_unix_seconds,omitempty"`
+	OldMLogID                          int64                `json:"old_mlog_id,omitempty"`
+	NewMLogID                          int64                `json:"new_mlog_id,omitempty"`
+	OldMViewID                         int64                `json:"old_mview_id,omitempty"`
+	ShadowTableID                      int64                `json:"shadow_table_id,omitempty"`
+	BuildReadTSO                       uint64               `json:"build_read_tso,omitempty"`
+	BuildSources                       []MViewRefreshSource `json:"build_sources"`
+	ExpectedOldMViewRevision           *uint64              `json:"expected_old_mview_revision,omitempty"`
+	ExpectedLastSuccessReadTSO         uint64               `json:"expected_last_success_read_tso,omitempty"`
+	ExpectedLastSuccessReadTSONull     bool                 `json:"expected_last_success_read_tso_null,omitempty"`
+	NextRefreshUnixSeconds             *int64               `json:"next_refresh_unix_seconds,omitempty"`
+	ShouldUpdateNextRefreshUnixSeconds bool                 `json:"should_update_next_refresh_unix_seconds,omitempty"`
+	// OldMViewHasAffinity is recorded at cutover for post-commit cleanup.
+	OldMViewHasAffinity bool `json:"old_mview_has_affinity,omitempty"`
 }
 
 func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) []any {
 	return []any{a.OldMViewID, a.ShadowTableID, a.BuildReadTSO, a.ExpectedLastSuccessReadTSO,
 		a.ExpectedLastSuccessReadTSONull, a.NextRefreshUnixSeconds, a.ShouldUpdateNextRefreshUnixSeconds,
-		a.ExpectedOldMViewRevision}
+		a.ExpectedOldMViewRevision, a.BuildSources, a.OldMLogID, a.NewMLogID, a.OldMViewHasAffinity}
 }
 
 func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) decodeV1(job *Job) error {
 	return errors.Trace(job.decodeArgs(&a.OldMViewID, &a.ShadowTableID, &a.BuildReadTSO,
 		&a.ExpectedLastSuccessReadTSO, &a.ExpectedLastSuccessReadTSONull, &a.NextRefreshUnixSeconds,
-		&a.ShouldUpdateNextRefreshUnixSeconds, &a.ExpectedOldMViewRevision))
+		&a.ShouldUpdateNextRefreshUnixSeconds, &a.ExpectedOldMViewRevision, &a.BuildSources, &a.OldMLogID, &a.NewMLogID, &a.OldMViewHasAffinity))
 }
 
 // GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs gets cutover args.
@@ -1914,7 +1933,7 @@ type ModifyColumnArgs struct {
 	OldColumnID      int64               `json:"old_column_id,omitempty"`
 	OldColumnName    ast.CIStr           `json:"old_column_name,omitempty"`
 	Position         *ast.ColumnPosition `json:"position,omitempty"`
-	ModifyColumnType byte                `json:"modify_column_type,omitempty"`
+	ModifyColumnType ModifyColumnType    `json:"modify_column_type,omitempty"`
 	NewShardBits     uint64              `json:"new_shard_bits,omitempty"`
 	// ChangingColumn is the temporary column derived from OldColumn
 	ChangingColumn *ColumnInfo `json:"changing_column,omitempty"`
@@ -2024,6 +2043,10 @@ func GetModifyTableEngineAttributeArgs(job *Job) (*ModifyTableEngineAttributeArg
 // AlterTableAffinityArgs is the argument for AlterTableAffinity
 type AlterTableAffinityArgs struct {
 	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
+	// OldAffinity is the affinity the table had before the job. It is set when
+	// the job finishes, so the groups of the old level can be deleted after the
+	// job commits.
+	OldAffinity *TableAffinityInfo `json:"old_affinity,omitempty"`
 }
 
 func (a *AlterTableAffinityArgs) getArgsV1(*Job) []any {

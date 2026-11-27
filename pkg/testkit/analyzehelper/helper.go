@@ -37,5 +37,5 @@ func TriggerPredicateColumnsCollection(t *testing.T, tk *testkit.TestKit, store 
 	}
 
 	// After executing the SELECT statements, dump the column statistics usage to KV.
-	require.NoError(t, statsHandle.DumpColStatsUsageToKV())
+	require.NoError(t, statsHandle.Usage().DumpColStatsUsageToKV())
 }

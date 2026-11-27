@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -33,10 +34,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newQueue creates a priority queue on the stats components of h.
+func newQueue(h *handle.Handle) *priorityqueue.AnalysisPriorityQueue {
+	return priorityqueue.NewAnalysisPriorityQueue(h.Pool(), h.Tables(), h.Cache(), h)
+}
+
 func TestCallAPIBeforeInitialize(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 	handle := dom.StatsHandle()
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 	defer pq.Close()
 
 	t.Run("IsEmpty", func(t *testing.T) {
@@ -81,9 +87,9 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 
 	ctx := context.Background()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 	defer pq.Close()
 
 	t.Run("Initialize", func(t *testing.T) {
@@ -143,8 +149,8 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 
 	ctx := context.Background()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
+	pq := newQueue(handle)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(ctx))
 
@@ -156,7 +162,7 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	// Analyze the tables
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Call RefreshLastAnalysisDuration
 	pq.RefreshLastAnalysisDuration()
@@ -199,7 +205,7 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 		// Analyze the tables.
 		tk.MustExec("analyze table t1")
 		tk.MustExec("analyze table t2")
-		require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+		require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 	} else {
 		tk.MustExec("use test")
 		tk.MustExec("create table t1 (a int)")
@@ -215,14 +221,14 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	}()
 
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 	schema := ast.NewCIStr("test")
 	tbl1, err := dom.InfoSchema().TableByName(ctx, schema, ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbl2, err := dom.InfoSchema().TableByName(ctx, schema, ast.NewCIStr("t2"))
 	require.NoError(t, err)
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(ctx))
 
@@ -237,9 +243,9 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	require.True(t, valid)
 	valid, _ = job2.ValidateAndPrepare(tk.Session())
 	require.True(t, valid)
-	require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
-	require.NoError(t, job2.Analyze(handle, dom.SysProcTracker()))
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, job1.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker()))
+	require.NoError(t, job2.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Insert 9 rows into t1.
 	tk.MustExec("insert into t1 values (3), (4), (5), (6), (7), (8), (9), (10), (11)")
@@ -248,7 +254,7 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 
 	// Dump the stats to kv.
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
@@ -266,7 +272,7 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 
 	// Dump the stats to kv.
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
@@ -304,7 +310,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 
 	ctx := context.Background()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 	schema := ast.NewCIStr("test")
 	tbl1, err := dom.InfoSchema().TableByName(ctx, schema, ast.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -312,9 +318,9 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(ctx))
 
@@ -332,7 +338,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	tk.MustExec("insert into t2 values (2), (3)")
 	// Dump the stats to kv.
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
@@ -354,13 +360,13 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	// Analyze the job.
 	valid, _ := job1.ValidateAndPrepare(tk.Session())
 	require.True(t, valid)
-	require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
+	require.NoError(t, job1.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker()))
 
 	// Add more rows to t1.
 	tk.MustExec("insert into t1 values (4), (5), (6), (7), (8), (9), (10), (11), (12), (13)")
 	// Dump the stats to kv.
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
@@ -395,9 +401,9 @@ func TestRequeueMustRetryJobs(t *testing.T) {
 	// Insert some rows.
 	tk.MustExec("insert into example_table values (11), (12), (13), (14), (15), (16), (17), (18), (19)")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(context.Background(), dom.InfoSchema()))
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(context.Background()))
 
@@ -411,7 +417,7 @@ func TestRequeueMustRetryJobs(t *testing.T) {
 	// Insert more rows.
 	tk.MustExec("insert into example_table values (20), (21), (22), (23), (24), (25), (26), (27), (28), (29)")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
@@ -444,9 +450,9 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 
 	ctx := context.Background()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(context.Background()))
 
@@ -467,7 +473,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 
 	// Lock t1.
 	tk.MustExec("lock stats t1")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
@@ -480,9 +486,18 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tbl2.Meta().ID, job.GetTableID())
 
+	// Rebuild must also skip the locked table.
+	require.NoError(t, pq.Rebuild())
+	l, err = pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 1, l)
+	job, err = pq.PeekForTest()
+	require.NoError(t, err)
+	require.Equal(t, tbl2.Meta().ID, job.GetTableID())
+
 	// Unlock t1.
 	tk.MustExec("unlock stats t1")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
@@ -503,7 +518,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 	tk.MustExec("analyze table t1")
 	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
 	statistics.AutoAnalyzeMinCnt = 0
@@ -514,9 +529,9 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	// Insert more rows into partition p0.
 	tk.MustExec("insert into t1 partition (p0) values (2), (3), (4), (5), (6), (7), (8), (9)")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(context.Background()))
 
@@ -532,7 +547,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 
 	// Lock the whole table.
 	tk.MustExec("lock stats t1")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
@@ -542,9 +557,15 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, 0, l)
 
+	// Rebuild must also skip the locked table.
+	require.NoError(t, pq.Rebuild())
+	l, err = pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 0, l)
+
 	// Unlock the whole table.
 	tk.MustExec("unlock stats t1")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
@@ -571,9 +592,9 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 
 	ctx := context.Background()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 	tk.MustExec("analyze table t1")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 	schema := ast.NewCIStr("test")
 	tbl, err := dom.InfoSchema().TableByName(ctx, schema, ast.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -581,9 +602,9 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	// Insert more rows into partition p0.
 	tk.MustExec("insert into t1 partition (p0) values (2), (3), (4), (5), (6), (7), (8), (9)")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(ctx))
 
@@ -595,7 +616,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 
 	// Lock partition p0.
 	tk.MustExec("lock stats t1 partition p0")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
@@ -605,9 +626,15 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, l)
 
+	// Rebuild must also skip the locked partition.
+	require.NoError(t, pq.Rebuild())
+	l, err = pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 0, l)
+
 	// Unlock partition p0.
 	tk.MustExec("unlock stats t1 partition (p0)")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Process the DML changes.
 	pq.ProcessDMLChanges()
@@ -622,7 +649,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 func TestPQCanBeClosedAndReInitialized(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 	handle := dom.StatsHandle()
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(context.Background()))
 
@@ -655,8 +682,8 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 
 	ctx := context.Background()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
+	pq := newQueue(handle)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(ctx))
 
@@ -670,14 +697,14 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 
 	// Drop the table and mock the table stats is removed from the cache.
 	tk.MustExec("drop table t1")
-	deleteEvent := statstestutil.FindEvent(handle.DDLEventCh(), model.ActionDropTable)
+	deleteEvent := statstestutil.FindEvent(handle.DDL().DDLEventCh(), model.ActionDropTable)
 	require.NotNil(t, deleteEvent)
 	err = statstestutil.HandleDDLEventWithTxn(handle, deleteEvent)
 	require.NoError(t, err)
-	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Make sure handle.Get() returns false.
-	_, ok := handle.Get(tbl.Meta().ID)
+	_, ok := handle.Cache().Get(tbl.Meta().ID)
 	require.False(t, ok)
 
 	require.NotPanics(t, func() {
@@ -692,7 +719,7 @@ func TestConcurrentCloseAndBackgroundOperations(t *testing.T) {
 	handle := dom.StatsHandle()
 
 	ctx := context.Background()
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 	require.NoError(t, pq.Initialize(ctx))
 
 	// Use a channel to signal when Close() completes
@@ -717,7 +744,7 @@ func TestConcurrentClose(t *testing.T) {
 	handle := dom.StatsHandle()
 
 	ctx := context.Background()
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 	require.NoError(t, pq.Initialize(ctx))
 	require.True(t, pq.IsInitialized())
 
@@ -758,7 +785,7 @@ func TestConcurrentInitializeAndClose(t *testing.T) {
 	handle := dom.StatsHandle()
 
 	ctx := context.Background()
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 
 	const numIterations = 5
 	done := make(chan struct{})
@@ -801,7 +828,7 @@ func TestPanicAndRecoverInQueueRun(t *testing.T) {
 	handle := dom.StatsHandle()
 
 	ctx := context.Background()
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := newQueue(handle)
 
 	// Enable the failpoint to simulate a panic during background operations
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue/panicInAnalysisPriorityQueueRun", "return(true)")
@@ -809,4 +836,57 @@ func TestPanicAndRecoverInQueueRun(t *testing.T) {
 	require.NoError(t, pq.Initialize(ctx))
 	pq.Close()
 	require.False(t, pq.IsInitialized(), "Queue should not be initialized after Close()")
+}
+
+func TestAnalysisPriorityQueueSkipsMaterializedViewLog(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable=on")
+	handle := dom.StatsHandle()
+	tk.MustExec("create table t (a int not null, b int not null)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(handle))
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(handle))
+	tk.MustExec("insert into t values (1, 10), (2, 20)")
+
+	originalAutoAnalyzeMinCnt := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = originalAutoAnalyzeMinCnt
+	}()
+
+	ctx := context.Background()
+	require.NoError(t, handle.Usage().DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
+
+	baseTable, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	mlogTable, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), model.MaterializedViewLogTableName(ast.NewCIStr("t")))
+	require.NoError(t, err)
+	require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
+	mlogStats, found := handle.GetNonPseudoPhysicalTableStats(mlogTable.Meta().ID)
+	require.True(t, found)
+	require.True(t, mlogStats.IsEligibleForAnalysis())
+
+	pq := newQueue(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize(ctx))
+
+	length, err := pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 1, length)
+
+	job, err := pq.Pop()
+	require.NoError(t, err)
+	require.Equal(t, baseTable.Meta().ID, job.GetTableID())
+	require.NotEqual(t, mlogTable.Meta().ID, job.GetTableID())
+
+	tk.MustExec("insert into t values (3, 30)")
+	require.NoError(t, handle.Usage().DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
+	pq.ProcessDMLChanges()
+	length, err = pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 0, length)
 }

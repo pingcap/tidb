@@ -296,6 +296,11 @@ func TestNonTransactionalWithCheckConstraint(t *testing.T) {
 	tk.MustExec("set @@tidb_snapshot=''")
 	checkFn()
 
+	tk.MustExec("set transaction read only as of timestamp @a")
+	require.ErrorContains(t, tk.ExecToErr("batch on a limit 10 update t set b = b + 100"), "tx_read_ts")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("9900"))
+
 	tk.MustExec("set @@tidb_read_consistency=weak")
 	err = tk.ExecToErr("batch on a limit 10 insert into t1 select * from t")
 	require.Error(t, err)

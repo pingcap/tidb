@@ -16,7 +16,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics/handle",
-        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/cache",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/util/filter",

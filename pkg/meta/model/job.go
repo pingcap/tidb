@@ -117,7 +117,7 @@ const (
 	ActionModifyEngineAttribute                 ActionType = 74
 	ActionAlterTableMode                        ActionType = 75
 	ActionRefreshMeta                           ActionType = 76
-	ActionModifySchemaReadOnly                  ActionType = 77 // reserve for database read-only feature
+	ActionModifySchemaReadOnly                  ActionType = 77
 	ActionAlterTableAffinity                    ActionType = 78
 	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
 	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
@@ -245,10 +245,12 @@ func (action ActionType) String() string {
 }
 
 // ModifyColumnType is used to indicate what type of modify column job it is.
+type ModifyColumnType byte
+
 // Note: to maintain compatibility, value 6(mysql.TypeNull) should not be used here which may be used by older version of TiDB.
 // https://github.com/pingcap/tidb/blob/cf587d3793d7d147132d90eb1850981d3ec41780/pkg/ddl/modify_column.go#L998-L1004
 const (
-	ModifyTypeNone byte = iota
+	ModifyTypeNone ModifyColumnType = iota
 	// modify column that guarantees no reorganization or check is needed.
 	ModifyTypeNoReorg
 
@@ -266,7 +268,7 @@ const (
 )
 
 // ModifyTypeToString converts ModifyColumnType to string.
-func ModifyTypeToString(tp byte) string {
+func ModifyTypeToString(tp ModifyColumnType) string {
 	switch tp {
 	case ModifyTypeNone:
 		return "none"
@@ -306,6 +308,8 @@ const (
 	StateReplicaOnly
 	// StateGlobalTxnOnly means we can only use global txn for operator on this schema element
 	StateGlobalTxnOnly
+	// StatePendingReadOnly means this database is pending to be read-only.
+	StatePendingReadOnly
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
@@ -328,6 +332,8 @@ func (s SchemaState) String() string {
 		return "replica only"
 	case StateGlobalTxnOnly:
 		return "global txn only"
+	case StatePendingReadOnly:
+		return "pending read only"
 	default:
 		return "none"
 	}
@@ -472,6 +478,10 @@ type Job struct {
 	// Only happens when tidb_enable_fast_create_table = on
 	// this field is useless since 8.3
 	LocalMode bool `json:"local_mode"`
+	// CheckSchemaReadOnly requires the owner to recheck writable schemas before
+	// the first step. The submitter's explicit replica-writer bypass clears it.
+	// A multi-schema parent consumes it before creating any sub-job proxies.
+	CheckSchemaReadOnly bool `json:"check_schema_read_only,omitempty"`
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`

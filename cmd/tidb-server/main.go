@@ -417,8 +417,8 @@ func main() {
 			return
 		}
 	}
-	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	terror.MustNil(diagnosticmode.Initialize(*diagnosticMode))
+	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if kerneltype.IsNextGen() {
 		terror.MustNil(initDeployMode(config.GetGlobalConfig()))
 	}
@@ -1109,6 +1109,9 @@ func setGlobalVars() {
 	vardef.SetSchemaLease(schemaLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	vardef.SetStatsLease(statsLeaseDuration)
+	if !cfg.Performance.EnableStatsCacheMemQuota {
+		log.Warn("performance.enable-stats-cache-mem-quota is deprecated and has no effect; the stats cache always uses its memory quota")
+	}
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
 	vardef.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)

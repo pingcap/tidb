@@ -132,6 +132,12 @@ func TestCreateUniqueIndexOnMaterializedView(t *testing.T) {
 	)
 	tk.MustExec("create index idx_mv_g1 on mv_unique_agg (g1)")
 	tk.MustExec("alter table mv_unique_agg add key idx_mv_cnt (cnt)")
+	tk.MustExec("create index idx_mv_hypo_expr type hypo on mv_unique_agg ((cnt + 1))")
+	tk.MustExec("drop hypo index idx_mv_hypo_expr on mv_unique_agg")
+	tk.MustExec("create index idx_mv_hypo type hypo on mv_unique_agg (cnt)")
+	tk.MustExec("drop hypo index idx_mv_hypo on mv_unique_agg")
+	tk.MustExec("create index idx_base_hypo_expr type hypo on t_mv_unique ((v1 + 1))")
+	tk.MustExec("drop hypo index idx_base_hypo_expr on t_mv_unique")
 
 	tk.MustExec(`create table t_mv_nullable_key (
 		id bigint not null primary key,
@@ -144,6 +150,7 @@ func TestCreateUniqueIndexOnMaterializedView(t *testing.T) {
 	tk.MustExec(`create materialized view mv_nullable_key_agg (g1, cnt)
 		refresh fast
 		as select g1, count(*) as cnt from t_mv_nullable_key group by g1`)
+	tk.MustQuery("select non_unique, index_name = 'PRIMARY' from information_schema.statistics where table_schema='test' and table_name='mv_nullable_key_agg'").Check(testkit.Rows("0 0"))
 	tk.MustGetErrMsg(
 		"alter table mv_nullable_key_agg add primary key (cnt) nonclustered",
 		"[ddl:8200]Unsupported ALTER TABLE ADD PRIMARY KEY on materialized view table",

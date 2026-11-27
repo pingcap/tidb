@@ -86,7 +86,7 @@ var (
 
 	ErrWrongStringLength            = dbterror.ClassDDL.NewStd(mysql.ErrWrongStringLength)
 	ErrUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))
-	ErrTruncateWrongInsertValue     = dbterror.ClassTable.NewStdErr(mysql.ErrTruncatedWrongValue, parser_mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil))
+	ErrTruncateWrongInsertValue     = dbterror.ClassTable.NewStdErr(mysql.ErrTruncatedWrongValue, parser_mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", []int{1}))
 	ErrExistsInHistoryPassword      = dbterror.ClassExecutor.NewStd(mysql.ErrExistsInHistoryPassword)
 	ErrUserNameNeedPrefix           = dbterror.ClassDDL.NewStdErr(mysql.ErrUsername, parser_mysql.Message("User name must start with `%s.` (use `%s.%s` instead)", nil))
 
@@ -110,5 +110,9 @@ var (
 	ErrLoadDataLocalUnsupportedOption = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataLocalUnsupportedOption)
 	ErrLoadDataPreCheckFailed         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataPreCheckFailed)
 
+	ErrMVAdvisoryLockConflict      = dbterror.ClassExecutor.NewStd(mysql.ErrMVAdvisoryLockConflict)
+	ErrMVRefreshLogBaselineChanged = dbterror.ClassExecutor.NewStd(mysql.ErrMVRefreshLogBaselineChanged)
+
 	ErrMaxKeysReadExceeded = dbterror.ClassExecutor.NewStd(mysql.ErrMaxKeysReadExceeded)
+	ErrMaintenanceMode     = dbterror.ClassExecutor.NewStd(mysql.ErrMaintenanceMode)
 )

@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/stretchr/testify/require"
 )
 
@@ -252,6 +253,15 @@ func TestMeta(t *testing.T) {
 
 	m := meta.NewMutator(txn)
 
+	legacyDisabled, err := m.GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.False(t, legacyDisabled)
+	require.NoError(t, m.SetLegacyECDSASessionTokenDisabled())
+	require.NoError(t, m.SetLegacyECDSASessionTokenDisabled())
+	legacyDisabled, err = m.GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.True(t, legacyDisabled)
+
 	n, err := m.GenGlobalID()
 	require.NoError(t, err)
 	require.Equal(t, int64(1), n)
@@ -358,6 +368,19 @@ func TestMeta(t *testing.T) {
 	}
 	err = m.CreateTableOrView(1, tbInfo2)
 	require.NoError(t, err)
+
+	batchTables, err := m.GetTables(context.Background(), dbInfo.ID, []int64{2, 999, 1, 2})
+	require.NoError(t, err)
+	require.Equal(t, []*model.TableInfo{tbInfo2, nil, tbInfo, tbInfo2}, batchTables)
+	batchTables, err = m.GetTables(context.Background(), dbInfo.ID, nil)
+	require.NoError(t, err)
+	require.Empty(t, batchTables)
+	_, err = m.GetTables(context.Background(), 999, []int64{1})
+	require.True(t, meta.ErrDBNotExists.Equal(err))
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = m.GetTables(canceled, dbInfo.ID, []int64{1})
+	require.ErrorIs(t, err, context.Canceled)
 
 	tblName := &model.TableNameInfo{ID: tbInfo.ID, Name: tbInfo.Name}
 	tblName2 := &model.TableNameInfo{ID: tbInfo2.ID, Name: tbInfo2.Name}
@@ -531,6 +554,19 @@ func TestMeta(t *testing.T) {
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
+
+	// A new transaction and a snapshot both observe the durable one-way flag.
+	restartedTxn, err := store.Begin()
+	require.NoError(t, err)
+	legacyDisabled, err = meta.NewMutator(restartedTxn).GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.True(t, legacyDisabled)
+	require.NoError(t, restartedTxn.Rollback())
+	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	legacyDisabled, err = meta.NewReader(store.GetSnapshot(version)).GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.True(t, legacyDisabled)
 
 	// Test for DDLJobHistoryKey.
 	key = meta.DDLJobHistoryKey(m, 888)
@@ -783,25 +819,117 @@ func TestCreateMySQLDatabase(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 
-	txn, err := store.Begin()
-	require.NoError(t, err)
+	for _, tc := range []struct {
+		name    string
+		mysqlID int64
+	}{
+		{name: "fresh"},
+		{name: "bootstrapped classic", mysqlID: 1},
+		{name: "bootstrapped classic at scan boundary", mysqlID: 10},
+		{name: "existing reserved ID", mysqlID: metadef.SystemDatabaseID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, txn.Rollback()) })
+			m := meta.NewMutator(txn)
+			if tc.mysqlID != 0 {
+				// Seed the schema and bootstrap marker retained across a binary replacement.
+				require.NoError(t, m.CreateSysDatabaseByID("mysql", tc.mysqlID))
+				require.NoError(t, m.FinishBootstrap(1))
+			}
+			if kerneltype.IsNextGen() {
+				m = meta.NewMutator(systemDBPointReadTxn{txn})
+			}
 
-	m := meta.NewMutator(txn)
+			want := tc.mysqlID
+			if want == 0 {
+				want = 1
+				if kerneltype.IsNextGen() {
+					want = metadef.SystemDatabaseID
+				}
+			}
+			dbID, err := m.CreateMySQLDatabaseIfNotExists()
+			require.NoError(t, err)
+			require.Equal(t, want, dbID)
 
-	dbID, err := m.CreateMySQLDatabaseIfNotExists()
-	require.NoError(t, err)
-	if kerneltype.IsNextGen() {
-		require.Equal(t, metadef.SystemDatabaseID, dbID)
-	} else {
-		require.EqualValues(t, 1, dbID)
+			anotherDBID, err := m.CreateMySQLDatabaseIfNotExists()
+			require.NoError(t, err)
+			require.Equal(t, dbID, anotherDBID)
+			if tc.mysqlID != 0 && tc.mysqlID != metadef.SystemDatabaseID {
+				reservedDB, err := m.GetDatabase(metadef.SystemDatabaseID)
+				require.NoError(t, err)
+				require.Nil(t, reservedDB)
+			}
+		})
 	}
+}
 
-	anotherDBID, err := m.CreateMySQLDatabaseIfNotExists()
-	require.NoError(t, err)
-	require.Equal(t, dbID, anotherDBID)
+// systemDBPointReadTxn rejects range scans to verify NextGen discovery stays bounded.
+type systemDBPointReadTxn struct {
+	kv.Transaction
+}
 
-	err = txn.Rollback()
+func (systemDBPointReadTxn) Iter(kv.Key, kv.Key) (kv.Iterator, error) {
+	return nil, errors.New("unexpected database range scan")
+}
+
+func TestGetSystemDBID(t *testing.T) {
+	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	for _, tc := range []struct {
+		name       string
+		mysqlID    int64
+		reservedDB bool
+		want       int64
+	}{
+		{name: "missing"},
+		{name: "reserved", mysqlID: metadef.SystemDatabaseID, want: metadef.SystemDatabaseID},
+		{name: "legacy", mysqlID: 1, want: 1},
+		{name: "legacy boundary", mysqlID: 10, want: 10},
+		{name: "outside legacy range", mysqlID: 11, want: 11},
+		{name: "reserved and legacy boundary", mysqlID: 10, reservedDB: true, want: metadef.SystemDatabaseID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, txn.Rollback()) })
+			m := meta.NewMutator(txn)
+			// A database in the early range must match by name.
+			require.NoError(t, m.CreateSysDatabaseByID("other", 2))
+			if tc.mysqlID != 0 {
+				require.NoError(t, m.CreateSysDatabaseByID("mysql", tc.mysqlID))
+			}
+			if tc.reservedDB {
+				require.NoError(t, m.CreateSysDatabaseByID("mysql", metadef.SystemDatabaseID))
+			}
+			legacyID, err := meta.GetLegacySystemDBID(meta.NewMutator(systemDBPointReadTxn{txn}))
+			require.NoError(t, err)
+			var wantLegacyID int64
+			if tc.mysqlID >= 1 && tc.mysqlID <= 10 {
+				wantLegacyID = tc.mysqlID
+			}
+			require.Equal(t, wantLegacyID, legacyID)
+			want := tc.want
+			if tc.reservedDB && kerneltype.IsClassic() {
+				want = tc.mysqlID
+			}
+			if kerneltype.IsNextGen() {
+				m = meta.NewMutator(systemDBPointReadTxn{txn})
+				if tc.mysqlID == 11 {
+					want = 0
+				}
+			}
+			isLegacyNextGen, err := m.IsLegacyNextGen()
+			require.NoError(t, err)
+			require.Equal(t, kerneltype.IsNextGen() && tc.mysqlID != metadef.SystemDatabaseID && !tc.reservedDB, isLegacyNextGen)
+			id, err := m.GetSystemDBID()
+			require.NoError(t, err)
+			require.Equal(t, want, id)
+		})
+	}
 }
 
 func TestIsTableInfoMustLoad(t *testing.T) {
@@ -966,6 +1094,140 @@ func TestTableNameExtract(t *testing.T) {
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
+}
+
+type historyScanTxn struct {
+	kv.Transaction
+	lowerBound kv.Key
+	readKeys   []kv.Key
+}
+
+func (t *historyScanTxn) IterReverse(start, lowerBound kv.Key) (kv.Iterator, error) {
+	t.lowerBound = append(kv.Key(nil), lowerBound...)
+	iter, err := t.Transaction.IterReverse(start, lowerBound)
+	if err != nil {
+		return nil, err
+	}
+	scan := &historyScanIterator{Iterator: iter, txn: t}
+	scan.recordKey()
+	return scan, nil
+}
+
+type historyScanIterator struct {
+	kv.Iterator
+	txn *historyScanTxn
+}
+
+func (i *historyScanIterator) Next() error {
+	if err := i.Iterator.Next(); err != nil {
+		return err
+	}
+	i.recordKey()
+	return nil
+}
+
+func (i *historyScanIterator) recordKey() {
+	if i.Iterator.Valid() {
+		i.txn.readKeys = append(i.txn.readKeys, append(kv.Key(nil), i.Iterator.Key()...))
+	}
+}
+
+func TestHistoryDDLJobIteratorLowerBound(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	for id := int64(10); id <= 40; id += 10 {
+		tableName := "target"
+		if id == 30 {
+			tableName = "other"
+		}
+		require.NoError(t, m.AddHistoryDDLJob(&model.Job{ID: id, SchemaName: "db", TableName: tableName}, true))
+	}
+	require.NoError(t, txn.Commit(context.Background()))
+	for _, ca := range []struct {
+		name      string
+		minJobID  int64
+		tableName string
+		jobIDs    []int64
+		readIDs   []int64
+	}{
+		{"inclusive", 20, "target", []int64{40, 20}, []int64{40, 30, 20}},
+		{"missing boundary ID", 21, "target", []int64{40}, []int64{40, 30}},
+		{"zero matches", 20, "missing", nil, []int64{40, 30, 20}},
+		{"above newest", 41, "target", nil, nil},
+		{"below oldest", 1, "target", []int64{40, 20, 10}, []int64{40, 30, 20, 10}},
+		{"unbounded", 0, "target", []int64{40, 20, 10}, nil},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, txn.Rollback()) }()
+			scanTxn := &historyScanTxn{Transaction: txn}
+			m := meta.NewMutator(scanTxn)
+			iter, err := m.GetLastHistoryDDLJobsIteratorWithFilter(
+				set.NewStringSet("db"), set.NewStringSet(ca.tableName), ca.minJobID)
+			require.NoError(t, err)
+			var jobIDs []int64
+			for {
+				jobs, err := iter.GetLastJobs(1, nil)
+				require.NoError(t, err)
+				if len(jobs) == 0 {
+					break
+				}
+				jobIDs = append(jobIDs, jobs[0].ID)
+			}
+			require.Equal(t, ca.jobIDs, jobIDs)
+			jobs, err := iter.GetLastJobs(1, nil)
+			require.NoError(t, err)
+			require.Empty(t, jobs)
+			var lowerBound kv.Key
+			if ca.minJobID > 0 {
+				lowerBound = meta.DDLJobHistoryKey(m, ca.minJobID)
+				var readKeys []kv.Key
+				for _, id := range ca.readIDs {
+					readKeys = append(readKeys, meta.DDLJobHistoryKey(m, id))
+				}
+				// Record raw KV positions before name filtering or job decoding,
+				// including the initial position and repeated EOF reads.
+				require.Equal(t, readKeys, scanTxn.readKeys)
+			}
+			require.Equal(t, lowerBound, scanTxn.lowerBound)
+		})
+	}
+}
+
+func TestIsJobMatch(t *testing.T) {
+	job := &model.Job{SchemaName: "db1", TableName: "t1"}
+	data, err := job.Encode(true)
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name        string
+		schemaNames []string
+		tableNames  []string
+		wantMatch   bool
+	}{
+		{"no filters", nil, nil, true},
+		{"schema matches", []string{"db1"}, nil, true},
+		{"schema differs", []string{"db2"}, nil, false},
+		{"table matches", nil, []string{"t1"}, true},
+		{"table differs", nil, []string{"t2"}, false},
+		{"both match", []string{"db1"}, []string{"t1"}, true},
+		{"same table in another schema", []string{"db2"}, []string{"t1"}, false},
+		{"same schema with another table", []string{"db1"}, []string{"t2"}, false},
+		{"both differ", []string{"db2"}, []string{"t2"}, false},
+		{"multiple schemas and tables", []string{"db2", "db1"}, []string{"t2", "t1"}, true},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			match, err := meta.IsJobMatch(data, set.NewStringSet(tc.schemaNames...), set.NewStringSet(tc.tableNames...))
+			require.NoError(t, err)
+			require.Equal(t, tc.wantMatch, match)
+		})
+	}
 }
 
 func TestNameExtractFromJob(t *testing.T) {

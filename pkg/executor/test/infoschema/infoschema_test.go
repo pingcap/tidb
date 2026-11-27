@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -171,7 +172,7 @@ func TestUserPrivileges(t *testing.T) {
 func TestDataForTableStatsField(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
-	h.Clear()
+	h.ClearForTest()
 	is := dom.InfoSchema()
 	tk := testkit.NewTestKit(t, store)
 
@@ -184,22 +185,22 @@ func TestDataForTableStatsField(t *testing.T) {
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 16 48 0"))
 	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("4 16 64 0"))
 	tk.MustExec("delete from t where c >= 3")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 16 32 0"))
 	tk.MustExec("delete from t where c=3")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 16 32 0"))
 	tk.MustExec("analyze table t all columns")
@@ -213,7 +214,7 @@ func TestDataForTableStatsField(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 16 48 0"))
 	tk.MustExec("analyze table t all columns")
@@ -224,7 +225,7 @@ func TestDataForTableStatsField(t *testing.T) {
 func TestPartitionsTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
-	h.Clear()
+	h.ClearForTest()
 	is := dom.InfoSchema()
 
 	tk := testkit.NewTestKit(t, store)
@@ -251,7 +252,7 @@ func TestPartitionsTable(t *testing.T) {
 			),
 		)
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), is))
+		require.NoError(t, h.Cache().Update(context.Background(), is))
 		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
 			testkit.Rows(
 				"1 16 16 0",
@@ -268,7 +269,7 @@ func TestPartitionsTable(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec(`insert into test_partitions_1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_1';").Check(
 		testkit.Rows("<nil> 3 16 48 0"))
 
@@ -407,7 +408,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
 	tk.MustExec("analyze table t1 all columns")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t1, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"")) // 1 note.
-	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Storage().LoadNeededHistograms(dom.InfoSchema()))
 	tk.MustExec("CREATE ROLE r_t1 ;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
 	tk.MustExec("GRANT r_t1 TO analyze_tester;")
@@ -855,6 +856,8 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	loaded := atomic.Bool{}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly && loaded.CompareAndSwap(false, true) {
+			tk2.MustQuery(fmt.Sprintf("select job_id from information_schema.ddl_jobs where state = 'running' and job_id >= %d", job.ID)).Check(testkit.Rows(strconv.FormatInt(job.ID, 10)))
+			tk2.MustQuery(fmt.Sprintf("select job_id from information_schema.ddl_jobs where state = 'running' and job_id >= %d", job.ID+1)).Check(testkit.Rows())
 			tk2.MustQuery(`SELECT JOB_TYPE, SCHEMA_STATE, table_name, STATE
 			   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
 				"add index|write only|t0|running",
@@ -892,6 +895,88 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 		`└─Selection 10.00 root  eq(Column#2, "test2")`,
 		`  └─MemTableScan 10000.00 root table:DDL_JOBS db_name:["test2"]`,
 	))
+}
+
+func TestInfoSchemaDDLJobsJobIDLowerBound(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ddl_job_bound")
+	tk.MustExec("create table ddl_job_bound.target (a int)")
+	tk.MustExec("create table ddl_job_bound.other (a int)")
+	tk.MustExec("create user ddl_job_reader")
+	tk.MustExec("grant all on ddl_job_bound.target to ddl_job_reader")
+	reader := testkit.NewTestKit(t, store)
+	require.NoError(t, reader.Session().Auth(&auth.UserIdentity{Username: "ddl_job_reader", Hostname: "localhost"}, nil, nil, nil))
+
+	const firstID int64 = 1000000
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	for offset := range int64(4) {
+		job := &model.Job{
+			ID: firstID + offset, Type: model.ActionCreateTable, State: model.JobStateSynced,
+			SchemaName: "ddl_job_bound", TableName: "target", Query: "create table target (a int)",
+		}
+		if offset == 2 {
+			job.TableName = "other"
+		}
+		if offset == 3 {
+			job.Type = model.ActionMultiSchemaChange
+			job.MultiSchemaInfo = &model.MultiSchemaInfo{SubJobs: []*model.SubJob{
+				{Type: model.ActionAddColumn, State: model.JobStateSynced},
+			}}
+		}
+		require.NoError(t, m.AddHistoryDDLJob(job, true))
+	}
+	require.NoError(t, txn.Commit(context.Background()))
+
+	// Compare complete rows with the existing SQL-only filtering path, including
+	// privilege checks and the extra row emitted for a multi-schema subjob.
+	check := func(tk *testkit.TestKit, condition string) {
+		t.Helper()
+		query := "select * from information_schema.ddl_jobs where " + condition + " order by job_id desc, job_type limit 50"
+		expected := func() [][]any {
+			const skipExtractor = "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor"
+			require.NoError(t, failpoint.Enable(skipExtractor, "return(true)"))
+			defer func() { require.NoError(t, failpoint.Disable(skipExtractor)) }()
+			return tk.MustQuery(query).Rows()
+		}()
+		tk.MustQuery(query).Check(expected)
+	}
+	for _, condition := range []string{
+		"db_name = 'ddl_job_bound'",
+		"db_name = 'ddl_job_bound' and table_name = 'target' and job_id >= 1000001",
+		"db_name = 'ddl_job_bound' and table_name = 'other' and job_id >= 1000001",
+		"db_name = 'ddl_job_bound' and job_id >= 1000003",
+		"db_name = 'ddl_job_bound' and job_id >= 1000004",
+		"db_name = 'ddl_job_bound' and job_id >= 1000000 and job_id >= 1000001",
+		"db_name = 'ddl_job_bound' and (job_id >= 1000003 or table_name = 'other')",
+		"db_name = 'ddl_job_bound' and job_id >= 1000001.5",
+		"db_name = 'ddl_job_bound' and job_id >= '1000001'",
+	} {
+		check(tk, condition)
+		check(reader, condition)
+	}
+	tk.MustExec("prepare bound_query from 'select job_id from information_schema.ddl_jobs where job_id >= ? order by job_id desc'")
+	tk.MustExec("set @bound = 1000004")
+	tk.MustQuery("execute bound_query using @bound").Check(testkit.Rows())
+	tk.MustExec("set @bound = 1000003")
+	tk.MustQuery("execute bound_query using @bound").Check(testkit.Rows("1000003", "1000003"))
+	tk.MustExec("deallocate prepare bound_query")
+
+	// Invalid metadata immediately below the bound is outside the KV scan range,
+	// even without enough matches to satisfy LIMIT. A bound above the newest job
+	// produces an empty storage range.
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMutator(txn)
+	require.NoError(t, txn.Set(meta.DDLJobHistoryKey(m, firstID), []byte("invalid job JSON")))
+	require.NoError(t, txn.Commit(context.Background()))
+	tk.MustQuery("select job_id from information_schema.ddl_jobs where db_name = 'ddl_job_bound' and table_name = 'target' and job_id >= 1000001 order by job_id desc limit 50").Check(testkit.Rows("1000003", "1000003", "1000001"))
+	tk.MustQuery("select job_id from information_schema.ddl_jobs where db_name = 'missing' and job_id >= 1000001 order by job_id desc limit 50").Check(testkit.Rows())
+	tk.MustQuery("select job_id from information_schema.ddl_jobs where job_id >= 1000004 order by job_id desc limit 50").Check(testkit.Rows())
+	tk.MustQuery("select job_id from information_schema.ddl_jobs where job_id >= 1000001 order by job_id desc").Check(testkit.Rows("1000003", "1000003", "1000002", "1000001"))
+	require.Error(t, tk.QueryToErr("select job_id from information_schema.ddl_jobs"))
 }
 
 func TestInfoSchemaConditionWorks(t *testing.T) {

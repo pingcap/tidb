@@ -91,4 +91,3 @@ explain format='plan_tree' select max(d) from tt;
 select max(d) from tt;
 explain format='plan_tree' select max(d collate utf8mb4_bin) from tt;
 select max(d collate utf8mb4_bin) from tt;
-

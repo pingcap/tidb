@@ -168,6 +168,9 @@ type SnapFileImporter struct {
 	retainLatestMVCCVersion bool
 	// peerDownloadRetry means TiKV can safely deduplicate same-uuid download retries inside one peer.
 	peerDownloadRetry bool
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 type SnapFileImporterOptions struct {
@@ -286,16 +289,19 @@ func (importer *SnapFileImporter) releaseToken(tokenCh chan struct{}) {
 }
 
 func (importer *SnapFileImporter) Close() error {
-	if importer != nil && importer.importClient != nil {
+	if importer == nil || importer.importClient == nil {
+		return nil
+	}
+	importer.closeOnce.Do(func() {
 		for _, f := range importer.closeCallbacks {
 			err := f(importer)
 			if err != nil {
 				log.Warn("failed on close snap importer", zap.Error(err))
 			}
 		}
-		return importer.importClient.CloseGrpcClient()
-	}
-	return nil
+		importer.closeErr = importer.importClient.CloseGrpcClient()
+	})
+	return importer.closeErr
 }
 
 func (importer *SnapFileImporter) acquirePDReqToken(ctx context.Context) error {

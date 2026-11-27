@@ -68,17 +68,7 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		}
 		return scalar
 	case types.KindMysqlTime:
-		valueTime := value.GetMysqlTime()
-		var minTime types.Time
-		switch valueTime.Type() {
-		case mysql.TypeDate:
-			minTime = types.NewTime(types.MinDatetime, mysql.TypeDate, types.DefaultFsp)
-		case mysql.TypeDatetime:
-			minTime = types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.DefaultFsp)
-		case mysql.TypeTimestamp:
-			minTime = types.MinTimestamp
-		}
-		return float64(valueTime.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
+		return convertMysqlTimeToScalar(value.GetMysqlTime())
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
 		if len(bytes) <= commonPfxLen {
@@ -93,6 +83,46 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		// do not know how to convert
 		return 0
 	}
+}
+
+// convertMysqlTimeToScalar maps a types.Time to the float64 scalar used for
+// histogram fraction and out-of-range estimation. The scalar is the duration
+// from the type's minimum bound (MinDatetime for date/datetime, MinTimestamp
+// for timestamp). TIMESTAMP values outside the legal range are clamped just
+// outside the valid scalar range so estimates stay finite and ordered.
+func convertMysqlTimeToScalar(valueTime types.Time) float64 {
+	var minTime types.Time
+	switch valueTime.Type() {
+	case mysql.TypeDate:
+		minTime = types.NewTime(types.MinDatetime, mysql.TypeDate, types.DefaultFsp)
+	case mysql.TypeDatetime:
+		minTime = types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.DefaultFsp)
+	case mysql.TypeTimestamp:
+		minTime = types.MinTimestamp
+		if valueTime.Compare(types.MinTimestamp) < 0 {
+			// Relaxed SQL modes can leave zero TIMESTAMP values in stats. If we
+			// subtract MinTimestamp (1970-01-01 00:00:01) from such a value
+			// directly, GoTime normalizes zero TIMESTAMP to -0001-11-30 and the
+			// subtraction saturates to math.MinInt64 ns. That artificial huge
+			// distance from normal TIMESTAMP values would skew fraction and
+			// out-of-range estimates, so keep before-min values finite and just
+			// before the legal TIMESTAMP range. All before-min values collapse to
+			// the same -1; this is acceptable since they are invalid/zero values
+			// and calcFraction treats value <= lower as 0.
+			return -1
+		}
+		if valueTime.Compare(types.MaxTimestamp) > 0 {
+			// Historical stats may also contain above-max TIMESTAMP bounds. Put
+			// them just after the legal maximum. maxScalar + 1 is not enough here:
+			// at this magnitude float64 rounds it back to maxScalar, collapsing a
+			// [MaxTimestamp, after-max] bucket into a zero-width interval, so use
+			// Nextafter to advance by a single ULP.
+			maxTimestamp := types.MaxTimestamp
+			maxScalar := float64(maxTimestamp.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
+			return math.Nextafter(maxScalar, math.Inf(1))
+		}
+	}
+	return float64(valueTime.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
 }
 
 // PreCalculateScalar converts the lower and upper to scalar. When the datum type is KindString or KindBytes, we also

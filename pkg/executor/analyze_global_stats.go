@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -37,15 +37,13 @@ type globalStatsKey struct {
 // The meaning of value in map is some additional information needed to build global-level stats.
 type globalStatsMap map[globalStatsKey]statstypes.GlobalStatsInfo
 
-func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsMap globalStatsMap) error {
+func (e *AnalyzeExec) handleGlobalStats(statsHandle *statshandle.AnalyzeHandle, globalStatsMap globalStatsMap) error {
 	globalStatsTableIDs := make(map[int64]struct{}, len(globalStatsMap))
 	for globalStatsID := range globalStatsMap {
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
 
-	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
 	for tableID := range globalStatsTableIDs {
-		tableIDs[tableID] = struct{}{}
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
 				continue
@@ -78,13 +76,6 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 				return err
 			}()
 			statsHandle.FinishAnalyzeJob(job, mergeStatsErr, statistics.GlobalStatsMergeJob)
-		}
-	}
-
-	for tableID := range tableIDs {
-		// Dump stats to historical storage.
-		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
-			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 		}
 	}
 

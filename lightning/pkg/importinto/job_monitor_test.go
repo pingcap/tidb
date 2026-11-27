@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/lightning/pkg/importinto"
 	mockimport "github.com/pingcap/tidb/lightning/pkg/importinto/mock"
+	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	sdkmock "github.com/pingcap/tidb/pkg/importsdk/mock"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -54,7 +55,16 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager, mockPU *mockimport.MockProgressUpdater) {
 				// First poll: running
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
-					{JobID: 1, Status: "running", Phase: "importing", Step: "import", TotalSize: "100MB", ProcessedSize: "50MB", Percent: "50"},
+					{
+						JobID:  1,
+						Status: "running",
+						Phase:  "importing",
+						CurrentStep: &jobstats.RawStepStats{
+							Name:           "import",
+							ProcessedBytes: 50 * mb,
+							TotalBytes:     100 * mb,
+						},
+					},
 				}, nil)
 				mockPU.EXPECT().UpdateTotalSize(100 * mb)
 				mockPU.EXPECT().UpdateFinishedSize(25 * mb)
@@ -179,7 +189,16 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager, mockPU *mockimport.MockProgressUpdater) {
 				// Poll 1: job1 is almost done, job2 hasn't started reporting step progress yet.
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
-					{JobID: 1, Status: "running", Phase: "importing", Step: "import", TotalSize: "100MB", ProcessedSize: "100MB", Percent: "100"},
+					{
+						JobID:  1,
+						Status: "running",
+						Phase:  "importing",
+						CurrentStep: &jobstats.RawStepStats{
+							Name:           "import",
+							ProcessedBytes: 100 * mb,
+							TotalBytes:     100 * mb,
+						},
+					},
 					{JobID: 2, Status: "pending"},
 				}, nil)
 				mockPU.EXPECT().UpdateTotalSize(500 * mb)
@@ -189,10 +208,19 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 				// job2 starts running. Group progress should not rollback.
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
 					{JobID: 1, Status: "finished"},
-					{JobID: 2, Status: "running", Phase: "importing", Step: "import", TotalSize: "400MB", ProcessedSize: "2MB", Percent: "0"},
+					{
+						JobID:  2,
+						Status: "running",
+						Phase:  "importing",
+						CurrentStep: &jobstats.RawStepStats{
+							Name:           "import",
+							ProcessedBytes: 2 * mb,
+							TotalBytes:     400 * mb,
+						},
+					},
 				}, nil)
 				mockPU.EXPECT().UpdateTotalSize(500 * mb)
-				mockPU.EXPECT().UpdateFinishedSize(100 * mb)
+				mockPU.EXPECT().UpdateFinishedSize(101 * mb)
 				mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
 					require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
 					require.Equal(t, importinto.CheckpointStatusFinished, cp.Status)
@@ -226,6 +254,95 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 
 			tt.setup(mockSDK, mockCpMgr, mockPU)
 			err := monitor.WaitForJobs(context.Background(), tt.jobs)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestJobMonitorVersionedTerminalStates(t *testing.T) {
+	tests := []struct {
+		name       string
+		statuses   [][]*importsdk.JobStatus
+		wantStatus importinto.CheckpointStatus
+		wantErr    bool
+	}{
+		{
+			name: "finished",
+			statuses: [][]*importsdk.JobStatus{{
+				{JobID: 1, Status: "finished", ContractVersion: jobstats.ContractVersion, StatusCategory: jobstats.StatusCategoryTerminal},
+			}},
+			wantStatus: importinto.CheckpointStatusFinished,
+		},
+		{
+			name: "failed",
+			statuses: [][]*importsdk.JobStatus{{
+				{JobID: 1, Status: "failed", ContractVersion: jobstats.ContractVersion, StatusCategory: jobstats.StatusCategoryTerminal},
+			}},
+			wantStatus: importinto.CheckpointStatusFailed,
+			wantErr:    true,
+		},
+		{
+			name: "cancelled",
+			statuses: [][]*importsdk.JobStatus{{
+				{JobID: 1, Status: "cancelled", ContractVersion: jobstats.ContractVersion, StatusCategory: jobstats.StatusCategoryTerminal},
+			}},
+			wantStatus: importinto.CheckpointStatusFailed,
+			wantErr:    true,
+		},
+		{
+			name: "awaiting resolution is not terminal",
+			statuses: [][]*importsdk.JobStatus{
+				{{JobID: 1, Status: "awaiting-resolution", ContractVersion: jobstats.ContractVersion, StatusCategory: jobstats.StatusCategoryAttentionNeeded}},
+				{{JobID: 1, Status: "finished", ContractVersion: jobstats.ContractVersion, StatusCategory: jobstats.StatusCategoryTerminal}},
+			},
+			wantStatus: importinto.CheckpointStatusFinished,
+		},
+		{
+			name: "unknown terminal status is an error",
+			statuses: [][]*importsdk.JobStatus{{
+				{JobID: 1, Status: "future-terminal", ContractVersion: jobstats.ContractVersion, StatusCategory: jobstats.StatusCategoryTerminal},
+			}},
+			wantStatus: importinto.CheckpointStatusFailed,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockSDK := sdkmock.NewMockSDK(ctrl)
+			mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
+			mockPU := mockimport.NewMockProgressUpdater(ctrl)
+			for _, statuses := range tt.statuses {
+				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return(statuses, nil)
+				mockPU.EXPECT().UpdateTotalSize(int64(100))
+				if statuses[0].IsFinished() {
+					mockPU.EXPECT().UpdateFinishedSize(int64(100))
+				} else {
+					mockPU.EXPECT().UpdateFinishedSize(int64(0))
+				}
+			}
+			mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, cp *importinto.TableCheckpoint) error {
+					require.Equal(t, tt.wantStatus, cp.Status)
+					return nil
+				},
+			)
+
+			monitor := importinto.NewJobMonitor(mockSDK, mockCpMgr, time.Millisecond, time.Hour, log.L(), mockPU)
+			err := monitor.WaitForJobs(context.Background(), []*importinto.ImportJob{{
+				JobID:    1,
+				GroupKey: "g1",
+				TableMeta: &importsdk.TableMeta{
+					Database:  "db",
+					Table:     "t",
+					TotalSize: 100,
+				},
+			}})
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {

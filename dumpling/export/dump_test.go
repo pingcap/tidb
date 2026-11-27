@@ -5,6 +5,8 @@ package export
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sync/atomic"
 	"testing"
@@ -69,6 +71,106 @@ func TestDumpExit(t *testing.T) {
 	require.ErrorIs(t, wg.Wait(), writerErr)
 	// if writerCtx is canceled , QuerySQL in `dumpDatabases` will return sqlmock.ErrCancelled
 	require.ErrorIs(t, d.dumpDatabases(writerCtx, baseConn, taskChan), sqlmock.ErrCancelled)
+}
+
+func TestResolveAutoConsistencyFallback(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	defer cancel()
+
+	conf := DefaultConfig()
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
+	conf.Consistency = ConsistencyTypeAuto
+
+	d := &Dumper{
+		tctx:      tctx,
+		conf:      conf,
+		cancelCtx: cancel,
+		dbHandle:  db,
+	}
+
+	// resolveAutoConsistency will:
+	// 1. Get a connection from the pool.
+	// 2. Attempt FLUSH TABLES WITH READ LOCK (which we delay to trigger timeout).
+	// 3. Attempt UNLOCK TABLES (due to defer).
+	// 4. Close the connection (due to defer).
+
+	// We don't need to mock Conn() explicitly as sqlmock handles pool connections,
+	// but we must mock the SQL executed on it.
+	mock.ExpectExec("FLUSH TABLES WITH READ LOCK").
+		WillDelayFor(6 * time.Second).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UNLOCK TABLES").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	err = resolveAutoConsistency(d)
+	require.NoError(t, err)
+
+	// Verify fallback happened to 'lock'
+	require.Equal(t, ConsistencyTypeLock, d.conf.Consistency)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSQLWriterReadinessOrdering(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		for range db.Stats().OpenConnections {
+			mock.ExpectClose()
+		}
+		require.NoError(t, db.Close())
+	})
+	expectTransaction := func() {
+		mock.ExpectExec("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ").WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec("START TRANSACTION").WillReturnResult(sqlmock.NewResult(0, 0))
+	}
+	mock.ExpectExec("FLUSH TABLES WITH READ LOCK").WillReturnResult(sqlmock.NewResult(0, 0))
+	expectTransaction()
+	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB"}).AddRow("mysql-bin.000001", "100", "", ""))
+	mock.ExpectQuery("SELECT @@default_master_connection").WillReturnRows(sqlmock.NewRows([]string{"default_master_connection"}).AddRow(""))
+	mock.ExpectQuery("SHOW ALL SLAVES STATUS").WillReturnRows(sqlmock.NewRows([]string{"Master_Host"}))
+	expectTransaction()
+	expectTransaction()
+	// Both writer transactions must exist before consistency locks are released.
+	mock.ExpectExec("UNLOCK TABLES").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB"}).AddRow("mysql-bin.000001", "200", "", ""))
+	mock.ExpectQuery("EXPLAIN SELECT 7").WillReturnRows(sqlmock.NewRows([]string{"rows"}).AddRow("1"))
+	mock.ExpectQuery("SELECT 7").WillReturnRows(sqlmock.NewRowsWithColumnDefinition(sqlmock.NewColumn("value").OfType("INT", int64(0))).AddRow(7))
+	conf := DefaultConfig()
+	conf.SQL = "SELECT 7"
+	conf.FileType = FileFormatCSVString
+	conf.Consistency = ConsistencyTypeFlush
+	conf.PosAfterConnect = true
+	conf.Threads = 2
+	conf.ServerInfo = version.ParseServerInfo("5.7.25")
+	conf.OutputDirPath = t.TempDir()
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	defer cancel()
+	dumper := &Dumper{
+		tctx:          tctx,
+		cancelCtx:     cancel,
+		conf:          conf,
+		dbHandle:      db,
+		metrics:       newMetrics(conf.PromFactory, conf.Labels),
+		speedRecorder: NewSpeedRecorder(),
+	}
+	require.NoError(t, createExternalStore(dumper))
+	require.NoError(t, dumper.Dump())
+	require.NoError(t, mock.ExpectationsWereMet())
+	require.Zero(t, db.Stats().InUse)
+	status := dumper.GetStatus()
+	require.EqualValues(t, 1, status.FinishedRows)
+	require.NotNil(t, status.ProgressPercent)
+	require.EqualValues(t, 100, *status.ProgressPercent)
+	metadata, err := os.ReadFile(filepath.Join(conf.OutputDirPath, "metadata"))
+	require.NoError(t, err)
+	require.Contains(t, string(metadata), "Pos: 100")
+	require.Contains(t, string(metadata), "AFTER CONNECTION POOL ESTABLISHED")
+	require.Contains(t, string(metadata), "Pos: 200")
 }
 
 func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {

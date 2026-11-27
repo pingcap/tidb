@@ -200,6 +200,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 	switch v := p.(type) {
 	case nil:
 		return nil
+	case *physicalop.PhysicalCalcFoundRows:
+		return b.buildCalcFoundRows(v)
 	case *plannercore.CheckTable:
 		return b.buildCheckTable(v)
 	case *plannercore.RecoverIndex:
@@ -220,6 +222,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildDDL(v)
 	case *plannercore.PurgeMaterializedViewLog:
 		return b.buildPurgeMaterializedViewLog(v)
+	case *plannercore.CompareMaterializedView:
+		return b.buildCompareMaterializedView(v)
 	case *plannercore.RefreshMaterializedView:
 		return b.buildRefreshMaterializedView(v)
 	case *plannercore.DryRunRefreshMaterializedView:
@@ -859,6 +863,20 @@ func (b *executorBuilder) buildSelectLock(v *physicalop.PhysicalLock) exec.Execu
 	return e
 }
 
+func (b *executorBuilder) buildCalcFoundRows(v *physicalop.PhysicalCalcFoundRows) exec.Executor {
+	data := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	count := b.build(v.Children()[1])
+	if b.err != nil {
+		return nil
+	}
+	return &CalcFoundRowsExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID(), data, count),
+	}
+}
+
 func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
@@ -893,39 +911,54 @@ func (b *executorBuilder) attachAdaptiveLimitController(
 	if !b.sctx.GetSessionVars().EnableAdaptiveLimitScan {
 		return
 	}
-	// V1 recognizes two roots. Unsupported reader modes retain the existing path:
-	//
-	//	Limit -> Projection* -> ordered IndexLookUpJoin
-	//	Limit -> Projection* -> keep-order IndexLookUp
-	indexJoin := findAdaptiveLimitIndexJoin(childExec)
-	if indexJoin != nil {
+	// Only projections may intervene between Limit and an eligible join or reader.
+	root := skipAdaptiveLimitProjections(childExec)
+	if indexJoin, ok := root.(*join.IndexLookUpJoin); ok && indexJoin != nil {
 		if !indexJoin.AdaptiveLimitEligible {
 			return
 		}
-		outerIndexLookup := findAdaptiveLimitIndexLookupCandidate(indexJoin.Children(0))
-		if outerIndexLookup == nil {
+		outer := skipAdaptiveLimitProjections(indexJoin.Children(0))
+		outerIndexLookup := adaptiveLimitIndexLookupCandidate(outer)
+		if outerIndexLookup == nil && !adaptiveLimitSingleReadEligible(outer) {
 			return
 		}
 		demandRows := limitPlan.Offset + limitPlan.Count
-		config := b.buildAdaptiveLimitConfig(demandRows, outerIndexLookup)
-		config.InitialOuterWindow = adaptiveLimitInitialWindow(demandRows, b.sctx.GetSessionVars().IndexJoinBatchSize)
-		config.MaxOuterWindow = uint64(b.sctx.GetSessionVars().IndexJoinBatchSize) *
-			uint64(b.sctx.GetSessionVars().IndexLookupJoinConcurrency())
-		controller := exec.NewAdaptiveLimitController(config)
-		outerIndexLookup.adaptiveLimitController = controller
+		vars := b.sctx.GetSessionVars()
+		initialOuterWindow := adaptiveLimitInitialWindow(demandRows, vars.IndexJoinBatchSize)
+		maxOuterWindow := uint64(vars.IndexJoinBatchSize) * uint64(vars.IndexLookupJoinConcurrency())
+		var controller *exec.AdaptiveLimitController
+		if outerIndexLookup != nil {
+			config := b.buildAdaptiveLimitConfig(demandRows, outerIndexLookup)
+			config.InitialOuterWindow = initialOuterWindow
+			config.MaxOuterWindow = maxOuterWindow
+			controller = exec.NewAdaptiveLimitController(config)
+			outerIndexLookup.adaptiveLimitController = controller
+		} else {
+			controller = exec.NewAdaptiveLimitOuterJoinController(exec.AdaptiveLimitConfig{
+				DemandRows:         demandRows,
+				InitialOuterWindow: min(initialOuterWindow, uint64(vars.MaxChunkSize)),
+				MaxOuterWindow:     maxOuterWindow,
+			})
+		}
 		indexJoin.AdaptiveLimitController = controller
 		limitExec.adaptiveLimitController = controller
 		return
 	}
 
-	indexLookup := findAdaptiveLimitIndexLookupCandidate(childExec)
+	indexLookup := adaptiveLimitIndexLookupCandidate(root)
 	if indexLookup == nil {
 		return
 	}
-	controller := exec.NewAdaptiveLimitLookupController(b.buildAdaptiveLimitConfig(
-		limitPlan.Offset+limitPlan.Count,
-		indexLookup,
-	))
+	config := b.buildAdaptiveLimitConfig(limitPlan.Offset+limitPlan.Count, indexLookup)
+	if indexLookup.indexPaging {
+		vars := b.sctx.GetSessionVars()
+		batchFloor := min(uint64(vars.InitChunkSize), config.MaxLookupBatchSize)
+		if config.InitialLookupBatchSize < batchFloor {
+			config.NoOutputLookupBatchSize = batchFloor
+			config.NoOutputLookupWindow = batchFloor * uint64(vars.IndexLookupConcurrency())
+		}
+	}
+	controller := exec.NewAdaptiveLimitLookupController(config)
 	indexLookup.adaptiveLimitController = controller
 	indexLookup.reportAdaptiveLimitStats = true
 	limitExec.adaptiveLimitController = controller
@@ -968,38 +1001,67 @@ func adaptiveLimitInitialLookupBatchSize(initialWindow uint64, indexPaging bool,
 	return min(max(initialWindow, uint64(maxChunkSize)), uint64(maxBatchSize))
 }
 
-func findAdaptiveLimitIndexJoin(executor exec.Executor) *join.IndexLookUpJoin {
-	if indexJoin, ok := executor.(*join.IndexLookUpJoin); ok {
-		return indexJoin
-	}
-	if _, ok := executor.(*ProjectionExec); !ok {
+func adaptiveLimitIndexLookupCandidate(executor exec.Executor) *IndexLookUpExecutor {
+	indexLookup, ok := executor.(*IndexLookUpExecutor)
+	if !ok || indexLookup.adaptiveLimitController != nil || !adaptiveLimitIndexLookupEligible(indexLookup) {
 		return nil
 	}
-	children := executor.AllChildren()
-	if len(children) != 1 {
-		return nil
-	}
-	return findAdaptiveLimitIndexJoin(children[0])
+	return indexLookup
 }
 
-func findAdaptiveLimitIndexLookupCandidate(executor exec.Executor) *IndexLookUpExecutor {
+func skipAdaptiveLimitProjections(executor exec.Executor) exec.Executor {
 	for {
-		switch e := executor.(type) {
-		case *IndexLookUpExecutor:
-			if e.adaptiveLimitController != nil || !adaptiveLimitIndexLookupEligible(e) {
-				return nil
-			}
-			return e
-		case *ProjectionExec:
-			children := e.AllChildren()
-			if len(children) != 1 {
-				return nil
-			}
-			executor = children[0]
-		default:
+		projection, ok := executor.(*ProjectionExec)
+		if !ok {
+			return executor
+		}
+		children := projection.AllChildren()
+		if len(children) != 1 {
 			return nil
 		}
+		executor = children[0]
 	}
+}
+
+func adaptiveLimitSingleReadEligible(executor exec.Executor) bool {
+	switch e := executor.(type) {
+	case *IndexReaderExecutor:
+		if !e.keepOrder || e.dummy || len(e.groupedRanges) != 0 || len(e.byItems) != 0 ||
+			len(e.partitions) != 0 || len(e.partRangeMap) != 0 || len(e.partitionIDMap) != 0 ||
+			adaptiveLimitSingleReadTable(e.table) == nil || len(e.plans) == 0 {
+			return false
+		}
+		scan, ok := e.plans[0].(*physicalop.PhysicalIndexScan)
+		return ok && len(scan.GroupByColIdxs) == 0
+	case *TableReaderExecutor:
+		if !e.keepOrder || e.dummy || e.storeType != kv.TiKV || e.batchCop || e.kvRangeBuilder != nil ||
+			len(e.groupedRanges) != 0 || len(e.groupByColIdxs) != 0 || len(e.byItems) != 0 {
+			return false
+		}
+		meta := adaptiveLimitSingleReadTable(e.table)
+		if meta == nil {
+			return false
+		}
+		if !meta.PKIsHandle {
+			return true
+		}
+		// A keep-order scan of unsigned integer handles can open two results.
+		pk := meta.GetPkColInfo()
+		return pk != nil && !mysql.HasUnsignedFlag(pk.GetFlag())
+	default:
+		return false
+	}
+}
+
+func adaptiveLimitSingleReadTable(tbl table.Table) *model.TableInfo {
+	if tbl == nil {
+		return nil
+	}
+	meta := tbl.Meta()
+	if meta == nil || meta.Partition != nil {
+		return nil
+	}
+	return meta
 }
 
 func adaptiveLimitIndexLookupEligible(indexLookup *IndexLookUpExecutor) bool {
@@ -1087,6 +1149,7 @@ func (b *executorBuilder) buildShow(v *physicalop.PhysicalShow) exec.Executor {
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
+		RawImportJob:          v.RawImportJob,
 		DistributionJobID:     v.DistributionJobID,
 		ImportGroupKey:        v.ImportGroupKey,
 	}
@@ -1294,7 +1357,15 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		selectExec exec.Executor
 		children   []exec.Executor
 	)
-	if v.SelectPlan != nil {
+	if v.SelectPlan != nil && b.sctx.GetSessionVars().InMViewMaintenance {
+		// MV builds persist the read timestamp as the refresh watermark, even
+		// when the SELECT becomes a TableDual and never opens a data reader.
+		if _, err := sessiontxn.GetTxnManager(b.sctx).GetStmtReadTS(); err != nil {
+			b.err = err
+			return nil
+		}
+	}
+	if v.SelectPlan != nil && !runsQueryOnWorker(v) {
 		selectExec = b.build(v.SelectPlan)
 		if b.err != nil {
 			return nil
@@ -1403,10 +1474,9 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) exec.Ex
 	e := &PlanReplayerExec{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		DumpInfo: &PlanReplayerDumpInfo{
-			Analyze:           v.Analyze,
-			Path:              v.File,
-			ctx:               b.sctx,
-			HistoricalStatsTS: v.HistoricalStatsTS,
+			Analyze: v.Analyze,
+			Path:    v.File,
+			ctx:     b.sctx,
 		},
 	}
 	if len(v.StmtList) > 0 {
@@ -1863,6 +1933,11 @@ type bypassDataSourceExecutor interface {
 func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourceExecutor, vars *variable.SessionVars, startTS uint64) {
 	tbl := x.Table()
 	if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+		if err := validateCachedTableSchema(us.Schema()); err != nil {
+			b.err = err
+			return
+		}
+
 		cachedTable := tbl.(table.CachedTable)
 		// Determine whether the cache can be used.
 		leaseDuration := time.Duration(vardef.TableCacheLease.Load()) * time.Second
@@ -1878,6 +1953,15 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 			cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
 		}
 	}
+}
+
+func validateCachedTableSchema(schema *expression.Schema) error {
+	for _, col := range schema.Columns {
+		if col.ID == model.ExtraCommitTSID {
+			return table.ErrOptOnCacheTable.GenWithStackByArgs(model.ExtraCommitTSName.O)
+		}
+	}
+	return nil
 }
 
 // buildMergeJoin builds MergeJoinExec executor.
@@ -2835,10 +2919,14 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableTiDBCheckConstraints),
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
+			strings.ToLower(infoschema.TableTiDBMViews),
+			strings.ToLower(infoschema.TableTiDBMLogs),
+			strings.ToLower(infoschema.TableTiDBTableMViewDependencies),
 			strings.ToLower(infoschema.TableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
-			strings.ToLower(infoschema.TableKeyspaceMeta):
+			strings.ToLower(infoschema.TableKeyspaceMeta),
+			strings.ToLower(infoschema.TableSchemataExtensions):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.sctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
@@ -3484,7 +3572,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-	statsHandle := domain.GetDomain(b.sctx).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(b.sctx)
 	count, modifyCount, err := statsHandle.StatsMetaCountAndModifyCount(task.TableID.GetStatisticsID())
 	if err != nil {
 		b.err = err
@@ -3638,7 +3726,7 @@ func (b *executorBuilder) chooseNDVRate(task plannercore.AnalyzeColumnsTask, opt
 // So if we don't consider the top-n values, we can keep the sample size at 300*256.
 // But we may take some top-n before building the histogram, so we increase the sample a little.
 func (b *executorBuilder) getAdjustedSampleRate(ctx context.Context, task plannercore.AnalyzeColumnsTask) (sampleRate float64, reason string) {
-	statsHandle := domain.GetDomain(b.sctx).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(b.sctx)
 	defaultRate := 0.001
 	if statsHandle == nil {
 		return defaultRate, fmt.Sprintf("statsHandler is nil, use the default-rate=%v", defaultRate)
@@ -3691,7 +3779,7 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(ctx context.Contex
 }
 
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
-	gp := domain.GetDomain(b.sctx).StatsHandle().GPool()
+	gp := domain.GetAnalyzeStatsHandle(b.sctx).GPool()
 	e := &AnalyzeExec{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
@@ -4259,12 +4347,18 @@ func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec
 		return nil
 	}
 
+	serverID, err := getMPPServerID(b.sctx)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	gather := &MPPGather{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: domain.GetDomain(b.sctx).ServerID()},
+		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: serverID},
 		memTracker:   memory.NewTracker(v.ID(), -1),
 
 		columns:                    []*model.ColumnInfo{},
@@ -6212,6 +6306,10 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		return nil
 	}
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		if err := validateCachedTableSchema(plan.Schema()); err != nil {
+			b.err = err
+			return nil
+		}
 		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTS); cacheTable != nil {
 			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
 		}
@@ -6700,4 +6798,11 @@ func (b *executorBuilder) buildRecommendIndex(v *plannercore.RecommendIndexPlan)
 func (b *executorBuilder) buildWorkloadRepoCreate(_ *plannercore.WorkloadRepoCreate) exec.Executor {
 	base := exec.NewBaseExecutor(b.sctx, nil, 0)
 	return &WorkloadRepoCreateExec{base}
+}
+
+func (b *executorBuilder) buildCompareMaterializedView(v *plannercore.CompareMaterializedView) exec.Executor {
+	return &CompareMaterializedViewExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		stmt:         v.Statement,
+	}
 }

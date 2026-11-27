@@ -17,37 +17,30 @@ package optimizor_test
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
-	util2 "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 var expectedFilesInReplayer = []string{
@@ -91,16 +84,6 @@ func requirePlanReplayerFileTokenFromRows(t *testing.T, rows *sql.Rows) string {
 	require.Equal(t, "File token", item)
 	require.NotEmpty(t, filename)
 	require.NoError(t, rows.Close())
-	return filename
-}
-
-func requirePlanReplayerFileTokenFromResult(t *testing.T, rows [][]any) string {
-	require.Len(t, rows, 1)
-	require.Len(t, rows[0], 2)
-	require.Equal(t, "File token", rows[0][0])
-	filename, ok := rows[0][1].(string)
-	require.True(t, ok)
-	require.NotEmpty(t, filename)
 	return filename
 }
 
@@ -866,207 +849,4 @@ func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {
 	for _, f := range z.File {
 		fn(f)
 	}
-}
-
-func fetchZipFromPlanReplayerAPI(t *testing.T, client *testserverclient.TestServerClient, filename string) *zip.Reader {
-	resp0, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, resp0.Body.Close())
-	}()
-	body, err := io.ReadAll(resp0.Body)
-	require.NoError(t, err)
-	b := bytes.NewReader(body)
-	z, err := zip.NewReader(b, int64(len(body)))
-	require.NoError(t, err)
-	return z
-}
-
-func getInfoFromPlanReplayerZip(
-	t *testing.T,
-	z *zip.Reader,
-) (
-	jsonTbls []*util2.JSONTable,
-	metas []map[string]string,
-	errMsgs []string,
-) {
-	for _, zipFile := range z.File {
-		if strings.HasPrefix(zipFile.Name, "stats/") {
-			jsonTbl := &util2.JSONTable{}
-			r, err := zipFile.Open()
-			require.NoError(t, err)
-			//nolint: all_revive
-			defer func() {
-				require.NoError(t, r.Close())
-			}()
-			buf := new(bytes.Buffer)
-			_, err = buf.ReadFrom(r)
-			require.NoError(t, err)
-			err = json.Unmarshal(buf.Bytes(), jsonTbl)
-			require.NoError(t, err)
-
-			jsonTbls = append(jsonTbls, jsonTbl)
-		} else if zipFile.Name == "sql_meta.toml" {
-			meta := make(map[string]string)
-			r, err := zipFile.Open()
-			require.NoError(t, err)
-			//nolint: all_revive
-			defer func() {
-				require.NoError(t, r.Close())
-			}()
-			_, err = toml.NewDecoder(r).Decode(&meta)
-			require.NoError(t, err)
-
-			metas = append(metas, meta)
-		} else if zipFile.Name == "errors.txt" {
-			r, err := zipFile.Open()
-			require.NoError(t, err)
-			//nolint: all_revive
-			defer func() {
-				require.NoError(t, r.Close())
-			}()
-			content, err := io.ReadAll(r)
-			require.NoError(t, err)
-			errMsgs = strings.Split(string(content), "\n")
-		}
-	}
-	return
-}
-
-func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats"))
-	}()
-	store := testkit.CreateMockStore(t)
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
-	server, client := prepareServerAndClientForTest(t, store, dom)
-	defer server.Close()
-	statsHandle := dom.StatsHandle()
-	hsWorker := dom.GetHistoricalStatsWorker()
-
-	// 1. prepare test data
-
-	// time1, ts1: before everything starts
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_enable_historical_stats = 1")
-	defer tk.MustExec("set global tidb_enable_historical_stats = 0")
-	time1 := time.Now()
-	ts1 := oracle.GoTimeToTS(time1)
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int, index ia(a))")
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-
-	// 1-1. first insert and first analyze, trigger first dump history stats
-	tk.MustExec("insert into t value(1,1,1), (2,2,2), (3,3,3)")
-	tk.MustExec("analyze table t with 1 samplerate")
-	tblID := hsWorker.GetOneHistoricalStatsTable()
-	err = hsWorker.DumpHistoricalStats(tblID, statsHandle)
-	require.NoError(t, err)
-
-	// time2, stats1: after first analyze
-	time2 := time.Now()
-	ts2 := oracle.GoTimeToTS(time2)
-	stats1, err := statsHandle.DumpStatsToJSON("test", tblInfo, nil, true)
-	require.NoError(t, err)
-	stats1.Sort()
-
-	// 1-2. second insert and second analyze, trigger second dump history stats
-	tk.MustExec("insert into t value(4,4,4), (5,5,5), (6,6,6)")
-	tk.MustExec("analyze table t with 1 samplerate")
-	tblID = hsWorker.GetOneHistoricalStatsTable()
-	err = hsWorker.DumpHistoricalStats(tblID, statsHandle)
-	require.NoError(t, err)
-
-	// time3, stats2: after second analyze
-	time3 := time.Now()
-	ts3 := oracle.GoTimeToTS(time3)
-	stats2, err := statsHandle.DumpStatsToJSON("test", tblInfo, nil, true)
-	require.NoError(t, err)
-	stats2.Sort()
-
-	// 2. get the plan replayer and assert
-
-	template := "plan replayer dump with stats as of timestamp '%s' explain %s"
-	query := "select * from t where a > 1"
-
-	// 2-1. specify time1 to get the plan replayer
-	filename1 := requirePlanReplayerFileTokenFromResult(t, tk.MustQuery(
-		fmt.Sprintf(template, strconv.FormatUint(ts1, 10), query),
-	).Rows())
-	zip1 := fetchZipFromPlanReplayerAPI(t, client, filename1)
-	jsonTbls1, metas1, errMsg1 := getInfoFromPlanReplayerZip(t, zip1)
-
-	// the TS is recorded in the plan replayer, and it's the same as the TS we calculated above
-	require.Len(t, metas1, 1)
-	require.Contains(t, metas1[0], "historicalStatsTS")
-	tsInReplayerMeta1, err := strconv.ParseUint(metas1[0]["historicalStatsTS"], 10, 64)
-	require.NoError(t, err)
-	require.Equal(t, ts1, tsInReplayerMeta1)
-
-	// the result is the same as stats2, and IsHistoricalStats is false.
-	require.Len(t, jsonTbls1, 1)
-	require.False(t, jsonTbls1[0].IsHistoricalStats)
-	jsonTbls1[0].Sort()
-	require.Equal(t, jsonTbls1[0], stats2)
-
-	// because we failed to get historical stats, there's an error message.
-	require.Equal(t, []string{"Historical stats for test.t are unavailable, fallback to latest stats", ""}, errMsg1)
-
-	// 2-2. specify time2 to get the plan replayer
-	filename2 := requirePlanReplayerFileTokenFromResult(t, tk.MustQuery(
-		fmt.Sprintf(template, time2.Format("2006-01-02 15:04:05.000000"), query),
-	).Rows())
-	zip2 := fetchZipFromPlanReplayerAPI(t, client, filename2)
-	jsonTbls2, metas2, errMsg2 := getInfoFromPlanReplayerZip(t, zip2)
-
-	// the TS is recorded in the plan replayer, and it's the same as the TS we calculated above
-	require.Len(t, metas2, 1)
-	require.Contains(t, metas2[0], "historicalStatsTS")
-	tsInReplayerMeta2, err := strconv.ParseUint(metas2[0]["historicalStatsTS"], 10, 64)
-	require.NoError(t, err)
-	require.Equal(t, ts2, tsInReplayerMeta2)
-
-	// the result is the same as stats1, and IsHistoricalStats is true.
-	require.Len(t, jsonTbls2, 1)
-	require.True(t, jsonTbls2[0].IsHistoricalStats)
-	jsonTbls2[0].IsHistoricalStats = false
-	jsonTbls2[0].Sort()
-	require.Equal(t, jsonTbls2[0], stats1)
-
-	// succeeded to get historical stats, there should be no error message.
-	require.Empty(t, errMsg2)
-
-	// 2-3. specify time3 to get the plan replayer
-	filename3 := requirePlanReplayerFileTokenFromResult(t, tk.MustQuery(
-		fmt.Sprintf(template, time3.Format("2006-01-02T15:04:05.000000Z07:00"), query),
-	).Rows())
-	zip3 := fetchZipFromPlanReplayerAPI(t, client, filename3)
-	jsonTbls3, metas3, errMsg3 := getInfoFromPlanReplayerZip(t, zip3)
-
-	// the TS is recorded in the plan replayer, and it's the same as the TS we calculated above
-	require.Len(t, metas3, 1)
-	require.Contains(t, metas3[0], "historicalStatsTS")
-	tsInReplayerMeta3, err := strconv.ParseUint(metas3[0]["historicalStatsTS"], 10, 64)
-	require.NoError(t, err)
-	require.Equal(t, ts3, tsInReplayerMeta3)
-
-	// the result is the same as stats2, and IsHistoricalStats is true.
-	require.Len(t, jsonTbls3, 1)
-	require.True(t, jsonTbls3[0].IsHistoricalStats)
-	jsonTbls3[0].IsHistoricalStats = false
-	jsonTbls3[0].Sort()
-	require.Equal(t, jsonTbls3[0], stats2)
-
-	// succeeded to get historical stats, there should be no error message.
-	require.Empty(t, errMsg3)
-
-	// 3. remove the plan replayer files generated during the test
-	gcHandler := dom.GetDumpFileGCChecker()
-	gcHandler.GCDumpFiles(context.Background(), 0, 0)
 }

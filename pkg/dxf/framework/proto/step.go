@@ -107,7 +107,7 @@ func exampleStep2Str(s Step) string {
 //     -> StepDone
 //   - global sort:
 //     StepInit
-//     -> ImportStepEncodeAndSort
+//     -> ImportStepEncodeAndSort (files) or ImportStepQuery (SELECT)
 //     -> ImportStepMergeSort (optional)
 //     -> ImportStepWriteAndIngest
 //     -> ImportStepCollectConflicts (optional)
@@ -142,6 +142,8 @@ const (
 	// in external storage, if any conflicts are detected, we will resolve them
 	// here. so there might be 0 subtasks in this step.
 	ImportStepConflictResolution Step = 7
+	// ImportStepQuery executes a SELECT and writes encoded, sorted KVs to global storage.
+	ImportStepQuery Step = 8
 )
 
 func importIntoStep2Str(s Step) string {
@@ -152,6 +154,8 @@ func importIntoStep2Str(s Step) string {
 		return "post-process"
 	case ImportStepEncodeAndSort:
 		return "encode"
+	case ImportStepQuery:
+		return "query"
 	case ImportStepMergeSort:
 		return "merge-sort"
 	case ImportStepWriteAndIngest:

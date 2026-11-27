@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/stretchr/testify/require"
@@ -40,7 +40,7 @@ func withStatsLease(t *testing.T, lease time.Duration, body func()) {
 	body()
 }
 
-func withIsFullCacheFunc(t *testing.T, isFullCache func(types.StatsCache, uint64) bool, body func()) {
+func withIsFullCacheFunc(t *testing.T, isFullCache func(*cache.Cache, uint64) bool, body func()) {
 	t.Helper()
 	originalIsFullCacheFunc := handle.IsFullCacheFunc
 	handle.IsFullCacheFunc = isFullCache
@@ -52,8 +52,8 @@ func withIsFullCacheFunc(t *testing.T, isFullCache func(types.StatsCache, uint64
 
 func maxPhysicalTableID(h *handle.Handle, is infoschema.InfoSchema) int64 {
 	var maxID int64
-	for _, statsTbl := range h.StatsCache.Values() {
-		table, ok := h.TableInfoByID(is, statsTbl.PhysicalID)
+	for _, statsTbl := range h.Cache().Values() {
+		table, ok := h.Tables().TableInfoByID(is, statsTbl.PhysicalID)
 		if !ok {
 			continue
 		}
@@ -114,36 +114,36 @@ func TestLiteInitStatsWithTableIDs(t *testing.T) {
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
 		h := dom.StatsHandle()
-		_, ok := h.Get(tbl1.Meta().ID)
+		_, ok := h.Cache().Get(tbl1.Meta().ID)
 		require.False(t, ok)
 		require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema(), tbl1.Meta().ID))
-		_, ok = h.Get(tbl1.Meta().ID)
+		_, ok = h.Cache().Get(tbl1.Meta().ID)
 		require.True(t, ok)
-		_, ok = h.Get(tbl2.Meta().ID)
+		_, ok = h.Cache().Get(tbl2.Meta().ID)
 		require.False(t, ok)
-		_, ok = h.Get(tbl3.Meta().ID)
+		_, ok = h.Cache().Get(tbl3.Meta().ID)
 		require.False(t, ok)
 
 		// Make sure it can be loaded multiple times.
 		require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema(), tbl1.Meta().ID, tbl2.Meta().ID))
-		_, ok = h.Get(tbl1.Meta().ID)
+		_, ok = h.Cache().Get(tbl1.Meta().ID)
 		require.True(t, ok)
-		_, ok = h.Get(tbl2.Meta().ID)
+		_, ok = h.Cache().Get(tbl2.Meta().ID)
 		require.True(t, ok)
-		_, ok = h.Get(tbl3.Meta().ID)
+		_, ok = h.Cache().Get(tbl3.Meta().ID)
 		require.False(t, ok)
 
 		require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
-		_, ok = h.Get(tbl1.Meta().ID)
+		_, ok = h.Cache().Get(tbl1.Meta().ID)
 		require.True(t, ok)
-		_, ok = h.Get(tbl2.Meta().ID)
+		_, ok = h.Cache().Get(tbl2.Meta().ID)
 		require.True(t, ok)
-		_, ok = h.Get(tbl3.Meta().ID)
+		_, ok = h.Cache().Get(tbl3.Meta().ID)
 		require.True(t, ok)
-		_, ok = h.Get(droppedTableID)
+		_, ok = h.Cache().Get(droppedTableID)
 		require.False(t, ok)
 		for _, partitionID := range partitionIDs {
-			_, ok = h.Get(partitionID)
+			_, ok = h.Cache().Get(partitionID)
 			require.True(t, ok)
 		}
 
@@ -178,36 +178,36 @@ func TestNonLiteInitStatsWithTableIDs(t *testing.T) {
 		require.NoError(t, err)
 		is = dom.InfoSchema()
 		h := dom.StatsHandle()
-		_, ok := h.Get(tbl1.Meta().ID)
+		_, ok := h.Cache().Get(tbl1.Meta().ID)
 		require.False(t, ok)
 		require.NoError(t, h.InitStats(context.Background(), is, tbl1.Meta().ID))
-		stats1, ok := h.Get(tbl1.Meta().ID)
+		stats1, ok := h.Cache().Get(tbl1.Meta().ID)
 		require.True(t, ok)
 		require.True(t, stats1.GetIdx(1).IsFullLoad())
-		_, ok = h.Get(tbl2.Meta().ID)
+		_, ok = h.Cache().Get(tbl2.Meta().ID)
 		require.False(t, ok)
-		_, ok = h.Get(tbl3.Meta().ID)
+		_, ok = h.Cache().Get(tbl3.Meta().ID)
 		require.False(t, ok)
 
 		// Make sure it can be loaded multiple times.
 		require.NoError(t, h.InitStats(context.Background(), is, tbl1.Meta().ID, tbl2.Meta().ID))
-		stats1, ok = h.Get(tbl1.Meta().ID)
+		stats1, ok = h.Cache().Get(tbl1.Meta().ID)
 		require.True(t, ok)
 		require.True(t, stats1.GetIdx(1).IsFullLoad())
-		stats2, ok := h.Get(tbl2.Meta().ID)
+		stats2, ok := h.Cache().Get(tbl2.Meta().ID)
 		require.True(t, ok)
 		require.True(t, stats2.GetIdx(1).IsFullLoad())
-		_, ok = h.Get(tbl3.Meta().ID)
+		_, ok = h.Cache().Get(tbl3.Meta().ID)
 		require.False(t, ok)
 
 		require.NoError(t, h.InitStats(context.Background(), is))
-		stats1, ok = h.Get(tbl1.Meta().ID)
+		stats1, ok = h.Cache().Get(tbl1.Meta().ID)
 		require.True(t, ok)
 		require.True(t, stats1.GetIdx(1).IsFullLoad())
-		stats2, ok = h.Get(tbl2.Meta().ID)
+		stats2, ok = h.Cache().Get(tbl2.Meta().ID)
 		require.True(t, ok)
 		require.True(t, stats2.GetIdx(1).IsFullLoad())
-		stats3, ok := h.Get(tbl3.Meta().ID)
+		stats3, ok := h.Cache().Get(tbl3.Meta().ID)
 		require.True(t, ok)
 		require.True(t, stats3.GetIdx(1).IsFullLoad())
 
@@ -221,7 +221,7 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
 	})
-	withIsFullCacheFunc(t, func(cache types.StatsCache, total uint64) bool {
+	withIsFullCacheFunc(t, func(cache *cache.Cache, total uint64) bool {
 		return true
 	}, func() {
 		testConcurrentlyInitStats(t)
@@ -234,7 +234,7 @@ func TestConcurrentlyInitStatsWithoutMemoryLimit(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
 	})
-	withIsFullCacheFunc(t, func(cache types.StatsCache, total uint64) bool {
+	withIsFullCacheFunc(t, func(cache *cache.Cache, total uint64) bool {
 		return false
 	}, func() {
 		testConcurrentlyInitStats(t)
@@ -256,13 +256,13 @@ func testConcurrentlyInitStats(t *testing.T) {
 	}
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	h.Clear()
-	require.Equal(t, h.MemConsumed(), int64(0))
+	h.ClearForTest()
+	require.Equal(t, h.Cache().MemConsumed(), int64(0))
 	require.NoError(t, h.InitStats(context.Background(), is))
 	for i := 1; i < 10; i++ {
 		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(fmt.Sprintf("t%v", i)))
 		require.NoError(t, err)
-		stats, ok := h.StatsCache.Get(tbl.Meta().ID)
+		stats, ok := h.Cache().Get(tbl.Meta().ID)
 		require.True(t, ok)
 		for _, col := range stats.GetColSlice() {
 			require.True(t, col.IsAllEvicted())
@@ -281,7 +281,7 @@ func testConcurrentlyInitStats(t *testing.T) {
 	for i := 1; i < 10; i++ {
 		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(fmt.Sprintf("t%v", i)))
 		require.NoError(t, err)
-		stats, ok := h.StatsCache.Get(tbl.Meta().ID)
+		stats, ok := h.Cache().Get(tbl.Meta().ID)
 		require.True(t, ok)
 		for _, col := range stats.GetColSlice() {
 			require.True(t, col.IsFullLoad())
@@ -348,15 +348,15 @@ func testDropTableBeforeInitStats(t *testing.T) {
 	tk.MustExec("drop table dropped_t")
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta where table_id = %d", droppedTableID)).Check(testkit.Rows("1"))
 	h := dom.StatsHandle()
-	h.Clear()
+	h.ClearForTest()
 	is = dom.InfoSchema()
 	require.NoError(t, h.InitStats(context.Background(), is))
-	_, ok := h.Get(droppedTableID)
+	_, ok := h.Cache().Get(droppedTableID)
 	require.False(t, ok)
-	_, ok = h.Get(keptTableID)
+	_, ok = h.Cache().Get(keptTableID)
 	require.True(t, ok)
 	for _, partitionID := range partitionIDs {
-		_, ok = h.Get(partitionID)
+		_, ok = h.Cache().Get(partitionID)
 		require.True(t, ok)
 	}
 }
@@ -386,7 +386,7 @@ func TestSkipStatsInitWithSkipInitStats(t *testing.T) {
 		is := dom.InfoSchema()
 		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
-		_, ok := h.StatsCache.Get(tbl.Meta().ID)
+		_, ok := h.Cache().Get(tbl.Meta().ID)
 		require.False(t, ok)
 		dom.Close()
 	})
@@ -419,16 +419,16 @@ func TestNonLiteInitStatsAndCheckTheLastTableStats(t *testing.T) {
 		require.NoError(t, err)
 		is = dom.InfoSchema()
 		h := dom.StatsHandle()
-		_, ok := h.Get(tbl1.Meta().ID)
+		_, ok := h.Cache().Get(tbl1.Meta().ID)
 		require.False(t, ok)
 		require.NoError(t, h.InitStats(context.Background(), is))
-		stats1, ok := h.Get(tbl1.Meta().ID)
+		stats1, ok := h.Cache().Get(tbl1.Meta().ID)
 		require.True(t, ok)
 		require.True(t, stats1.GetIdx(1).IsFullLoad())
-		stats2, ok := h.Get(tbl2.Meta().ID)
+		stats2, ok := h.Cache().Get(tbl2.Meta().ID)
 		require.True(t, ok)
 		require.True(t, stats2.GetIdx(1).IsFullLoad())
-		stats3, ok := h.Get(tbl3.Meta().ID)
+		stats3, ok := h.Cache().Get(tbl3.Meta().ID)
 		require.True(t, ok)
 		require.True(t, stats3.GetIdx(1).IsFullLoad())
 

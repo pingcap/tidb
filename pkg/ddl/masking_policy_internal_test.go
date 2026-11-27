@@ -67,7 +67,7 @@ func TestMaskingPolicyOperationsRequireSysTable(t *testing.T) {
 			name: "rename",
 			run: func() error {
 				return w.updateMaskingPolicyNamesAfterRename(
-					jobCtx.stepCtx,
+					jobCtx,
 					1,
 					ast.NewCIStr("old_db"), ast.NewCIStr("new_db"),
 					ast.NewCIStr("old_table"), ast.NewCIStr("new_table"),
@@ -83,4 +83,30 @@ func TestMaskingPolicyOperationsRequireSysTable(t *testing.T) {
 			require.True(t, infoschema.ErrTableNotExists.Equal(err), "unexpected error: %v", err)
 		})
 	}
+}
+
+func TestMaskingPolicyMutatingHelpersSetMustRollbackTxnOnError(t *testing.T) {
+	w := &worker{}
+	jobCtx := &jobContext{stepCtx: context.Background()}
+
+	invoke := func(fn func() error) {
+		jobCtx.mustRollbackTxnOnError = false
+		defer func() { _ = recover() }()
+		_ = fn()
+	}
+
+	invoke(func() error { return w.insertMaskingPolicyIntoSysTable(jobCtx, &model.MaskingPolicyInfo{}) })
+	require.True(t, jobCtx.mustRollbackTxnOnError)
+
+	invoke(func() error { return w.updateMaskingPolicyInSysTable(jobCtx, &model.MaskingPolicyInfo{}) })
+	require.True(t, jobCtx.mustRollbackTxnOnError)
+
+	invoke(func() error { return w.deleteMaskingPolicyFromSysTable(jobCtx, 1) })
+	require.True(t, jobCtx.mustRollbackTxnOnError)
+
+	invoke(func() error { return w.dropMaskingPoliciesByDBName(jobCtx, "db") })
+	require.True(t, jobCtx.mustRollbackTxnOnError)
+
+	invoke(func() error { return w.updateMaskingPolicyNamesInSysTable(jobCtx, &model.MaskingPolicyInfo{ID: 1}) })
+	require.True(t, jobCtx.mustRollbackTxnOnError)
 }

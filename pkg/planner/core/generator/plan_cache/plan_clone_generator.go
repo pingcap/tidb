@@ -39,6 +39,7 @@ func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 		physicalop.Update{}, physicalop.Delete{}, physicalop.Insert{},
 		physicalop.PhysicalTableScan{}, physicalop.PhysicalIndexScan{},
 		physicalop.PhysicalSelection{}, physicalop.PhysicalProjection{}, physicalop.PhysicalTopN{}, physicalop.PhysicalLimit{},
+		physicalop.PhysicalCalcFoundRows{},
 		physicalop.PhysicalStreamAgg{}, physicalop.PhysicalHashAgg{},
 		physicalop.PhysicalHashJoin{}, physicalop.PhysicalMergeJoin{}, physicalop.PhysicalIndexJoin{},
 		physicalop.PhysicalIndexHashJoin{},
@@ -100,7 +101,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			continue
 		}
 		switch f.Type.String() {
-		case "[]int", "[]byte", "[]float", "[]bool", "[]uint32": // simple slice
+		case "[]int", "[]int64", "[]byte", "[]float", "[]bool", "[]uint32": // simple slice
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
 		case "physicalop.BasePhysicalAgg":

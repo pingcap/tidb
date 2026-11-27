@@ -354,7 +354,7 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 	})
 	var timeout = time.Duration(syncWait * time.Millisecond.Nanoseconds())
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
+	err := domain.GetDomain(ctx).StatsHandle().SyncLoad().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if vardef.StatsLoadPseudoTimeout.Load() {
@@ -379,7 +379,7 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 		// track the time spent in sync wait stats load, which might take a long time.
 		plan.SCtx().GetSessionVars().DurationOptimizer.StatsSyncWait = time.Since(begin)
 	}(time.Now())
-	err := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
+	err := domain.GetDomain(plan.SCtx()).StatsHandle().SyncLoad().SyncWaitStatsLoad(stmtCtx)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if vardef.StatsLoadPseudoTimeout.Load() {

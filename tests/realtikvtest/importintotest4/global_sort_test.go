@@ -36,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -60,17 +62,14 @@ func urlEqual(t *testing.T, expected, actual string) {
 	require.Equal(t, urlExpected.String(), urlGot.String())
 }
 
-func (s *mockGCSSuite) checkExternalFields(taskID int64, externalMetaCleanedUp bool) {
+func (s *mockGCSSuite) checkExternalFields(taskID int64, sortStorageURI string, externalMetaCleanedUp bool) {
 	s.T().Helper()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr, err := storage.GetTaskManager()
 	s.NoError(err)
-	task, err := mgr.GetTaskByIDWithHistory(ctx, taskID)
-	s.NoError(err)
-	taskMeta := importinto.TaskMeta{}
-	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
-	store, err := importer.GetSortStore(ctx, taskMeta.Plan.CloudStorageURI)
+	// Historical task metadata is redacted and must not be used for storage I/O.
+	store, err := importer.GetSortStore(ctx, sortStorageURI)
 	s.NoError(err)
 	defer store.Close()
 
@@ -216,15 +215,15 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	// check sensitive info is redacted
 	jobInfo, err := importer.GetJob(context.Background(), s.tk.Session(), int64(jobID), "", true)
 	s.NoError(err)
-	redactedSortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
+	redactedSortStorageURI := "gs://sorted/import?endpoint=xxxxxx&access-key=xxxxxx&secret-access-key=xxxxxx"
 	urlEqual(s.T(), redactedSortStorageURI, jobInfo.Parameters.Options["cloud_storage_uri"].(string))
 	s.EqualValues(6, jobInfo.Summary.ImportedRows)
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := importinto.TaskKey(int64(jobID))
+	taskKey := taskkey.ForJob(int64(jobID))
 	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
-	taskMeta := importinto.TaskMeta{}
+	taskMeta := taskinfo.TaskMeta{}
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
 	require.True(s.T(), taskMeta.Plan.DisableTiKVImportMode)
@@ -248,7 +247,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.NoError(err)
 	var taskID int64
 	s.Eventually(func() bool {
-		task, err2 = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+		task, err2 = taskManager.GetTaskByKeyWithHistory(ctx, taskkey.ForJob(int64(jobID)))
 		s.NoError(err2)
 		taskID = task.ID
 		return task.State == proto.TaskStateReverted
@@ -261,7 +260,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.Len(files, 0)
 
 	// check subtask external field
-	s.checkExternalFields(taskID, true)
+	s.checkExternalFields(taskID, sortStorageURI, true)
 }
 
 func (s *mockGCSSuite) prepare10Files(bucket string) []string {
@@ -319,11 +318,11 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 	s.NoError(err)
 	var task *proto.Task
 	s.Eventually(func() bool {
-		task, err = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+		task, err = taskManager.GetTaskByKeyWithHistory(ctx, taskkey.ForJob(int64(jobID)))
 		s.NoError(err)
 		return task.State == proto.TaskStateSucceed
 	}, 30*time.Second, 300*time.Millisecond)
-	var taskMeta importinto.TaskMeta
+	var taskMeta taskinfo.TaskMeta
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
@@ -522,7 +521,7 @@ func TestNextGenMetering(t *testing.T) {
 
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	task, err := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskkey.ForJob(int64(jobID)))
 	s.NoError(err)
 	s.Eventually(func() bool {
 		return gotMeterData.Load() != ""
@@ -620,7 +619,7 @@ func TestNextGenMeteringWithConflictResolution(t *testing.T) {
 
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	task, err := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskkey.ForJob(int64(jobID)))
 	s.NoError(err)
 	s.Eventually(func() bool {
 		return gotMeterData.Load() != ""

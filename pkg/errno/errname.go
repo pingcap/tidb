@@ -852,7 +852,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidJSONData:                                       mysql.Message("Invalid JSON data provided to function %s: %s", nil),
 	ErrInvalidJSONText:                                       mysql.Message("Invalid JSON text: %-.192s", []int{0}),
 	ErrInvalidJSONTextInParam:                                mysql.Message("Invalid JSON text in argument %d to function %s: \"%s\" at position %d.", nil),
-	ErrInvalidJSONPath:                                       mysql.Message("Invalid JSON path expression. The error is around character position %d.", []int{0}),
+	ErrInvalidJSONPath:                                       mysql.Message("Invalid JSON path expression. The error is around character position %d.", nil),
 	ErrInvalidJSONCharset:                                    mysql.Message("Cannot create a JSON value from a string with CHARACTER SET '%s'.", nil),
 	ErrInvalidTypeForJSON:                                    mysql.Message("Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.", nil),
 	ErrInvalidJSONPathMultipleSelection:                      mysql.Message("In this situation, path expressions may not contain the * and ** tokens or an array range.", nil),
@@ -914,6 +914,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrFKIncompatibleColumns:                                 mysql.Message("Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible.", nil),
 	ErrFunctionalIndexRowValueIsNotAllowed:                   mysql.Message("Expression of expression index '%s' cannot refer to a row value", nil),
 	ErrInvalidLateralJoin:                                    mysql.Message("Invalid use of LATERAL: %s", nil),
+	ErrSchemaInReadOnlyMode:                                  mysql.Message("Schema '%s' is in read only mode.", nil),
 	ErrNonBooleanExprForCheckConstraint:                      mysql.Message("An expression of non-boolean type specified to a check constraint '%s'.", nil),
 	ErrColumnCheckConstraintReferencesOtherColumn:            mysql.Message("Column check constraint '%s' references other column.", nil),
 	ErrCheckConstraintNamedFunctionIsNotAllowed:              mysql.Message("An expression of a check constraint '%s' contains disallowed function: %s.", nil),
@@ -952,6 +953,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrSecondPasswordCannotBeEmpty:            mysql.Message("Empty password can not be retained as second password for user '%-.64s'@'%-.64s'.", nil),
 	ErrPasswordCannotBeRetainedOnPluginChange: mysql.Message("Current password can not be retained for user '%-.64s'@'%-.64s' because authentication plugin is being changed.", nil),
 	ErrCurrentPasswordCannotBeRetained:        mysql.Message("Current password can not be retained for user '%-.64s'@'%-.64s' because new password is empty.", nil),
+	ErrAccessSysDBRejected:                    mysql.Message("Access to system schema '%s' is rejected.", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),
@@ -1176,6 +1178,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrModifyColumnReferencedByPartialCondition: mysql.Message("Cannot drop, change or modify column '%s': it is referenced in partial index '%s'", nil),
 	ErrCheckPartialIndexWithoutFastCheck:        mysql.Message("Validation of partial indexes requires tidb_enable_fast_table_check=ON", nil),
 	ErrMaxKeysReadExceeded:                      mysql.Message("tidb_max_keys_read limit exceeded", nil),
+	ErrMaintenanceMode:                          mysql.Message("During the maintenance window, %s is currently unavailable. It will be available after maintenance finishes", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:      mysql.Message("PD server timeout: %s", nil),
@@ -1214,4 +1217,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
 	ErrInvalidAffinityOption:              mysql.Message("Invalid AFFINITY %s", nil),
 	ErrUserPrefixMismatch:                 mysql.Message("User name prefix does not match the assigned keyspace.", nil),
+	ErrMVAdvisoryLockConflict:             mysql.Message("materialized view advisory lock conflict: %s", nil),
+	ErrMVRefreshLogBaselineChanged:        mysql.Message("refresh materialized view %s.%s fast: input log baseline has changed; run COMPLETE refresh to rebuild it", nil),
 }

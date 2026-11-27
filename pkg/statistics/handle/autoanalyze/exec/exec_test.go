@@ -46,7 +46,7 @@ func TestExecAutoAnalyzes(t *testing.T) {
 
 	exec.AutoAnalyze(
 		sctx,
-		handle,
+		handle.ProcIDs(),
 		dom.SysProcTracker(),
 		2, false, "analyze table %n", "t",
 	)
@@ -79,7 +79,7 @@ func TestExecAutoAnalyzeRewritesLegacyStatsVersionToV2(t *testing.T) {
 	require.NotPanics(t, func() {
 		ok := exec.AutoAnalyze(
 			sctx,
-			handle,
+			handle.ProcIDs(),
 			dom.SysProcTracker(),
 			statistics.Version2,
 			true,
@@ -118,8 +118,8 @@ partition by range (a) (
 		"update mysql.stats_histograms set stats_ver = 1 where table_id in (?,?,?)",
 		legacyTableIDs[0], legacyTableIDs[1], legacyTableIDs[2],
 	)
-	handle.Clear()
-	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema(), legacyTableIDs...))
+	handle.ClearForTest()
+	require.NoError(t, handle.Cache().Update(context.Background(), dom.InfoSchema(), legacyTableIDs...))
 	require.Equal(t, statistics.Version1, handle.GetPhysicalTableStats(partitionedTbl.Meta().ID, partitionedTbl.Meta()).StatsVer)
 	require.Equal(t, statistics.Version1, handle.GetPhysicalTableStats(pi.Definitions[0].ID, partitionedTbl.Meta()).StatsVer)
 	require.Equal(t, statistics.Version1, handle.GetPhysicalTableStats(pi.Definitions[1].ID, partitionedTbl.Meta()).StatsVer)
@@ -127,7 +127,7 @@ partition by range (a) (
 	require.NotPanics(t, func() {
 		ok := exec.AutoAnalyze(
 			sctx,
-			handle,
+			handle.ProcIDs(),
 			dom.SysProcTracker(),
 			statistics.Version2,
 			true,
@@ -177,7 +177,7 @@ func TestKillInWindows(t *testing.T) {
 		}
 	})
 	sctx := tk.Session()
-	_, _, err := exec.RunAnalyzeStmt(sctx, handle, sysProcTracker, 2, false, "analyze table %n", "t1")
+	_, _, err := exec.RunAnalyzeStmt(sctx, handle.ProcIDs(), sysProcTracker, 2, false, "analyze table %n", "t1")
 	require.ErrorContains(t, err, "[executor:1317]Query execution was interrupted")
 	close(exitCh)
 	wg.Wait()

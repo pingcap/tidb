@@ -98,8 +98,9 @@ func implCompareExpr(rangerctx *context.RangerContext, pre *expression.ScalarFun
 	} else {
 		return false
 	}
-	ranges, _, _, err := ranger.BuildColumnRange([]expression.Expression{pre}, rangerctx, col.RetType, -1, 0)
-	if len(ranges) == 0 || err != nil {
+	ranges, _, remained, err := ranger.BuildColumnRange([]expression.Expression{pre}, rangerctx, col.RetType, -1, 0)
+	// The index predicate needs an exact range; a superset cannot prove implication.
+	if len(ranges) == 0 || len(remained) > 0 || err != nil {
 		return false
 	}
 	columnConds := ranger.ExtractAccessConditionsForColumn(rangerctx, filters, col)
@@ -205,6 +206,14 @@ func checkIsNullRejected(sctx planctx.PlanContext, targetCol *expression.Column,
 		if ok && col.Equal(sctx.GetExprCtx().GetEvalCtx(), targetCol) {
 			return false
 		}
+	}
+	if filter.FuncName.L == ast.UnaryNot {
+		inner, ok := filter.GetArgs()[0].(*expression.ScalarFunction)
+		if !ok || inner.FuncName.L != ast.IsNull {
+			return false
+		}
+		col, ok := inner.GetArgs()[0].(*expression.Column)
+		return ok && col.Equal(sctx.GetExprCtx().GetEvalCtx(), targetCol)
 	}
 	if _, ok := expression.CompareOpMap[filter.FuncName.L]; ok {
 		if filter.FuncName.L == ast.NullEQ {

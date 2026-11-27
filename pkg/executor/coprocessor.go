@@ -19,12 +19,14 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -67,13 +69,23 @@ func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 }
 
 // HandleRequest handles the coprocessor request.
-func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
+func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coprocessor.Request) (resp *coprocessor.Response) {
 	ctx = copHandlerCtx(ctx, req)
 
 	e, err := h.buildDAGExecutor(ctx, req)
 	if err != nil {
 		return h.buildErrorResponse(err)
 	}
+	// Open can partially initialize the executor before returning an error.
+	defer func() {
+		if closeErr := exec.Close(e); closeErr != nil {
+			if resp != nil && resp.OtherError == "" {
+				resp = h.buildErrorResponse(closeErr)
+			} else {
+				terror.Log(closeErr)
+			}
+		}
+	}()
 
 	err = exec.Open(ctx, e)
 	if err != nil {
@@ -102,9 +114,6 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		}
 		totalChunks = append(totalChunks, partChunks...)
 	}
-	if err := exec.Close(e); err != nil {
-		return h.buildErrorResponse(err)
-	}
 	return h.buildUnaryResponse(totalChunks)
 }
 
@@ -117,6 +126,9 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 	if err != nil {
 		return stream.Send(h.buildErrorResponse(err))
 	}
+	defer func() {
+		terror.Log(exec.Close(e))
+	}()
 
 	err = exec.Open(ctx, e)
 	if err != nil {
@@ -200,7 +212,9 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(ctx context.Context, req *copro
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
 	b := newExecutorBuilder(ctx, h.sctx, is, nil)
-	return b.build(plan), nil
+	e := b.build(plan)
+	failpoint.InjectCall("mockCoprocessorDAGExecutor", &e)
+	return e, nil
 }
 
 func (h *CoprocessorDAGHandler) buildChunk(chk *chunk.Chunk, tps []*types.FieldType) (chunks []tipb.Chunk, err error) {

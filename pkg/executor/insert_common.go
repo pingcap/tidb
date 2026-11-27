@@ -23,9 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -289,6 +291,9 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			if err != nil {
 				return err
 			}
+			if err = e.checkRowsForExchangePartition(rows); err != nil {
+				return err
+			}
 			if err = base.exec(ctx, rows); err != nil {
 				return err
 			}
@@ -311,6 +316,9 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 	rows, err = e.fillEmbedTextValues(ctx, rows)
 	if err != nil {
+		return err
+	}
+	if err = e.checkRowsForExchangePartition(rows); err != nil {
 		return err
 	}
 	err = base.exec(ctx, rows)
@@ -611,6 +619,13 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	e.Ctx().StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
 		// We should return a special error for batch insert.
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+	}
+	failpoint.InjectCall("afterBatchInsertNewTxn", e.Ctx())
+	if err := activateSchemaReadOnlyWrite(e.Ctx(), e.Table.Meta()); err != nil {
+		if infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
+			return err
+		}
 		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	return nil
@@ -921,59 +936,71 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		}
 	}
 
-	// Handle exchange partition
-	tbl := e.Table.Meta()
-	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
-		if err := checkRowForExchangePartition(e.Ctx(), row, tbl); err != nil {
-			return nil, err
-		}
-	}
-
-	// Fast path: no generated columns, nothing more to do.
-	if len(gCols) == 0 {
-		return row, nil
-	}
-
-	sctx := e.Ctx()
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
-	sc := sctx.GetSessionVars().StmtCtx
-	warnCnt := int(sc.WarningCount())
-	// Build the MutRow once and update it in-place after each generated column is
-	// evaluated. Previously MutRowFromDatums was called inside the loop, causing a
-	// full row copy O(columns) allocation for every generated column — O(G*C) total.
-	mutRow := chunk.MutRowFromDatums(row)
-	for i, gCol := range gCols {
-		if expression.IsEmbedTextFuncCall(gCol.GeneratedExpr.Internal()) {
-			continue
-		}
-		colIdx := gCol.ColumnInfo.Offset
-		val, err := e.GenExprs[i].Eval(evalCtx, mutRow.ToRow())
-		if err != nil && gCol.FieldType.IsArray() {
-			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
-		}
-		if e.Ctx().GetSessionVars().StmtCtx.HandleTruncate(err) != nil {
-			return nil, err
-		}
-		row[colIdx], err = table.CastValue(e.Ctx(), val, gCol.ToInfo(), false, false)
-		if err = e.handleErr(gCol, &val, rowIdx, err); err != nil {
-			return nil, err
-		}
-		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
-			for k := range newWarnings {
-				newWarnings[k].Err = completeInsertErr(gCol.ColumnInfo, &val, rowIdx, newWarnings[k].Err)
+	if len(gCols) > 0 {
+		tbl := e.Table.Meta()
+		sctx := e.Ctx()
+		evalCtx := sctx.GetExprCtx().GetEvalCtx()
+		sc := sctx.GetSessionVars().StmtCtx
+		warnCnt := int(sc.WarningCount())
+		// Build the MutRow once and update it in-place after each generated column is
+		// evaluated. Previously MutRowFromDatums was called inside the loop, causing a
+		// full row copy O(columns) allocation for every generated column — O(G*C) total.
+		mutRow := chunk.MutRowFromDatums(row)
+		for i, gCol := range gCols {
+			if expression.IsEmbedTextFuncCall(gCol.GeneratedExpr.Internal()) {
+				continue
 			}
-			sc.AppendWarnings(newWarnings)
-			warnCnt += len(newWarnings)
+			colIdx := gCol.ColumnInfo.Offset
+			val, err := e.GenExprs[i].Eval(evalCtx, mutRow.ToRow())
+			if err != nil && gCol.FieldType.IsArray() {
+				return nil, completeError(tbl, gCol.Offset, rowIdx, err)
+			}
+			if e.Ctx().GetSessionVars().StmtCtx.HandleTruncate(err) != nil {
+				return nil, err
+			}
+			row[colIdx], err = table.CastValue(e.Ctx(), val, gCol.ToInfo(), false, false)
+			if err = e.handleErr(gCol, &val, rowIdx, err); err != nil {
+				return nil, err
+			}
+			if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+				for k := range newWarnings {
+					newWarnings[k].Err = completeInsertErr(gCol.ColumnInfo, &val, rowIdx, newWarnings[k].Err)
+				}
+				sc.AppendWarnings(newWarnings)
+				warnCnt += len(newWarnings)
+			}
+			// Handle the bad null error.
+			if err = gCol.HandleBadNull(sc.ErrCtx(), &row[colIdx], rowCntInLoadData); err != nil {
+				return nil, err
+			}
+			// Keep mutRow in sync so subsequent generated columns that reference
+			// already-computed generated columns see the updated value.
+			mutRow.SetDatum(colIdx, row[colIdx])
 		}
-		// Handle the bad null error.
-		if err = gCol.HandleBadNull(sc.ErrCtx(), &row[colIdx], rowCntInLoadData); err != nil {
+	}
+
+	// Validate exchange partition after generated columns and eager auto-IDs are populated;
+	// lazyFillAutoID rows are validated in insertRows after lazyAdjustAutoIncrementDatum.
+	if !e.lazyFillAutoID {
+		if err := e.checkRowsForExchangePartition([][]types.Datum{row}); err != nil {
 			return nil, err
 		}
-		// Keep mutRow in sync so subsequent generated columns that reference
-		// already-computed generated columns see the updated value.
-		mutRow.SetDatum(colIdx, row[colIdx])
 	}
 	return row, nil
+}
+
+func (e *InsertValues) checkRowsForExchangePartition(rows [][]types.Datum) error {
+	tbl := e.Table.Meta()
+	if tbl.ExchangePartitionInfo == nil || tbl.GetPartitionInfo() != nil {
+		return nil
+	}
+	sctx := e.Ctx()
+	for _, row := range rows {
+		if err := checkRowForExchangePartition(sctx, row, tbl); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func completeError(tbl *model.TableInfo, offset int, rowIdx int, err error) error {

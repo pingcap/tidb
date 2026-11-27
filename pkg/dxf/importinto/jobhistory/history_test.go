@@ -25,6 +25,14 @@ import (
 )
 
 func TestGetFromHistory(t *testing.T) {
+	for _, sourceStep := range []proto.Step{proto.ImportStepEncodeAndSort, proto.ImportStepQuery} {
+		t.Run(proto.Step2Str(proto.ImportInto, sourceStep), func(t *testing.T) {
+			testGetFromHistory(t, sourceStep)
+		})
+	}
+}
+
+func testGetFromHistory(t *testing.T, sourceStep proto.Step) {
 	_, tm, ctx := testutil.InitTableTest(t)
 	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
 
@@ -59,7 +67,7 @@ func TestGetFromHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, targetTaskID, taskID)
 
-	encodeID := testutil.InsertSubtask(t, tm, taskID, proto.ImportStepEncodeAndSort, "tidb-1",
+	encodeID := testutil.InsertSubtask(t, tm, taskID, sourceStep, "tidb-1",
 		[]byte(`{"kv-group":"data"}`), proto.SubtaskStateSucceed, proto.ImportInto, 8)
 	dataID := testutil.InsertSubtask(t, tm, taskID, proto.ImportStepWriteAndIngest, "tidb-1",
 		[]byte(`{"kv-group":"data"}`), proto.SubtaskStateSucceed, proto.ImportInto, 8)

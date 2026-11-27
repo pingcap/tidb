@@ -27,7 +27,18 @@ Hard requirements remain in the repository root `AGENTS.md`.
 - Typical changes: runtime operator semantics, builtin behavior, evaluation edge cases.
 - First tests to inspect:
   - package unit tests under the same path
+  - `pkg/executor/test/materializedview/` for materialized view refresh
+  - `pkg/executor/test/materializedviewlog/` for materialized view log purge and related checks
   - SQL integration tests for user-visible behavior
+
+### Import preparation and execution
+- `pkg/executor/importer/`: import plans and execution; it must not depend on `pkg/planner/core`.
+- `pkg/executor/import_into.go`, `pkg/executor/load_data.go`: also convert SQL plans to import plans.
+- `pkg/dxf/importinto/`: distributed import scheduling and step execution.
+- `pkg/executor/importer/job.go`: import job rows and persisted summaries.
+- `pkg/dxf/importinto/taskinfo/`: shared task metadata and runtime progress read from the DXF task.
+- `pkg/executor/import_into.go`: IMPORT INTO task submission; `pkg/executor` must not import `pkg/dxf/importinto`.
+- First tests: importer metadata/option tests, `pkg/dxf/importinto/taskinfo/runtime_info_test.go` and `pkg/executor/import_into_test.go`.
 
 ### Session, variables, protocol
 - `pkg/session/`
@@ -58,6 +69,13 @@ Hard requirements remain in the repository root `AGENTS.md`.
 ### Parser and AST
 - `pkg/parser/`
 - Typical changes: SQL grammar, AST nodes, parser behavior.
+
+### Dumpling export
+- `dumpling/export/`: export orchestration, source adapters, filtering, and writers.
+- `dumpling/dumpservice/`: HTTP/2 client and Unix-socket protocol contract.
+- `dumpling/internal/kvsource/`: TiDB metadata access, row decoding, and SQL-compatible conversion.
+- `dumpling/internal/dumpservicetest/`: shared dump-service fixtures for source and export tests.
+- First tests: metadata consumer tests in `kvsource` and dump-service lifecycle/parity tests in `export`.
 
 ## Test Surfaces
 - Unit tests: package-local tests under `pkg/**`.

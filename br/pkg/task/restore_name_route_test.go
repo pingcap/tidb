@@ -15,8 +15,6 @@
 package task
 
 import (
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
@@ -807,29 +805,9 @@ func TestRestoreConfigNameRoutingValidationAndHash(t *testing.T) {
 		actual, err := cfg.Hash(FullRestoreCmd)
 		require.NoError(t, err)
 
-		// This is the immutable config serialized by BR before rename support.
-		legacyConfig := struct {
-			CmdName           string
-			UpstreamClusterID uint64
-			Storage           string
-			ExplictFilter     bool
-			FilterStr         []string
-			WithSysTable      bool
-			FastLoadSysTables bool
-			LoadStats         bool
-		}{
-			CmdName:           FullRestoreCmd,
-			UpstreamClusterID: cfg.UpstreamClusterID,
-			Storage:           ast.RedactURL(cfg.Storage),
-			FilterStr:         cfg.FilterStr,
-			WithSysTable:      cfg.WithSysTable,
-			FastLoadSysTables: cfg.FastLoadSysTables,
-			LoadStats:         cfg.LoadStats,
-		}
-		legacyJSON, err := json.Marshal(legacyConfig)
-		require.NoError(t, err)
-		legacyHash := sha256.Sum256(legacyJSON)
-		require.Equal(t, legacyHash[:], actual)
+		// Fixed fingerprint of the immutable config before rename support,
+		// independent of the current logging redactor and hash implementation.
+		require.Equal(t, "8e7fef16c96469adb3d8a2e4de1e22cb6ea902f111b1b599956e5be3b6c92c3d", fmt.Sprintf("%x", actual))
 	})
 
 	t.Run("partial restore covers filter and rename", func(t *testing.T) {

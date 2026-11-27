@@ -38,6 +38,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config/configtypes"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
@@ -263,6 +264,8 @@ type Config struct {
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	// DisableGC is a startup-only override of tidb_gc_enable that prevents GC safepoint advancement.
+	DisableGC bool `toml:"disable-gc" json:"disable-gc"`
 	// EnableStorageClass permits storage-class DDL and exposes transition status queries.
 	// It defaults to false. Existing data and transition policies are unaffected when disabled.
 	EnableStorageClass bool `toml:"enable-storage-class" json:"enable-storage-class"`
@@ -337,6 +340,9 @@ type Config struct {
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
 	// KeyspaceActivateMode indicates whether TiDB should exit after activating the keyspace.
 	KeyspaceActivateMode bool `toml:"keyspace-activate" json:"keyspace-activate"`
+	// MaintenanceMode rejects new user DDL jobs and IMPORT INTO submissions in NextGen.
+	// Internal SQL and local temporary-table DDL remain allowed.
+	MaintenanceMode bool `toml:"maintenance-mode" json:"maintenance-mode"`
 	// Standby is the config for standby mode.
 	Standby Standby `toml:"standby" json:"standby"`
 	// StarterParams contains Starter-only extension parameters.
@@ -886,7 +892,8 @@ type Performance struct {
 	// Deprecated: this config has been deprecated. It has no effect.
 	AnalyzePartitionConcurrencyQuota  uint `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
 	PlanReplayerDumpWorkerConcurrency uint `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
-	EnableStatsCacheMemQuota          bool `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	// Deprecated: this config has no effect. The stats cache always uses its memory quota.
+	EnableStatsCacheMemQuota bool `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -1141,6 +1148,7 @@ var defaultConf = Config{
 	Store:                        StoreTypeUniStore,
 	Path:                         "/tmp/tidb",
 	RunDDL:                       true,
+	DisableGC:                    false,
 	SplitTable:                   true,
 	Lease:                        DefSchemaLease.String(),
 	TokenLimit:                   1000,
@@ -1604,6 +1612,9 @@ func (c *Config) Load(confFile string) error {
 	if !kerneltype.IsNextGen() && metaData.IsDefined("deploy-mode") {
 		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
 	}
+	if !kerneltype.IsNextGen() && metaData.IsDefined("maintenance-mode") {
+		return fmt.Errorf("maintenance-mode can only be configured for nextgen TiDB")
+	}
 	dxfResourceLimitDefined := metaData.IsDefined("dxf-resource-limit")
 	if !dxfResourceLimitDefined && c.DXFResourceLimit == 0 {
 		c.DXFResourceLimit = DefDXFResourceLimit
@@ -1742,8 +1753,14 @@ func (c *Config) Valid() error {
 		// if two options conflict, we will use the value of EnableTimestamp
 		c.Log.DisableTimestamp = nbUnset
 	}
-	if c.Security.SkipGrantTable && !hasRootPrivilege() {
-		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+	if c.Security.SkipGrantTable {
+		if diagnosticmode.Enabled() {
+			if c.Socket == "" || (c.Host != "" && c.Port != 0) {
+				return fmt.Errorf("diagnostic mode with skip-grant-table requires a Unix socket and no MySQL TCP listener")
+			}
+		} else if !hasRootPrivilege() {
+			return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+		}
 	}
 	if len(c.ErrorMessageExtensions) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
@@ -1759,6 +1776,9 @@ func (c *Config) Valid() error {
 	}
 	if !kerneltype.IsNextGen() && c.DeployMode != deploymode.Premium {
 		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
+	}
+	if c.MaintenanceMode && !kerneltype.IsNextGen() {
+		return fmt.Errorf("maintenance-mode can only be configured for nextgen TiDB")
 	}
 	if c.Standby.StandByMode && c.KeyspaceActivateMode {
 		return fmt.Errorf("can't set standby and keyspace-activate mode at the same time")

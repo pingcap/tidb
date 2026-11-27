@@ -27,6 +27,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -268,6 +269,57 @@ func (is *infoSchema) TableByName(ctx stdctx.Context, schema, table ast.CIStr) (
 	return nil, ErrTableNotExists.FastGenByArgs(schema, table)
 }
 
+// TableInfosByNames returns existing table metadata without refilling the shared
+// cache. Result order is unspecified; session table overrides take precedence.
+func TableInfosByNames(ctx stdctx.Context, is InfoSchema, schema ast.CIStr, names []ast.CIStr) ([]*model.TableInfo, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	switch v := is.(type) {
+	case *infoschemaV2:
+		if !IsSpecialDB(schema.L) {
+			return v.tableInfosByNames(ctx, schema, names)
+		}
+	case *SessionExtendedInfoSchema:
+		var tables []*model.TableInfo
+		remaining := make([]ast.CIStr, 0, len(names))
+		for _, name := range names {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if tbl, ok := v.sessionTableByName(ctx, schema, name); ok {
+				tables = append(tables, tbl.Meta())
+				continue
+			}
+			remaining = append(remaining, name)
+		}
+		loaded, err := TableInfosByNames(ctx, v.InfoSchema, schema, remaining)
+		if err != nil {
+			return nil, err
+		}
+		return append(tables, loaded...), nil
+	}
+	ctx = WithRefillOption(ctx, false)
+	tables := make([]*model.TableInfo, 0, len(names))
+	for _, name := range names {
+		// TableByName does not check cancellation for InfoSchema v1 or special
+		// databases. Without this check, the loop may keep running after the query
+		// is canceled.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		tbl, err := is.TableByName(ctx, schema, name)
+		if err != nil {
+			if terror.ErrorEqual(err, ErrTableNotExists) {
+				continue
+			}
+			return nil, errors.Trace(err)
+		}
+		tables = append(tables, tbl.Meta())
+	}
+	return tables, nil
+}
+
 // TableInfoByName implements InfoSchema.TableInfoByName
 func (is *infoSchema) TableInfoByName(schema, table ast.CIStr) (*model.TableInfo, error) {
 	tbl, err := is.TableByName(stdctx.Background(), schema, table)
@@ -331,6 +383,25 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 		return nil, false
 	}
 	return is.schemaByName(name)
+}
+
+// IsSystemTableInNextGen identifies system tables by reserved ID in native NextGen
+// keyspaces, or by loaded built-in names in Classic-bootstrapped NextGen keyspaces.
+// It does not access storage.
+func IsSystemTableInNextGen(is InfoSchema, isLegacyNextGen bool, id int64) bool {
+	if kerneltype.IsClassic() {
+		return false
+	}
+	if isLegacyNextGen {
+		// Current cross-keyspace DXF, statistics and import tables already exist
+		// in the TiDB 8.5 baseline used by legacy NextGen. Newly created built-ins
+		// may not yet be in this InfoSchema. The cross-keyspace loader resolves
+		// those IDs from snapshot metadata before applying diffs, so they can
+		// participate in MDL once loaded.
+		tbl, ok := is.TableItemByID(id)
+		return ok && metadef.IsBuiltinSystemTable(tbl.DBName.L, tbl.TableName.L)
+	}
+	return metadef.IsReservedID(id)
 }
 
 // SchemaByTable get a table's schema name
@@ -1262,19 +1333,26 @@ type SessionExtendedInfoSchema struct {
 
 // TableByName implements InfoSchema.TableByName
 func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, error) {
+	if tbl, ok := ts.sessionTableByName(ctx, schema, table); ok {
+		return tbl, nil
+	}
+	return ts.InfoSchema.TableByName(ctx, schema, table)
+}
+
+func (ts *SessionExtendedInfoSchema) sessionTableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, bool) {
 	if ts.LocalTemporaryTables != nil {
 		if tbl, ok := ts.LocalTemporaryTables.TableByName(ctx, schema, table); ok {
-			return tbl, nil
+			return tbl, true
 		}
 	}
 
 	if ts.MdlTables != nil {
 		if tbl, ok := ts.MdlTables.TableByName(ctx, schema, table); ok {
-			return tbl, nil
+			return tbl, true
 		}
 	}
 
-	return ts.InfoSchema.TableByName(ctx, schema, table)
+	return nil, false
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName

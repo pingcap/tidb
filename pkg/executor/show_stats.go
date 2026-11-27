@@ -184,7 +184,7 @@ func (e *ShowExec) fetchShowStatsLocked(ctx context.Context) error {
 		tids = append(tids, tid)
 	}
 
-	lockedTables, err := h.GetLockedTables(tids...)
+	lockedTables, err := h.Locker().GetLockedTables(tids...)
 	if err != nil {
 		return err
 	}
@@ -534,7 +534,7 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 
 func (e *ShowExec) fetchShowHistogramsInFlight() {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
-	e.appendRow([]any{statsStorage.CleanFakeItemsForShowHistInFlights(statsHandle)})
+	e.appendRow([]any{statsStorage.CleanFakeItemsForShowHistInFlights(statsHandle.Cache())})
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus(ctx context.Context) error {
@@ -553,7 +553,7 @@ func (e *ShowExec) fetchShowAnalyzeStatus(ctx context.Context) error {
 func (e *ShowExec) fetchShowColumnStatsUsage(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
-	colStatsMap, err := h.LoadColumnStatsUsage(e.Ctx().GetSessionVars().Location())
+	colStatsMap, err := h.Usage().LoadColumnStatsUsage(e.Ctx().GetSessionVars().Location())
 	if err != nil {
 		return err
 	}

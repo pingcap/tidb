@@ -15,6 +15,7 @@
 package mviewutil
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -22,6 +23,21 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
+
+// ShadowTablePrefix identifies candidate tables for abandoned refresh-shadow cleanup.
+const ShadowTablePrefix = "__mv_shadow_"
+
+// RefreshAdvisoryLockName identifies the lock shared by MV refresh and DDL that
+// must exclude an in-flight refresh of the same MV.
+func RefreshAdvisoryLockName(schemaID, mviewID int64) string {
+	return fmt.Sprintf("mv_refresh_%d_%d", schemaID, mviewID)
+}
+
+// PurgeAdvisoryLockName identifies the lock shared by a log purge and DDL
+// retiring that physical log.
+func PurgeAdvisoryLockName(mlogID int64) string {
+	return fmt.Sprintf("mlog_purge_%d", mlogID)
+}
 
 // CheckMaterializedViewSelect checks the SELECT clauses that are not supported
 // by materialized views. It is called before the planner builds the SELECT so

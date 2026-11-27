@@ -342,6 +342,13 @@ func shouldRollbackTxnOnError(txn kv.Transaction, err error) bool {
 }
 
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	if se.sessionVars.StmtCtx.StmtType == "RefreshMaterializedView" {
+		// Refresh rejects existing user transactions and writes through internal
+		// sessions. End its outer read-only draining transaction after the executor
+		// and pessimistic statement hooks finish, even with autocommit disabled.
+		se.RollbackTxn(context.WithoutCancel(ctx))
+		return meetsErr
+	}
 	isInternal := false
 	if internal := se.txn.GetOption(kv.RequestSourceInternal); internal != nil && internal.(bool) {
 		isInternal = true

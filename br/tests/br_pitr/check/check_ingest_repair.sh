@@ -206,3 +206,10 @@ run_sql "select count(*) AS RESCNT from test.pairs20 use index(i1) where pid1 = 
 check_not_contains "RESCNT: 0"
 run_sql "select count(*) AS RESCNT from test.pairs20 use index(i2) where pid2 = 10";
 check_not_contains "RESCNT: 0"
+
+# Check original snapshot indexes and an index created during log backup.
+run_sql "SET tidb_enable_fast_table_check=0; ADMIN CHECK TABLE test.global_index_restore;"
+for index in idx uk added; do
+    run_sql "SELECT GROUP_CONCAT(CONCAT(id, ':', IFNULL(a, 'NULL'), ':', b) ORDER BY id) AS restored FROM test.global_index_restore FORCE INDEX($index);"
+    check_contains "restored: 1:100:updated,2:NULL:null-one,12:NULL:null-two,21:200:new"
+done

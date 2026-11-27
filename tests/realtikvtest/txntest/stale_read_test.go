@@ -664,7 +664,6 @@ func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 }
 
 func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
-	const stalenessTSExpr = "NOW(3) - INTERVAL 5 SECOND"
 	errMsg1 := ".*only support read-only statement during read-only staleness transactions.*"
 	errMsg2 := ".*select lock hasn't been supported in stale read yet.*"
 	errMsg3 := "GetForUpdateTS not supported for stalenessTxnProvider"
@@ -822,13 +821,27 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int);")
 	tk.MustExec("create table t1 (id int);")
-	time.Sleep(time.Second)
+	// DATETIME drops the TSO's logical bits, so use a later physical timestamp
+	// than one obtained after both CREATE TABLE statements have finished.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	pdOracle := store.GetOracle()
+	option := &oracle.Option{TxnScope: oracle.GlobalTxnScope}
+	readTS, err := pdOracle.GetTimestamp(ctx, option)
+	require.NoError(t, err)
+	physicalAfterDDL := oracle.ExtractPhysical(readTS)
+	for oracle.ExtractPhysical(readTS) <= physicalAfterDDL {
+		time.Sleep(10 * time.Millisecond)
+		readTS, err = pdOracle.GetTimestamp(ctx, option)
+		require.NoError(t, err, "waiting for PD's physical timestamp to advance")
+	}
+	tk.MustExec("set @read_ts = tidb_parse_tso(?)", readTS)
 	tk.MustExec(`PREPARE stmt1 FROM 'insert into t(id) values (5);';`)
 	tk.MustExec(`PREPARE stmt2 FROM 'select * from t';`)
 	tk.MustExec(`set @@tidb_enable_noop_functions=1;`)
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP ` + stalenessTSExpr + `;`)
+		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP @read_ts;`)
 		if testcase.isValidate {
 			tk.MustExec(testcase.sql)
 		} else {
@@ -837,7 +850,7 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 			require.Regexp(t, testcase.errMsg, err.Error(), "name: %s stmt: %s", testcase.name, testcase.sql)
 		}
 		tk.MustExec("commit")
-		tk.MustExec(`set transaction read only as of timestamp ` + stalenessTSExpr + `;`)
+		tk.MustExec(`set transaction read only as of timestamp @read_ts;`)
 		if testcase.isValidate || testcase.isValidateWithoutStart {
 			tk.MustExec(testcase.sql)
 		} else {

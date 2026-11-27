@@ -50,7 +50,7 @@ func TestGCIndexUsage(t *testing.T) {
 		tk.MustExec(stmt)
 	}
 
-	c := dom.StatsHandle().NewSessionIndexUsageCollector()
+	c := dom.StatsHandle().Usage().NewSessionIndexUsageCollector()
 	is := tk.Session().GetLatestInfoSchema()
 	db, ok := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
@@ -64,12 +64,12 @@ func TestGCIndexUsage(t *testing.T) {
 	}
 	c.Flush()
 	// Close it. It'll no longer receive any updates.
-	dom.StatsHandle().StatsUsage.Close()
+	dom.StatsHandle().Usage().Close()
 
 	verify := func(exist func(tblPos int, tbl *model.TableInfo, idxPos int, idx *model.IndexInfo) bool) {
 		for tblPos, tbl := range tblInfos {
 			for idxPos, idx := range tbl.Indices {
-				info := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
+				info := dom.StatsHandle().Usage().GetIndexUsage(tbl.ID, idx.ID)
 				if exist(tblPos, tbl, idxPos, idx) {
 					require.Equal(t, uint64(1), info.QueryTotal)
 					require.Equal(t, uint64(2), info.KvReqTotal)
@@ -95,7 +95,7 @@ func TestGCIndexUsage(t *testing.T) {
 			}
 		}
 	}
-	require.NoError(t, dom.StatsHandle().GCIndexUsage())
+	require.NoError(t, dom.StatsHandle().Usage().GCIndexUsage())
 	verify(func(tblPos int, tbl *model.TableInfo, idxPos int, idx *model.IndexInfo) bool {
 		return idx.ID < 5
 	})
@@ -106,7 +106,7 @@ func TestGCIndexUsage(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("DROP TABLE %s", tbl.Name.String()))
 		}
 	}
-	require.NoError(t, dom.StatsHandle().GCIndexUsage())
+	require.NoError(t, dom.StatsHandle().Usage().GCIndexUsage())
 	verify(func(tblPos int, tbl *model.TableInfo, idxPos int, idx *model.IndexInfo) bool {
 		return idx.ID < 5 && tblPos < 5
 	})

@@ -80,7 +80,7 @@ go_test(
     embed = [":ingest"],
     flaky = True,
     race = "on",
-    shard_count = 33,
+    shard_count = 35,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -88,6 +88,7 @@ go_test(
         "//pkg/ddl/session",
         "//pkg/ddl/testutil",
         "//pkg/errno",
+        "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

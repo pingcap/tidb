@@ -1094,7 +1094,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
 		require.True(t, ok)
 		require.Equal(t, ruv2.StmtUnits{CPUWork: 15, HashStateRows: 2, OperatorNum: 1},
-			finalized.report.units[statementRUTiKV][statementRUHashAgg])
+			finalized.report.matrix()[statementRUTiKV][statementRUHashAgg])
 		require.Equal(t, float64(49), finalized.engineRU.TiKV)
 		requirePublication(t, fixture, ruv2.StmtUnits{
 			CPUWork:              15,
@@ -2077,8 +2077,9 @@ func TestStatementRUTerminalFirstCallWins(t *testing.T) {
 		t.Cleanup(func() { stmt.Ctx.GetSessionVars().SQLKiller.Reset() })
 		rs := &recordSet{stmt: stmt}
 
-		require.Error(t, rs.Next(context.Background(), nil))
-		require.Empty(t, rs.lastErrs, "the RU-only abort must not change legacy terminal errors")
+		err := rs.Next(context.Background(), nil)
+		require.Error(t, err)
+		require.Equal(t, []error{err}, rs.lastErrs)
 		stmt.finishStatementRUForTest(nil)
 		require.Zero(t, owner.calculationSetup)
 	})

@@ -35,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -653,8 +655,8 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	tk.MustExecToErr("alter table t modify column b tinyint not null")
 
 	// VARCHAR -> CHAR
-	var gotTp byte
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+	var gotTp model.ModifyColumnType
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
 		gotTp = tp
 	})
 
@@ -750,8 +752,8 @@ func TestModifyColumnIndexReorgAllowsNull(t *testing.T) {
 	tk.MustExec("insert into t values (1, 'a')")
 	tbl := external.GetTableByName(t, tk, "test", "t")
 
-	var gotTp byte
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+	var gotTp model.ModifyColumnType
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
 		gotTp = tp
 	})
 
@@ -783,12 +785,26 @@ func TestModifyColumnIndexReorgAllowsNull(t *testing.T) {
 	tk.MustExec("admin check table t")
 }
 
+func TestConvertBetweenCharAndVarchar(t *testing.T) {
+	original := collate.NewCollationEnabled()
+	t.Cleanup(func() { collate.SetNewCollationEnabledForTest(original) })
+
+	for _, newCollation := range []bool{false, true} {
+		collate.SetNewCollationEnabledForTest(newCollation)
+		for _, varcharType := range []byte{mysql.TypeVarchar, mysql.TypeVarString} {
+			require.True(t, ddl.ConvertBetweenCharAndVarchar(varcharType, mysql.TypeString))
+			require.Equal(t, newCollation, ddl.ConvertBetweenCharAndVarchar(mysql.TypeString, varcharType))
+		}
+		require.False(t, ddl.ConvertBetweenCharAndVarchar(mysql.TypeLong, mysql.TypeString))
+	}
+}
+
 func TestGetModifyColumnType(t *testing.T) {
 	type testCase struct {
 		beforeType string
 		afterType  string
 		index      bool
-		tp         byte
+		tp         model.ModifyColumnType
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -951,8 +967,8 @@ func TestGetModifyColumnType(t *testing.T) {
 		},
 	}
 
-	var gotTp byte
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+	var gotTp model.ModifyColumnType
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
 		gotTp = tp
 	})
 
@@ -1145,8 +1161,8 @@ func TestModifyIntegerColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	var reorgType byte
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+	var reorgType model.ModifyColumnType
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
 		reorgType = tp
 	})
 
@@ -1175,13 +1191,13 @@ func TestModifyIntegerColumn(t *testing.T) {
 		}
 	}
 
-	successValue := func(insertVal string, newColTp string, expectReorgTp byte) {
+	successValue := func(insertVal string, newColTp string, expectReorgTp model.ModifyColumnType) {
 		tk.MustExec(fmt.Sprintf("insert into t values %s", insertVal))
 		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
 		require.Equal(t, expectReorgTp, reorgType)
 	}
 
-	signed2Signed := func(oldColTp, newColTp string, expectReorgTp byte) {
+	signed2Signed := func(oldColTp, newColTp string, expectReorgTp model.ModifyColumnType) {
 		maxValOfNewCol, minValOfNewCol := maxMinSignedVal[newColTp][0], maxMinSignedVal[newColTp][1]
 		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
 		tk.MustExec("drop table if exists t")
@@ -1203,7 +1219,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		successValue(fmt.Sprintf("(%d), (%d), (0)", maxValOfNewCol, minValOfNewCol), newColTp, expectReorgTp)
 	}
 
-	unsigned2Unsigned := func(oldColTp, newColTp string, expectReorgTp byte) {
+	unsigned2Unsigned := func(oldColTp, newColTp string, expectReorgTp model.ModifyColumnType) {
 		maxValOfNewCol, minValOfNewCol := maxMinUnsignedVal[newColTp][0], maxMinUnsignedVal[newColTp][1]
 		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1219,7 +1235,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		successValue(fmt.Sprintf("(%d), (%d), (1)", maxValOfNewCol, minValOfNewCol), newColTp, expectReorgTp)
 	}
 
-	signed2Unsigned := func(oldColTp, newColTp string, expectReorgTp byte, oldColIdx, newColIdx int) {
+	signed2Unsigned := func(oldColTp, newColTp string, expectReorgTp model.ModifyColumnType, oldColIdx, newColIdx int) {
 		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
 		maxValOfNewCol := maxMinUnsignedVal[newColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1243,7 +1259,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		successValue(fmt.Sprintf("(%d), (1), (0)", min(uint(maxValOfOldCol), maxValOfNewCol)), newColTp, expectReorgTp)
 	}
 
-	unsigned2Signed := func(oldColTp, newColTp string, expectReorgTp byte) {
+	unsigned2Signed := func(oldColTp, newColTp string, expectReorgTp model.ModifyColumnType) {
 		maxValOfNewCol := maxMinSignedVal[newColTp][0]
 		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1291,8 +1307,8 @@ func TestModifyStringColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	var reorgType byte
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+	var reorgType model.ModifyColumnType
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
 		reorgType = tp
 	})
 	type testCase struct {
@@ -1300,7 +1316,7 @@ func TestModifyStringColumn(t *testing.T) {
 		newColTp        string
 		insertVal       string
 		pass            bool
-		expectedReorgTp byte
+		expectedReorgTp model.ModifyColumnType
 	}
 	noPaddingStrLen5 := strings.Repeat("a", 5)
 	noPaddingStrLen15 := strings.Repeat("a", 15)
@@ -1608,4 +1624,313 @@ func TestModifyColumnLoadTableRangeError(t *testing.T) {
 
 	tk.MustExec("alter table t change column b b varchar(16);")
 	tk.MustExec("admin check table t;")
+}
+
+func TestModifyColumnReorgScheduling(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	distTaskEnabled := vardef.EnableDistTask.Swap(true)
+	defer vardef.EnableDistTask.Store(distTaskEnabled)
+	fastReorgEnabled := vardef.EnableFastReorg.Swap(true)
+	defer vardef.EnableFastReorg.Store(fastReorgEnabled)
+	for _, tc := range []struct {
+		name      string
+		fastReorg bool
+		drift     bool
+		expectErr error
+		expectRow string
+		sql       string
+	}{
+		{"metadata", true, false, nil, "1.23", "alter table t modify column a decimal(10,2)"},
+		{"schemaDrift", true, true, nil, "1.23", "alter table t modify column a decimal(10,2)"},
+		{"rename", true, false, nil, "1.23", "alter table t rename column a to b"},
+		{"metadataDistTaskWithoutFastReorg", false, false, nil, "1.23", "alter table t modify column a decimal(10,2) comment 'new'"},
+		{"multiSchemaMetadataDistTaskWithoutFastReorg", false, false, nil, "1.23 <nil>", "alter table t modify column a decimal(10,2) comment 'new', add column b int"},
+		{"schemaDriftDistTaskWithoutFastReorg", false, true, dbterror.ErrUnsupportedDistTask, "1.234", "alter table t modify column a decimal(10,2)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			vardef.EnableDistTask.Store(true)
+			vardef.EnableFastReorg.Store(tc.fastReorg)
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t (a decimal(10,2), key(a))")
+			tk.MustExec("insert into t values (1.23)")
+			// The target initially needs only a metadata change. Complete another
+			// DDL after that classification but before this job is submitted.
+			initialized := false
+			var fastReorg bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeInitReorgMeta", func(m *model.DDLReorgMeta) {
+				if initialized {
+					return
+				}
+				initialized = true
+				fastReorg = m.IsFastReorg
+				if tc.drift {
+					vardef.EnableFastReorg.Store(true)
+					other := testkit.NewTestKit(t, store)
+					other.MustExec("alter table test.t modify column a decimal(12,3)")
+					other.MustExec("update test.t set a = 1.234")
+					vardef.EnableFastReorg.Store(tc.fastReorg)
+				}
+			})
+			var scheduledForReorg bool
+			var gotType model.ModifyColumnType
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if (job.Type == model.ActionModifyColumn || job.Type == model.ActionMultiSchemaChange) && job.SchemaState == model.StateNone {
+					// NeedReorg is submission-only; scheduling reads the persisted SQL column.
+					other := testkit.NewTestKit(t, store)
+					rows := other.MustQuery(fmt.Sprintf("select reorg from mysql.tidb_ddl_job where job_id = %d", job.ID)).Rows()
+					scheduledForReorg = rows[0][0] == "1"
+				}
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+				gotType = tp
+			})
+			_, err := tk.Exec(tc.sql)
+			if tc.expectErr != nil {
+				require.ErrorIs(t, err, tc.expectErr)
+			} else {
+				require.NoError(t, err)
+			}
+			rename := tc.name == "rename"
+			require.Equal(t, !rename, scheduledForReorg)
+			require.Equal(t, !rename && tc.fastReorg, fastReorg)
+			if tc.drift {
+				require.Equal(t, model.ModifyTypeReorg, gotType)
+			} else {
+				require.Equal(t, model.ModifyTypeNoReorg, gotType)
+			}
+			tk.MustQuery("select * from t").Check(testkit.Rows(tc.expectRow))
+			tk.MustExec("admin check table t")
+		})
+	}
+}
+
+func TestModifyColumnPreserveOriginDefault(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	t.Run("varcharToTinyTextValidationOnly", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int)")
+		tk.MustExec("insert into t values (1)")
+		tk.MustExec("alter table t add column c varchar(255) default 'saved'")
+
+		tblBefore := external.GetTableByName(t, tk, "test", "t")
+		colIDBefore := tblBefore.Meta().Columns[1].ID
+
+		var gotType model.ModifyColumnType
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+			gotType = tp
+		})
+		tk.MustExec("alter table t modify column c tinytext")
+		require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotType)
+
+		tblAfter := external.GetTableByName(t, tk, "test", "t")
+		require.Equal(t, colIDBefore, tblAfter.Meta().Columns[1].ID)
+
+		tk.MustExec("insert into t (id) values (2)")
+		tk.MustQuery("select id, c from t order by id").Check(testkit.Rows("1 saved", "2 <nil>"))
+		tk.MustExec("admin check table t")
+	})
+
+	t.Run("varcharNarrowingKeepsNullAndValueOriginDefault", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int)")
+		tk.MustExec("insert into t values (1)")
+		tk.MustExec("alter table t add column c1 varchar(255) default 'saved'")
+		tk.MustExec("alter table t add column c2 varchar(255)")
+
+		var gotType model.ModifyColumnType
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+			gotType = tp
+		})
+		tk.MustExec("alter table t modify column c1 varchar(100)")
+		require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotType)
+		tk.MustExec("alter table t modify column c2 varchar(100) default 'new'")
+		require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotType)
+
+		tk.MustExec("insert into t (id) values (2)")
+		tk.MustQuery("select id, c1, c2 from t order by id").Check(testkit.Rows(
+			"1 saved <nil>",
+			"2 <nil> new",
+		))
+		tk.MustExec("admin check table t")
+	})
+
+	t.Run("indexReorgPreservesOriginDefault", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int)")
+		tk.MustExec("insert into t values (1)")
+		tk.MustExec("alter table t add column c char(10) collate utf8mb4_bin default 'saved'")
+		tk.MustExec("alter table t add index idx(c)")
+
+		var gotType model.ModifyColumnType
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+			gotType = tp
+		})
+		tk.MustExec("alter table t modify column c varchar(20) collate utf8mb4_bin")
+		require.Equal(t, model.ModifyTypeIndexReorg, gotType)
+
+		tk.MustExec("insert into t (id) values (2)")
+		tk.MustQuery("select id, c from t order by id").Check(testkit.Rows("1 saved", "2 <nil>"))
+		tk.MustExec("admin check table t")
+	})
+
+	t.Run("emptyTableClearsOutOfRangeOriginDefault", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int)")
+		tk.MustExec("alter table t add column c int default 1000")
+		tk.MustExec("alter table t modify column c tinyint")
+
+		tblAfter := external.GetTableByName(t, tk, "test", "t")
+		require.Nil(t, tblAfter.Meta().Columns[1].GetOriginDefaultValue())
+		tk.MustQuery("select * from t").Check(testkit.Rows())
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	})
+}
+
+func TestModifyColumnResumeLegacyReorgJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	for _, tc := range []struct {
+		name       string
+		storedType model.ModifyColumnType
+		rollback   bool
+	}{
+		{"typeNullResume", model.ModifyColumnType(mysql.TypeNull), false},
+		{"typeNullRollback", model.ModifyColumnType(mysql.TypeNull), true},
+		{"typeNoneResume", model.ModifyTypeNone, false},
+		{"typeNoneRollback", model.ModifyTypeNone, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t (a char(10) collate utf8_general_ci, key idx(a))")
+			tk.MustExec("insert into t values ('abc')")
+
+			var (
+				startedLegacy bool
+				rewroteLegacy bool
+				hadTempObjs   bool
+				gotType       model.ModifyColumnType
+			)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Type != model.ActionModifyColumn {
+					return
+				}
+				args, err := model.GetModifyColumnArgs(job)
+				require.NoError(t, err)
+				// Step 1: simulate a pre-upgrade binary that ran full reorg for
+				// indexed CHAR -> VARCHAR and persisted temporary objects.
+				if !startedLegacy && job.SchemaState == model.StateNone {
+					startedLegacy = true
+					args.ModifyColumnType = model.ModifyTypeReorg
+					job.FillArgs(args)
+					_, err = job.Encode(true)
+					require.NoError(t, err)
+					return
+				}
+				// Step 2: simulate resuming that persisted legacy job after upgrade,
+				// carrying ModifyTypeNone / mysql.TypeNull alongside ChangingColumn.
+				if !rewroteLegacy && job.SchemaState == model.StateDeleteOnly {
+					rewroteLegacy = true
+					hadTempObjs = args.ChangingColumn != nil
+					args.ModifyColumnType = tc.storedType
+					job.FillArgs(args)
+					_, err = job.Encode(true)
+					require.NoError(t, err)
+					if tc.rollback {
+						job.State = model.JobStateRollingback
+					}
+				}
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+				if rewroteLegacy {
+					gotType = tp
+				}
+			})
+
+			_, err := tk.Exec("alter table t modify column a varchar(20) collate utf8_general_ci")
+			if !tc.rollback {
+				require.NoError(t, err)
+			}
+			require.True(t, rewroteLegacy)
+			require.True(t, hadTempObjs)
+			require.Equal(t, model.ModifyTypeReorg, gotType)
+
+			tblAfter := external.GetTableByName(t, tk, "test", "t")
+			require.Len(t, tblAfter.Meta().Columns, 1)
+			require.Len(t, tblAfter.Meta().Indices, 1)
+			if tc.rollback {
+				require.Equal(t, mysql.TypeString, tblAfter.Meta().Columns[0].GetType())
+			} else {
+				require.Equal(t, mysql.TypeVarchar, tblAfter.Meta().Columns[0].GetType())
+			}
+			tk.MustQuery("select a from t").Check(testkit.Rows("abc"))
+			tk.MustExec("admin check table t")
+		})
+	}
+}
+
+func TestModifyColumnCheckQuotedIdentifiers(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists `db``1`")
+	tk.MustExec("create database `db``1`")
+	defer tk.MustExec("drop database if exists `db``1`")
+	tk.MustExec("use `db``1`")
+
+	t.Run("varcharToTinyText", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use `db``1`")
+		tk.MustExec("drop table if exists `t``1`")
+		tk.MustExec("create table `t``1` (`c``1` varchar(255) charset utf8mb4)")
+		tk.MustExec("insert into `t``1` values ('ok')")
+
+		var gotType model.ModifyColumnType
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+			gotType = tp
+		})
+		tk.MustExec("alter table `t``1` modify column `c``1` tinytext charset utf8mb4")
+		require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotType)
+		tk.MustQuery("select `c``1` from `t``1`").Check(testkit.Rows("ok"))
+		tk.MustExec("admin check table `t``1`")
+
+		// Reject values exceeding TINYTEXT's 255-byte limit on quoted identifiers too.
+		tk.MustExec("drop table if exists `t``2`")
+		tk.MustExec("create table `t``2` (`c``2` varchar(255) charset utf8mb4)")
+		tk.MustExec(fmt.Sprintf("insert into `t``2` values ('%s')", strings.Repeat("é", 128)))
+		err := tk.ExecToErr("alter table `t``2` modify column `c``2` tinytext charset utf8mb4")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Data truncated")
+	})
+
+	t.Run("integerNarrowingAndNotNull", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use `db``1`")
+		tk.MustExec("drop table if exists `t``int`")
+		tk.MustExec("create table `t``int` (`c``int` int)")
+		tk.MustExec("insert into `t``int` values (42)")
+
+		var gotType model.ModifyColumnType
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+			gotType = tp
+		})
+		tk.MustExec("alter table `t``int` modify column `c``int` tinyint not null")
+		require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotType)
+		tk.MustQuery("select `c``int` from `t``int`").Check(testkit.Rows("42"))
+		tk.MustExec("admin check table `t``int`")
+	})
 }

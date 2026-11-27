@@ -1,0 +1,75 @@
+# Native WordPress-style pagination without noop functions or a plugin.
+SET tidb_enable_noop_functions=OFF;
+# WordPress disables ONLY_FULL_GROUP_BY on its connections.
+SET sql_mode='';
+CREATE TABLE wp_posts (ID BIGINT PRIMARY KEY, post_status VARCHAR(20), post_date DATETIME);
+INSERT INTO wp_posts VALUES (1,'publish','2025-01-01'),(2,'publish','2025-01-02'),(3,'draft','2025-01-03');
+SELECT SQL_CALC_FOUND_ROWS DISTINCT ID FROM wp_posts WHERE post_status='publish' ORDER BY post_date DESC LIMIT 1;
+ID
+2
+SELECT FOUND_ROWS();
+FOUND_ROWS()
+2
+SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts LIMIT 0;
+ID
+SELECT FOUND_ROWS();
+FOUND_ROWS()
+3
+SET tidb_enable_prepared_plan_cache=ON;
+SET tidb_enable_plan_cache_for_param_limit=ON;
+PREPARE st FROM 'SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts WHERE post_status=? ORDER BY ID LIMIT ?';
+SET @status='publish', @page_size=1;
+EXECUTE st USING @status,@page_size;
+ID
+1
+SELECT FOUND_ROWS(),@@last_plan_from_cache;
+FOUND_ROWS()	@@last_plan_from_cache
+2	0
+EXECUTE st USING @status,@page_size;
+ID
+1
+SELECT FOUND_ROWS(),@@last_plan_from_cache;
+FOUND_ROWS()	@@last_plan_from_cache
+2	1
+INSERT INTO wp_posts VALUES (4,'publish','2025-01-04');
+EXECUTE st USING @status,@page_size;
+ID
+1
+SELECT FOUND_ROWS(),@@last_plan_from_cache;
+FOUND_ROWS()	@@last_plan_from_cache
+3	1
+SET @status='draft';
+EXECUTE st USING @status,@page_size;
+ID
+3
+SELECT FOUND_ROWS(),@@last_plan_from_cache;
+FOUND_ROWS()	@@last_plan_from_cache
+1	1
+DEALLOCATE PREPARE st;
+SET tidb_opt_force_inline_cte=OFF;
+WITH c AS (SELECT ID FROM wp_posts ORDER BY ID LIMIT 2)
+SELECT SQL_CALC_FOUND_ROWS ID FROM c ORDER BY ID LIMIT 1;
+ID
+1
+SELECT FOUND_ROWS();
+FOUND_ROWS()
+2
+SET tidb_opt_force_inline_cte=DEFAULT;
+# Invalid placement uses MySQL error 1234; unsupported top-level UNION uses 1235.
+SELECT * FROM (SELECT SQL_CALC_FOUND_ROWS 1 AS id) c;
+Error 1234 (42000): Incorrect usage/placement of 'SQL_CALC_FOUND_ROWS'
+SELECT SQL_CALC_FOUND_ROWS 1 UNION ALL SELECT 2 LIMIT 1;
+Error 1235 (42000): This version of TiDB doesn't yet support 'SQL_CALC_FOUND_ROWS with set operations'
+# EXPLAIN preserves the count; ANALYZE reports the query total without adding plan rows.
+SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts WHERE ID<=2 LIMIT 0;
+ID
+EXPLAIN SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts LIMIT 1;
+SELECT FOUND_ROWS();
+FOUND_ROWS()
+2
+EXPLAIN ANALYZE SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts LIMIT 1;
+SELECT FOUND_ROWS();
+FOUND_ROWS()
+4
+DROP TABLE wp_posts;
+SET sql_mode=DEFAULT;

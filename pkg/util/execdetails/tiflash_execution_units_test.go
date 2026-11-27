@@ -24,10 +24,11 @@ import (
 
 func TestTiFlashExecutionUnits(t *testing.T) {
 	id := "HashJoin_1"
-	rows, size, bytes := uint64(8), uint64(1), uint64(20)
+	rows, size, bytes, joined := uint64(8), uint64(1), uint64(20), uint64(12)
 	summary := &tipb.ExecutorExecutionSummary{
 		ExecutorId: &id, NumProducedRows: &rows,
 		TiflashHashTableStats: &tipb.TiFlashHashTableStats{Size_: &size},
+		TiflashJoinStats:      &tipb.TiFlashJoinStats{JoinedRows: &joined},
 		DetailInfo:            &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tipb.TiFlashScanContext{UserReadBytes: &bytes}},
 		TiflashNetworkSummary: &tipb.TiFlashNetWorkSummary{InnerZoneSendBytes: &bytes, InterZoneSendBytes: &size, InnerZoneReceiveBytes: &bytes},
 	}
@@ -40,6 +41,7 @@ func TestTiFlashExecutionUnits(t *testing.T) {
 	require.True(t, found)
 	require.False(t, units.Invalid)
 	require.Equal(t, uint64(16), units.Rows)
+	require.Equal(t, uint64(24), units.JoinedRows)
 	require.Equal(t, uint64(1), units.HashDistinctEntries)
 	require.Equal(t, uint64(8), units.HashBuildRows)
 	require.Equal(t, uint64(40), units.UserReadBytes)
@@ -139,6 +141,45 @@ func TestTiFlashExecutionUnitsColumnar(t *testing.T) {
 			require.Equal(t, tc.observed, units.Observed&TiFlashUnitScan != 0)
 			require.Equal(t, !tc.observed, units.Missing&TiFlashUnitScan != 0)
 			require.Equal(t, tc.invalid, units.Invalid)
+		})
+	}
+}
+
+func TestTiFlashExecutionUnitsJoin(t *testing.T) {
+	id := "HashJoin_1"
+	zero, pairs := uint64(0), uint64(12)
+	for _, tc := range []struct {
+		name     string
+		join     *tipb.TiFlashJoinStats
+		want     uint64
+		observed bool
+	}{
+		{"missing message", nil, 0, false},
+		{"missing count", &tipb.TiFlashJoinStats{}, 0, false},
+		{"zero", &tipb.TiFlashJoinStats{JoinedRows: &zero}, 0, true},
+		{"pairs", &tipb.TiFlashJoinStats{JoinedRows: &pairs}, 24, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stats := NewRuntimeStatsColl(nil)
+			// Join evidence does not depend on output rows or hash-table stats.
+			summary := &tipb.ExecutorExecutionSummary{ExecutorId: &id, TiflashJoinStats: tc.join}
+			stats.RecordTiFlashExecutionSummaries([]int{1}, []*tipb.ExecutorExecutionSummary{summary})
+			stats.RecordTiFlashExecutionSummaries([]int{1}, []*tipb.ExecutorExecutionSummary{summary})
+			units, found := stats.GetTiFlashExecutionUnits(1)
+			require.True(t, found)
+			require.False(t, units.Invalid)
+			require.Equal(t, tc.want, units.JoinedRows)
+			require.Equal(t, tc.observed, units.Observed&TiFlashUnitJoin != 0)
+			require.Equal(t, !tc.observed, units.Missing&TiFlashUnitJoin != 0)
+			// A legacy or interrupted task cannot erase earlier work or presence.
+			stats.RecordTiFlashExecutionSummaries([]int{1}, []*tipb.ExecutorExecutionSummary{{ExecutorId: &id}})
+			units, _ = stats.GetTiFlashExecutionUnits(1)
+			require.Equal(t, tc.want, units.JoinedRows)
+			require.Equal(t, tc.observed, units.Observed&TiFlashUnitJoin != 0)
+			require.NotZero(t, units.Missing&TiFlashUnitJoin)
+			require.Same(t, stats, NewRuntimeStatsColl(stats))
+			_, found = stats.GetTiFlashExecutionUnits(1)
+			require.False(t, found)
 		})
 	}
 }

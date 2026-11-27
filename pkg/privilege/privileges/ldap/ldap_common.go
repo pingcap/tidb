@@ -223,7 +223,8 @@ func (impl *ldapAuthImpl) getConnection() (*ldap.Conn, error) {
 			logutil.BgLogger().Warn("fail to use LDAP connection bind to anonymous user. Retrying", zap.Error(err),
 				zap.Duration("backoff", getConnectionRetryInterval))
 
-			// fail to bind to anonymous user, just release this connection and try to get a new one
+			// Put(nil) only releases the pool slot, so close the failed connection first.
+			ldapConnection.Close()
 			impl.ldapConnectionPool.Put(nil)
 
 			retryCount++

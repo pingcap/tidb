@@ -92,5 +92,5 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 	if h == nil {
 		return errors.New("Load Stats: handle is nil")
 	}
-	return h.LoadStatsFromJSON(context.Background(), e.Ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl, 0)
+	return h.Storage().LoadStatsFromJSON(context.Background(), e.Ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl, 0)
 }

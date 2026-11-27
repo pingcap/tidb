@@ -387,9 +387,12 @@ type pqHeap interface {
 //
 //nolint:fieldalignment
 type AnalysisPriorityQueue struct {
-	ctx         context.Context
-	statsHandle statstypes.StatsHandle
-	calculator  *PriorityCalculator
+	ctx        context.Context
+	pool       statsutil.SessionPool
+	tables     statsutil.TableInfoGetter
+	statsCache StatsCache
+	tableStats statstypes.NonPseudoPhysicalTableStatsGetter
+	calculator *PriorityCalculator
 
 	wg util.WaitGroupWrapper
 
@@ -417,11 +420,27 @@ type AnalysisPriorityQueue struct {
 	}
 }
 
-// NewAnalysisPriorityQueue creates a new AnalysisPriorityQueue2.
-func NewAnalysisPriorityQueue(handle statstypes.StatsHandle) *AnalysisPriorityQueue {
+// StatsCache is the part of the stats cache that the priority queue reads to make jobs.
+type StatsCache interface {
+	statstypes.StatsCacheGetter
+	statstypes.StatsCacheLister
+	statstypes.StatsCacheVersionGetter
+}
+
+// NewAnalysisPriorityQueue creates a new AnalysisPriorityQueue that makes jobs from the stats
+// in statsCache and tableStats, and reads tables in the sessions of pool.
+func NewAnalysisPriorityQueue(
+	pool statsutil.SessionPool,
+	tables statsutil.TableInfoGetter,
+	statsCache StatsCache,
+	tableStats statstypes.NonPseudoPhysicalTableStatsGetter,
+) *AnalysisPriorityQueue {
 	queue := &AnalysisPriorityQueue{
-		statsHandle: handle,
-		calculator:  NewPriorityCalculator(),
+		pool:       pool,
+		tables:     tables,
+		statsCache: statsCache,
+		tableStats: tableStats,
+		calculator: NewPriorityCalculator(),
 	}
 
 	return queue
@@ -512,7 +531,7 @@ func (pq *AnalysisPriorityQueue) rebuildWithoutLock(ctx context.Context) error {
 	// For example, 1m tables will take about 1min to fetch all tables and build analysis jobs.
 	// This will guarantee that we will not miss any DML changes. But it may cause some DML changes to be processed twice.
 	// It is acceptable since the DML changes operation is idempotent.
-	nextCheckVersionWithOffset := pq.statsHandle.GetNextCheckVersionWithOffset()
+	nextCheckVersionWithOffset := pq.statsCache.GetNextCheckVersionWithOffset()
 	err := pq.fetchAllTablesAndBuildAnalysisJobs(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -526,7 +545,7 @@ func (pq *AnalysisPriorityQueue) rebuildWithoutLock(ctx context.Context) error {
 // fetchAllTablesAndBuildAnalysisJobs builds analysis jobs for all eligible tables and partitions.
 // NOTE: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.Context) error {
-	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	return statsutil.CallWithSCtx(pq.pool.SPool(), func(sctx sessionctx.Context) error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
 		autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 		pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
@@ -545,8 +564,76 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 		}
 		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 
+		// We need to check every partition of every table to see if it needs to be analyzed.
+		pushJobsForTable := func(tblInfo *model.TableInfo) error {
+			// If table locked, skip analyze all partitions of the table.
+			if _, ok := lockedTables[tblInfo.ID]; ok {
+				return nil
+			}
+
+			if !isTableHandledByPriorityQueue(tblInfo) {
+				return nil
+			}
+
+			pi := tblInfo.GetPartitionInfo()
+			if pi == nil {
+				stats, found := pq.tableStats.GetNonPseudoPhysicalTableStats(tblInfo.ID)
+				if !found {
+					return nil
+				}
+
+				job := jobFactory.CreateNonPartitionedTableAnalysisJob(
+					tblInfo,
+					stats,
+				)
+				err := pq.pushWithoutLock(job)
+				if err != nil {
+					return err
+				}
+				return nil
+			}
+
+			// Only analyze the partition that has not been locked.
+			partitionDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions))
+			for _, def := range pi.Definitions {
+				if _, ok := lockedTables[def.ID]; !ok {
+					partitionDefs = append(partitionDefs, def)
+				}
+			}
+			partitionStats := GetPartitionStats(pq.tableStats, partitionDefs)
+			// If the prune mode is static, we need to analyze every partition as a separate table.
+			if pruneMode == variable.Static {
+				for pIDAndName, stats := range partitionStats {
+					job := jobFactory.CreateStaticPartitionAnalysisJob(
+						tblInfo,
+						pIDAndName.ID,
+						stats,
+					)
+					err := pq.pushWithoutLock(job)
+					if err != nil {
+						return err
+					}
+				}
+			} else {
+				globalStats, found := pq.tableStats.GetNonPseudoPhysicalTableStats(tblInfo.ID)
+				if !found {
+					return nil
+				}
+				job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
+					tblInfo,
+					globalStats,
+					partitionStats,
+				)
+				err := pq.pushWithoutLock(job)
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+
 		// Get all schemas except the memory and system database.
-		tbls := make([]*model.TableInfo, 0, 512)
+		tableCount := 0
 		// This only occurs during priority queue initialization which is infrequent.
 		halfCPUNum := runtime.NumCPU() / 2
 		start := time.Now()
@@ -555,19 +642,20 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			sctx.GetStore(),
 			currentTs,
 			halfCPUNum,
-			// Make sure this function is thread-safe.
+			// IterAllTables calls this function serially, so it can push to the queue directly.
+			// Build jobs during the scan: keeping every TableInfo until the end can OOM with many tables.
 			func(info *model.TableInfo) error {
 				// Ignore the memory and system database.
 				db, ok := is.SchemaByID(info.DBID)
 				if !ok || metadef.IsMemOrSysDB(db.Name.L) {
 					return nil
 				}
-				tbls = append(tbls, info)
-				return nil
+				tableCount++
+				return pushJobsForTable(info)
 			}); err != nil {
 			return errors.Trace(err)
 		}
-		statslogutil.StatsLogger().Info("Fetched all tables", zap.Int("tableCount", len(tbls)), zap.Duration("duration", time.Since(start)))
+		statslogutil.StatsLogger().Info("Fetched all tables", zap.Int("tableCount", tableCount), zap.Duration("duration", time.Since(start)))
 		// Add assertion to verify we've collected all tables by comparing with two different methods.
 		// The below one is way slower than the above one, so we only use it for verification.
 		intest.AssertFunc(func() bool {
@@ -585,75 +673,8 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 				}
 				verifyTbls = append(verifyTbls, tbls...)
 			}
-			return len(verifyTbls) == len(tbls)
+			return len(verifyTbls) == tableCount
 		})
-
-		// We need to check every partition of every table to see if it needs to be analyzed.
-		for _, tblInfo := range tbls {
-			// If table locked, skip analyze all partitions of the table.
-			if _, ok := lockedTables[tblInfo.ID]; ok {
-				continue
-			}
-
-			if tblInfo.IsView() {
-				continue
-			}
-
-			pi := tblInfo.GetPartitionInfo()
-			if pi == nil {
-				stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
-				if !found {
-					continue
-				}
-
-				job := jobFactory.CreateNonPartitionedTableAnalysisJob(
-					tblInfo,
-					stats,
-				)
-				err := pq.pushWithoutLock(job)
-				if err != nil {
-					return err
-				}
-				continue
-			}
-
-			// Only analyze the partition that has not been locked.
-			partitionDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions))
-			for _, def := range pi.Definitions {
-				if _, ok := lockedTables[def.ID]; !ok {
-					partitionDefs = append(partitionDefs, def)
-				}
-			}
-			partitionStats := GetPartitionStats(pq.statsHandle, partitionDefs)
-			// If the prune mode is static, we need to analyze every partition as a separate table.
-			if pruneMode == variable.Static {
-				for pIDAndName, stats := range partitionStats {
-					job := jobFactory.CreateStaticPartitionAnalysisJob(
-						tblInfo,
-						pIDAndName.ID,
-						stats,
-					)
-					err := pq.pushWithoutLock(job)
-					if err != nil {
-						return err
-					}
-				}
-			} else {
-				globalStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
-				if !found {
-					continue
-				}
-				job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
-					tblInfo,
-					globalStats,
-					partitionStats,
-				)
-				err := pq.pushWithoutLock(job)
-				if err != nil {
-					return err
-				}
-			}
-		}
 
 		return nil
 	}, statsutil.FlagWrapTxn)
@@ -735,7 +756,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 
-	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	if err := statsutil.CallWithSCtx(pq.pool.SPool(), func(sctx sessionctx.Context) error {
 		start := time.Now()
 		defer func() {
 			duration := time.Since(start)
@@ -747,14 +768,14 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
 		// We need to fetch the next check version with offset before fetching new DML changes.
 		// Otherwise, we may miss some DML changes happened during the process.
-		newMaxVersion := pq.statsHandle.GetNextCheckVersionWithOffset()
+		newMaxVersion := pq.statsCache.GetNextCheckVersionWithOffset()
 		// Query locked tables once to minimize overhead.
 		// Outdated lock info is acceptable as we verify table lock status pre-analysis.
 		lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
 		if err != nil {
 			return err
 		}
-		values := pq.statsHandle.Values()
+		values := pq.statsCache.Values()
 		lastFetchTimestamp := pq.syncFields.lastDMLUpdateFetchTimestamp
 		for _, value := range values {
 			// We only process the tables that have been updated.
@@ -846,7 +867,7 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 		return nil
 	}
 
-	tableInfo, ok := pq.statsHandle.TableInfoByID(is, stats.PhysicalID)
+	tableInfo, ok := pq.tables.TableInfoByID(is, stats.PhysicalID)
 	if !ok {
 		statslogutil.StatsLogger().Warn(
 			"Table info not found for table id",
@@ -855,6 +876,9 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 		return nil
 	}
 	tableMeta := tableInfo.Meta()
+	if !isTableHandledByPriorityQueue(tableMeta) {
+		return nil
+	}
 	partitionedTable := tableMeta.GetPartitionInfo()
 	if partitionedTable == nil {
 		// If the table is locked, we do not analyze it.
@@ -921,11 +945,11 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 			}
 
 			// Get global stats for dynamic partitioned table.
-			globalStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableMeta.ID)
+			globalStats, found := pq.tableStats.GetNonPseudoPhysicalTableStats(tableMeta.ID)
 			if !found {
 				return nil
 			}
-			partitionStats := GetPartitionStats(pq.statsHandle, filteredPartitionDefs)
+			partitionStats := GetPartitionStats(pq.tableStats, filteredPartitionDefs)
 			job = jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 				tableMeta,
 				globalStats,
@@ -951,7 +975,7 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 	// For dynamic partitioned table, there is no way to only update the partition that has been changed.
 	// So we recreate the job for dynamic partitioned table.
 	if IsDynamicPartitionedTableAnalysisJob(oldJob) {
-		tableInfo, ok := pq.statsHandle.TableInfoByID(is, stats.PhysicalID)
+		tableInfo, ok := pq.tables.TableInfoByID(is, stats.PhysicalID)
 		if !ok {
 			statslogutil.StatsLogger().Warn(
 				"Table info not found during updating job",
@@ -963,7 +987,7 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 		tableMeta := tableInfo.Meta()
 		partitionedTable := tableMeta.GetPartitionInfo()
 		partitionDefs := partitionedTable.Definitions
-		partitionStats := GetPartitionStats(pq.statsHandle, partitionDefs)
+		partitionStats := GetPartitionStats(pq.tableStats, partitionDefs)
 		return jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 			tableMeta,
 			stats,
@@ -983,7 +1007,7 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 
-	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	if err := statsutil.CallWithSCtx(pq.pool.SPool(), func(sctx sessionctx.Context) error {
 		start := time.Now()
 		defer func() {
 			duration := time.Since(start)
@@ -996,7 +1020,7 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 		for tableID := range pq.syncFields.mustRetryJobs {
 			// NOTE: Delete the job first to ensure it can be added back to the queue
 			delete(pq.syncFields.mustRetryJobs, tableID)
-			tblInfo, ok := pq.statsHandle.TableInfoByID(is, tableID)
+			tblInfo, ok := pq.tables.TableInfoByID(is, tableID)
 			if !ok {
 				statslogutil.StatsLogger().Warn("Table info not found during requeueing must retry jobs", zap.Int64("tableID", tableID))
 				continue
@@ -1020,7 +1044,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 
-	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	if err := statsutil.CallWithSCtx(pq.pool.SPool(), func(sctx sessionctx.Context) error {
 		start := time.Now()
 		defer func() {
 			duration := time.Since(start)
@@ -1037,7 +1061,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 		// TODO: We can directly rebuild the priority queue instead of updating the indicators of each job.
 		for _, job := range jobs {
 			indicators := job.GetIndicators()
-			tableStats, ok := pq.statsHandle.Get(job.GetTableID())
+			tableStats, ok := pq.statsCache.Get(job.GetTableID())
 			if !ok {
 				statslogutil.StatsLogger().Warn("Table stats not found during refreshing last analysis duration",
 					zap.Int64("tableID", job.GetTableID()),
@@ -1271,4 +1295,8 @@ func (pq *AnalysisPriorityQueue) resetSyncFields() {
 	pq.syncFields.mustRetryJobs = nil
 	pq.syncFields.lastDMLUpdateFetchTimestamp = 0
 	pq.syncFields.cancel = nil
+}
+
+func isTableHandledByPriorityQueue(tblInfo *model.TableInfo) bool {
+	return !tblInfo.IsView() && tblInfo.MaterializedViewLog == nil
 }

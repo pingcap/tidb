@@ -141,6 +141,41 @@ func TestIntegration(t *testing.T) {
 	defer etcd.Server.Stop()
 	metaCli := streamhelper.MetaDataClient{Client: cli}
 	t.Run("TestBasic", func(t *testing.T) { testBasic(t, metaCli, etcd) })
+	t.Run("TestS3EncryptionContext", func(t *testing.T) {
+		ctx := context.Background()
+		for _, input := range []struct {
+			name    string
+			query   string
+			encoded string
+		}{
+			{name: "omitted"},
+			{
+				name:    "configured",
+				query:   "?sse=aws:kms&sse-kms-context=%7B%22tenant%22%3A%22tenant-a%22%7D",
+				encoded: "eyJ0ZW5hbnQiOiJ0ZW5hbnQtYSJ9",
+			},
+		} {
+			t.Run(input.name, func(t *testing.T) {
+				backend, err := objstore.ParseBackend("s3://backup-bucket/prefix"+input.query, nil)
+				require.NoError(t, err)
+				task := simpleTask("s3_context_"+input.name, 1)
+				task.PBInfo.Storage = backend
+				require.NoError(t, metaCli.PutTask(ctx, task))
+				t.Cleanup(func() { require.NoError(t, metaCli.DeleteTask(ctx, task.PBInfo.Name)) })
+
+				// A new metadata client must recover the context from the persisted task.
+				reloaded := streamhelper.NewMetaDataClient(cli)
+				remoteTask, err := reloaded.GetTask(ctx, task.PBInfo.Name)
+				require.NoError(t, err)
+				require.Equal(t, input.encoded, remoteTask.Info.Storage.GetS3().GetSseKmsEncryptionContext())
+				require.NoError(t, reloaded.PauseTask(ctx, task.PBInfo.Name))
+				require.NoError(t, reloaded.ResumeTask(ctx, task.PBInfo.Name))
+				remoteTask, err = reloaded.GetTask(ctx, task.PBInfo.Name)
+				require.NoError(t, err)
+				require.Equal(t, input.encoded, remoteTask.Info.Storage.GetS3().GetSseKmsEncryptionContext())
+			})
+		}
+	})
 	t.Run("testGetStorageCheckpoint", func(t *testing.T) { testGetStorageCheckpoint(t, metaCli) })
 	t.Run("testGetGlobalCheckPointTS", func(t *testing.T) { testGetGlobalCheckPointTS(t, metaCli) })
 	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })

@@ -18,8 +18,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	kvstore "github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
@@ -33,6 +36,12 @@ var slowQuerySuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
+	// Store drivers are process-global, including when tests repeat with -count.
+	if kerneltype.IsNextGen() {
+		if err := kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}); err != nil {
+			panic(err)
+		}
+	}
 	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
 	testDataMap.LoadTestSuiteData("testdata", "slow_query_suite")
 	prepareMergeSuiteData = testDataMap["prepare_suite"]
@@ -61,6 +70,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ttl/ttlworker.(*JobManager).jobLoop"),
 		// backoff function will lead to sleep, so there is a high probability of goroutine leak while it's doing backoff.
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/config/retry.(*Config).createBackoffFn.newBackoffFn.func2"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/executor.(*slowQueryCache).loop"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/config/retry.newBackoffFn.func1"),
 	}
 	callback := func(i int) int {
 		testDataMap.GenerateOutputIfNeeded()

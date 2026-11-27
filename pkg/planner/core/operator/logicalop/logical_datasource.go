@@ -73,6 +73,8 @@ type DataSource struct {
 	IndexMergeHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.
 	PushedDownConds []expression.Expression `hash64-equals:"true"`
+	// TiFlashLMFilterColumnIDs are columns forced as TiFlash late-materialization filter columns by hints.
+	TiFlashLMFilterColumnIDs []int64 `hash64-equals:"true"`
 	// AllConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used in partition pruning/index merge.
 	AllConds []expression.Expression `hash64-equals:"true"`
@@ -442,7 +444,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 					continue
 				}
 			}
-			if idx.State != model.StatePublic {
+			if idx.State != model.StatePublic || idx.HasCondition() {
 				continue
 			}
 			for _, idxCol := range idx.Columns {

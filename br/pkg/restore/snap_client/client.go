@@ -232,6 +232,11 @@ func (rc *SnapClient) Close() {
 			log.Warn("failed to close file restorer")
 		}
 	}
+	if rc.importer != nil {
+		if err := rc.importer.Close(); err != nil {
+			log.Warn("failed to close file importer", zap.Error(err))
+		}
+	}
 
 	log.Info("Restore client closed")
 }
@@ -835,15 +840,12 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		rc.cipher, metaClient, importCli, backend,
 		rc.rewriteMode, stores, rc.concurrencyPerStore, rc.regionScanConcurrency, false, createCallBacks, closeCallBacks,
 	)
+	apiVersion := rc.backupMeta.ApiVersion
+	mode := TiDBFull
 	if isRawKvMode || isTxnKvMode {
-		mode := Raw
+		mode = Raw
 		if isTxnKvMode {
 			mode = Txn
-		}
-		// for raw/txn mode. use backupMeta.ApiVersion to create fileImporter
-		rc.importer, err = NewSnapFileImporter(ctx, rc.backupMeta.ApiVersion, mode, opt)
-		if err != nil {
-			return errors.Trace(err)
 		}
 		// Raw/Txn restore are not support checkpoint for now
 		rc.getRestorerFn = func(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
@@ -851,14 +853,17 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		}
 	} else {
 		// or create a fileImporter with the cluster API version
-		rc.importer, err = NewSnapFileImporter(
-			ctx, rc.dom.Store().GetCodec().GetAPIVersion(), TiDBFull, opt)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		apiVersion = rc.dom.Store().GetCodec().GetAPIVersion()
 		rc.getRestorerFn = func(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
 			return restore.NewMultiTablesRestorer(ctx, rc.importer, rc.workerPool, checkpointRunner)
 		}
+	}
+	rc.importer, err = NewSnapFileImporter(ctx, apiVersion, mode, opt)
+	if err != nil {
+		if closeErr := importCli.CloseGrpcClient(); closeErr != nil {
+			log.Warn("failed to close import client on snap importer init error", zap.Error(closeErr))
+		}
+		return errors.Trace(err)
 	}
 	return nil
 }

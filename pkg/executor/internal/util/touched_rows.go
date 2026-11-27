@@ -21,11 +21,28 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
-// MarkTouchedRowsByColumn compares old/new values and sets the bit for rows whose value changed.
-// Values are compared using their binary representation; this matches the mlog touched-column
-// contract, which must not apply the session's SQL collation rules.
+type touchedBitmapMarker struct {
+	bitmap           []uint8
+	stride           int
+	bitByteOffset    int
+	bitMask          uint8
+	singleByteStride bool
+}
+
+func (m touchedBitmapMarker) mark(updateOrdinal int) {
+	if m.singleByteStride {
+		m.bitmap[updateOrdinal] |= m.bitMask
+		return
+	}
+	m.bitmap[updateOrdinal*m.stride+m.bitByteOffset] |= m.bitMask
+}
+
+// MarkTouchedRowsByColumn compares old/new chunk columns and marks touched bits for changed update rows.
+// The comparison deliberately uses binary semantics for string-like values to match row-update touched-column
+// detection instead of SQL collation equality.
 func MarkTouchedRowsByColumn(
 	updateRows []int,
 	updateTouchedBitmap []uint8,
@@ -40,40 +57,313 @@ func MarkTouchedRowsByColumn(
 	if fieldType == nil {
 		return errors.Errorf("field type is nil when comparing %s", comparisonContext)
 	}
-	if oldCol == nil || newCol == nil {
-		return errors.Errorf("column is nil when comparing %s", comparisonContext)
+	if len(updateRows) == 0 {
+		return nil
 	}
-	if updateTouchedStride <= 0 || updateBitPos < 0 {
-		return errors.Errorf("invalid touched bitmap layout when comparing %s", comparisonContext)
+	bitByteOffset := updateBitPos >> 3
+	marker := touchedBitmapMarker{
+		bitmap:           updateTouchedBitmap,
+		stride:           updateTouchedStride,
+		bitByteOffset:    bitByteOffset,
+		bitMask:          uint8(1 << (updateBitPos & 7)),
+		singleByteStride: updateTouchedStride == 1,
 	}
-	byteOffset := updateBitPos >> 3
-	mask := uint8(1 << uint(updateBitPos&7))
-	for ordinal, rowIdx := range updateRows {
-		if rowIdx < 0 || rowIdx >= oldCol.Rows() || rowIdx >= newCol.Rows() {
-			return errors.Errorf("row index %d out of range when comparing %s", rowIdx, comparisonContext)
+
+	switch fieldType.EvalType() {
+	case types.ETInt:
+		// BIT evaluates as an integer but can be stored as variable-length byte literals.
+		// NULL values occupy no data bytes in that layout, so an int64 slice would
+		// address the wrong rows. Fixed-length projection columns keep the integer path.
+		if fieldType.GetType() == mysql.TypeBit && (!oldCol.IsFixed() || !newCol.IsFixed()) {
+			for updateOrdinal, rowIdx := range updateRows {
+				if !notNull {
+					oldIsNull := oldCol.IsNull(rowIdx)
+					newIsNull := newCol.IsNull(rowIdx)
+					if oldIsNull || newIsNull {
+						if oldIsNull != newIsNull {
+							marker.mark(updateOrdinal)
+						}
+						continue
+					}
+				}
+				if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
 		}
-		oldNull, newNull := oldCol.IsNull(rowIdx), newCol.IsNull(rowIdx)
-		changed := oldNull != newNull
-		if !changed && !oldNull && !newNull {
-			switch fieldType.GetType() {
-			case mysql.TypeEnum:
-				changed = oldCol.GetEnum(rowIdx).Name != newCol.GetEnum(rowIdx).Name
-			case mysql.TypeSet:
-				changed = oldCol.GetSet(rowIdx).Name != newCol.GetSet(rowIdx).Name
-			default:
-				changed = !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx))
+		if mysql.HasUnsignedFlag(fieldType.GetFlag()) {
+			oldVals := oldCol.Uint64s()
+			newVals := newCol.Uint64s()
+			if notNull {
+				for updateOrdinal, rowIdx := range updateRows {
+					if oldVals[rowIdx] != newVals[rowIdx] {
+						marker.mark(updateOrdinal)
+					}
+				}
+				return nil
+			}
+			for updateOrdinal, rowIdx := range updateRows {
+				oldIsNull := oldCol.IsNull(rowIdx)
+				newIsNull := newCol.IsNull(rowIdx)
+				if oldIsNull || newIsNull {
+					if oldIsNull != newIsNull {
+						marker.mark(updateOrdinal)
+					}
+					continue
+				}
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		oldVals := oldCol.Int64s()
+		newVals := newCol.Int64s()
+		if notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					marker.mark(updateOrdinal)
+				}
+				continue
+			}
+			if oldVals[rowIdx] != newVals[rowIdx] {
+				marker.mark(updateOrdinal)
 			}
 		}
-		if notNull && (oldNull || newNull) {
-			return errors.Errorf("unexpected null value when comparing %s", comparisonContext)
-		}
-		if changed {
-			pos := ordinal*updateTouchedStride + byteOffset
-			if pos >= len(updateTouchedBitmap) {
-				return errors.Errorf("touched bitmap index out of range when comparing %s", comparisonContext)
+		return nil
+	case types.ETReal:
+		if fieldType.GetType() == mysql.TypeFloat {
+			oldVals := oldCol.Float32s()
+			newVals := newCol.Float32s()
+			if notNull {
+				for updateOrdinal, rowIdx := range updateRows {
+					if oldVals[rowIdx] != newVals[rowIdx] {
+						marker.mark(updateOrdinal)
+					}
+				}
+				return nil
 			}
-			updateTouchedBitmap[pos] |= mask
+			for updateOrdinal, rowIdx := range updateRows {
+				oldIsNull := oldCol.IsNull(rowIdx)
+				newIsNull := newCol.IsNull(rowIdx)
+				if oldIsNull || newIsNull {
+					if oldIsNull != newIsNull {
+						marker.mark(updateOrdinal)
+					}
+					continue
+				}
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
 		}
+		oldVals := oldCol.Float64s()
+		newVals := newCol.Float64s()
+		if notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					marker.mark(updateOrdinal)
+				}
+				continue
+			}
+			if oldVals[rowIdx] != newVals[rowIdx] {
+				marker.mark(updateOrdinal)
+			}
+		}
+		return nil
+	case types.ETDecimal:
+		oldVals := oldCol.Decimals()
+		newVals := newCol.Decimals()
+		if notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if oldVals[rowIdx].Compare(&newVals[rowIdx]) != 0 {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					marker.mark(updateOrdinal)
+				}
+				continue
+			}
+			if oldVals[rowIdx].Compare(&newVals[rowIdx]) != 0 {
+				marker.mark(updateOrdinal)
+			}
+		}
+		return nil
+	case types.ETString:
+		binaryCollator := collate.GetBinaryCollator()
+		switch fieldType.GetType() {
+		case mysql.TypeEnum:
+			if notNull {
+				for updateOrdinal, rowIdx := range updateRows {
+					if binaryCollator.Compare(oldCol.GetEnum(rowIdx).Name, newCol.GetEnum(rowIdx).Name) != 0 {
+						marker.mark(updateOrdinal)
+					}
+				}
+				return nil
+			}
+			for updateOrdinal, rowIdx := range updateRows {
+				oldIsNull := oldCol.IsNull(rowIdx)
+				newIsNull := newCol.IsNull(rowIdx)
+				if oldIsNull || newIsNull {
+					if oldIsNull != newIsNull {
+						marker.mark(updateOrdinal)
+					}
+					continue
+				}
+				if binaryCollator.Compare(oldCol.GetEnum(rowIdx).Name, newCol.GetEnum(rowIdx).Name) != 0 {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
+		case mysql.TypeSet:
+			if notNull {
+				for updateOrdinal, rowIdx := range updateRows {
+					if binaryCollator.Compare(oldCol.GetSet(rowIdx).Name, newCol.GetSet(rowIdx).Name) != 0 {
+						marker.mark(updateOrdinal)
+					}
+				}
+				return nil
+			}
+			for updateOrdinal, rowIdx := range updateRows {
+				oldIsNull := oldCol.IsNull(rowIdx)
+				newIsNull := newCol.IsNull(rowIdx)
+				if oldIsNull || newIsNull {
+					if oldIsNull != newIsNull {
+						marker.mark(updateOrdinal)
+					}
+					continue
+				}
+				if binaryCollator.Compare(oldCol.GetSet(rowIdx).Name, newCol.GetSet(rowIdx).Name) != 0 {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		if notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if binaryCollator.Compare(oldCol.GetString(rowIdx), newCol.GetString(rowIdx)) != 0 {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					marker.mark(updateOrdinal)
+				}
+				continue
+			}
+			if binaryCollator.Compare(oldCol.GetString(rowIdx), newCol.GetString(rowIdx)) != 0 {
+				marker.mark(updateOrdinal)
+			}
+		}
+		return nil
+	case types.ETDatetime, types.ETTimestamp:
+		oldVals := oldCol.Times()
+		newVals := newCol.Times()
+		if notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					marker.mark(updateOrdinal)
+				}
+				continue
+			}
+			if oldVals[rowIdx] != newVals[rowIdx] {
+				marker.mark(updateOrdinal)
+			}
+		}
+		return nil
+	case types.ETDuration:
+		oldVals := oldCol.GoDurations()
+		newVals := newCol.GoDurations()
+		if notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if oldVals[rowIdx] != newVals[rowIdx] {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					marker.mark(updateOrdinal)
+				}
+				continue
+			}
+			if oldVals[rowIdx] != newVals[rowIdx] {
+				marker.mark(updateOrdinal)
+			}
+		}
+		return nil
+	case types.ETJson, types.ETVectorFloat32:
+		if notNull {
+			for updateOrdinal, rowIdx := range updateRows {
+				if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
+		}
+		for updateOrdinal, rowIdx := range updateRows {
+			oldIsNull := oldCol.IsNull(rowIdx)
+			newIsNull := newCol.IsNull(rowIdx)
+			if oldIsNull || newIsNull {
+				if oldIsNull != newIsNull {
+					marker.mark(updateOrdinal)
+				}
+				continue
+			}
+			if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
+				marker.mark(updateOrdinal)
+			}
+		}
+		return nil
+	default:
+		return errors.Errorf("unsupported eval type %d in %s comparison", fieldType.EvalType(), comparisonContext)
 	}
-	return nil
 }

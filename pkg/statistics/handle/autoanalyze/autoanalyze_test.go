@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -70,16 +71,47 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("flush stats_delta *.*")
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.True(t, dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze())
 	// Try to set tidb_enable_auto_analyze_priority_queue to OFF, it should return error.
 	_, err = tk.Exec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=OFF")
 	require.Error(t, err)
 	require.Equal(t, "tidb_enable_auto_analyze_priority_queue has been deprecated and TiDB will always use priority queue to schedule auto analyze", err.Error())
+}
+
+func TestShouldSkipAutoAnalyzeTableNotReadyMV(t *testing.T) {
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		Name: ast.NewCIStr("mv_not_ready"),
+		MaterializedView: &model.MaterializedViewInfo{
+			InitBuildState: model.MViewInitBuildBuilding,
+		},
+	}))
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		Name: ast.NewCIStr("mv_deferred"),
+		MaterializedView: &model.MaterializedViewInfo{
+			InitBuildState: model.MViewInitBuildDeferred,
+		},
+	}))
+	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		Name: ast.NewCIStr("mv_ready"),
+		MaterializedView: &model.MaterializedViewInfo{
+			InitBuildState: model.MViewInitBuildReady,
+		},
+	}))
+	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		Name: ast.NewCIStr("normal_table"),
+	}))
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		View: &model.ViewInfo{},
+	}))
+	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
+		MaterializedViewLog: &model.MaterializedViewLogInfo{},
+	}))
+	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTable(nil))
 }
 
 func TestAutoAnalyzeLockedTable(t *testing.T) {
@@ -95,20 +127,20 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 	// Lock the table.
 	tk.MustExec("lock stats t")
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	// Try to analyze the locked table, it should not analyze the table.
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.False(t, dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze())
 
 	// Unlock the table.
 	tk.MustExec("unlock stats t")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	// Try again, it should analyze the table.
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.True(t, dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze())
 }
 
 func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
@@ -122,10 +154,10 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 	h := dom.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.DumpColStatsUsageToKV())
+	require.NoError(t, h.Usage().DumpColStatsUsageToKV())
 	tk.MustExec("flush stats_delta *.*")
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
@@ -142,7 +174,7 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 	tk.MustExec("set global tidb_analyze_column_options='PREDICATE'")
 
 	// Trigger auto analyze.
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.True(t, dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze())
 
 	// Check analyze jobs.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
@@ -173,7 +205,7 @@ func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domai
 	require.NoError(t, err)
 	tk.MustExec("flush stats_delta *.*")
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 
 	tk.MustExec("set @@global.tidb_enable_auto_analyze = 0")
 	statistics.AutoAnalyzeMinCnt = 0
@@ -181,17 +213,17 @@ func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domai
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	// Even auto analyze ratio is set to 0, we still need to analyze the unanalyzed tables.
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
-	require.NoError(t, h.Update(context.Background(), is))
+	require.True(t, dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze())
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 
 	// Try again, it should not analyze the table because it's already analyzed and auto analyze ratio is 0.
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.False(t, dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze())
 
 	// Index analyze doesn't depend on auto analyze ratio. Only control by tidb_enable_auto_analyze.
 	// Even auto analyze ratio is set to 0, we still need to analyze the newly created index.
 	tk.MustExec("alter table t add index ia(a)")
 	require.Eventually(t, func() bool {
-		return dom.StatsHandle().HandleAutoAnalyze()
+		return dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze()
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
@@ -208,23 +240,23 @@ func TestTableAnalyzed(t *testing.T) {
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.LastAnalyzeVersion > 0)
 
 	testKit.MustExec("analyze table t")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 
-	h.Clear()
+	h.ClearForTest()
 	oriLease := h.Lease()
 	// set it to non-zero so we will use load by need strategy
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 }
@@ -291,8 +323,8 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	tk.MustExec("select * from t where a = 1 and b = 1 and c = '1'")
 	h := dom.StatsHandle()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
-	require.NoError(t, h.DumpColStatsUsageToKV())
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Usage().DumpColStatsUsageToKV())
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
 
 	originalVal := statistics.AutoAnalyzeMinCnt
@@ -300,7 +332,7 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = originalVal
 	}()
-	require.True(t, h.HandleAutoAnalyze())
+	require.True(t, h.AutoAnalyze().HandleAutoAnalyze())
 	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table all indexes, columns a, b, d with 256 buckets, 100 topn, 1 samplerate"))
 }
 
@@ -320,7 +352,7 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
-	dom.StatsHandle().HandleAutoAnalyze()
+	dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze()
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, index idx(a))")
@@ -329,14 +361,14 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(statistics.AutoAnalyzeMinCnt)))
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
 
 	// test if it will be limited by the time range
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.False(t, dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze())
 
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.True(t, dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze())
 }
 
 func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
@@ -355,7 +387,7 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
-	dom.StatsHandle().HandleAutoAnalyze()
+	dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze()
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
@@ -365,17 +397,17 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(statistics.AutoAnalyzeMinCnt)))
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
 
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.False(t, dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze())
 	tk.MustExec("analyze table t")
 
 	tk.MustExec("alter table t add index ia(a)")
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.False(t, dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze())
 
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.True(t, dom.StatsHandle().AutoAnalyze().HandleAutoAnalyze())
 }
 
 func makeFailpointRes(t *testing.T, v any) string {
@@ -561,6 +593,7 @@ func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 	require.False(t,
 		autoanalyze.RandomPickOneTableAndTryAutoAnalyze(
 			se.(sessionctx.Context),
+			dom.StatsHandle().ProcIDs(),
 			dom.StatsHandle(),
 			dom.SysProcTracker(),
 			0.6,
@@ -603,13 +636,13 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	tableInfo := tbl.Meta()
 	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("alter table t add index idx(a)")
 	// Normal Index can trigger auto analyze.
-	require.True(t, h.HandleAutoAnalyze())
+	require.True(t, h.AutoAnalyze().HandleAutoAnalyze())
 	tk.MustExec("alter table t set tiflash replica 1")
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
 	// Vector Index can not trigger auto analyze.
-	require.False(t, h.HandleAutoAnalyze())
+	require.False(t, h.AutoAnalyze().HandleAutoAnalyze())
 }

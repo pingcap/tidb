@@ -51,7 +51,20 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 	joins := make([]base.PhysicalPlan, 0, len(p.LeftProperties)+1)
 	// The LeftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
-	constantCols := p.ExtractFD().ConstantCols()
+	// Extracting the join's FDs walks both children and, for a DataSource, every
+	// column and unique index of the table, which is costly for wide tables.
+	// Only tryToGetChildReqProp needs the constant columns, and only when a merge
+	// join candidate survives the checks below and the required property has
+	// sort items, so compute them lazily, at most once per call.
+	var constantCols intset.FastIntSet
+	constantColsReady := false
+	getConstantCols := func() intset.FastIntSet {
+		if !constantColsReady {
+			constantCols = p.ExtractFD().ConstantCols()
+			constantColsReady = true
+		}
+		return constantCols
+	}
 
 	// EnumType/SetType Unsupported: merge join conflicts with index order.
 	// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
@@ -112,11 +125,19 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 		mergeJoin.SetSchema(schema)
 		mergeJoin.OtherConditions = moveEqualToOtherConditions(p, offsets)
 		mergeJoin.initCompareFuncs()
-		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop, constantCols); ok {
+		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop, getConstantCols); ok {
 			// Adjust expected count for children nodes.
 			if prop.ExpectedCnt < statsInfo.RowCount {
-				reqProps[0].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop, leftStatsInfo.RowCount, statsInfo.RowCount)
-				reqProps[1].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop, rightStatsInfo.RowCount, statsInfo.RowCount)
+				// A semi/anti-semi join acts as a filter on its outer side: under a
+				// LIMIT, the rows each ordered child must read before enough rows
+				// survive the join depend on how the join keys interleave, which the
+				// uniform LIMIT scaling cannot see. Both children are already ordered
+				// on the join keys, so apply the ordering index selectivity ratio, as
+				// for an ordered scan with filters, even when the parent (e.g. a bare
+				// LIMIT) does not require any order.
+				applyOrderingPenalty := !prop.IsSortItemEmpty() || p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin
+				reqProps[0].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop.ExpectedCnt, applyOrderingPenalty, leftStatsInfo.RowCount, statsInfo.RowCount)
+				reqProps[1].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop.ExpectedCnt, applyOrderingPenalty, rightStatsInfo.RowCount, statsInfo.RowCount)
 			}
 			mergeJoin.SetChildrenReqProps(reqProps)
 			_, desc := prop.AllSameOrder()
@@ -424,7 +445,9 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 
 // Only if the input required prop is compatible with join-key order, we can pass through this property.
 // Leading join keys fixed to a single value can be skipped when matching the required order.
-func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty, constantCols intset.FastIntSet) ([]*property.PhysicalProperty, bool) {
+// getConstantCols returns the join's constant columns; it is only called when
+// prop has sort items.
+func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty, getConstantCols func() intset.FastIntSet) ([]*property.PhysicalProperty, bool) {
 	all, desc := prop.AllSameOrder()
 	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftJoinKeys, desc, math.MaxFloat64, false)
 	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightJoinKeys, desc, math.MaxFloat64, false)
@@ -437,6 +460,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 		if !all {
 			return nil, false
 		}
+		constantCols := getConstantCols()
 		matchLeft := isSortPropCompatibleWithJoinKeys(prop.SortItems, p.LeftJoinKeys, constantCols)
 		matchRight := isSortPropCompatibleWithJoinKeys(prop.SortItems, p.RightJoinKeys, constantCols)
 		if !matchLeft && !matchRight {

@@ -47,6 +47,11 @@ func (*mockDelRange) removeFromGCDeleteRange(_ context.Context, _ int64) error {
 	return nil
 }
 
+// removeFromGCDeleteRangeWithSession implements delRangeManager interface.
+func (*mockDelRange) removeFromGCDeleteRangeWithSession(_ context.Context, _ sessionctx.Context, _ int64) error {
+	return nil
+}
+
 // start implements delRangeManager interface.
 func (*mockDelRange) start() {}
 

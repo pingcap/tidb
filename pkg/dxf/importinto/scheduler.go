@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -148,6 +149,7 @@ type importScheduler struct {
 	*scheduler.BaseScheduler
 
 	GlobalSort bool
+	sourceStep proto.Step
 	mu         sync.RWMutex
 	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
 	// task can be running at a time. but we might support task queuing in the future, leave it for now.
@@ -186,10 +188,11 @@ func NewImportScheduler(
 }
 
 // NewImportSchedulerForTest creates a new import scheduler for test.
-func NewImportSchedulerForTest(globalSort bool, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+func NewImportSchedulerForTest(sourceStep proto.Step, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 	return &importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), task, param),
-		GlobalSort:    globalSort,
+		GlobalSort:    sourceStep != proto.ImportStepImport,
+		sourceStep:    sourceStep,
 		taskKS:        tidb.GetGlobalKeyspaceName(),
 	}
 }
@@ -202,12 +205,13 @@ func (sch *importScheduler) Init() (err error) {
 			metricsManager.unregister(task.ID)
 		}
 	}()
-	taskMeta := &TaskMeta{}
+	taskMeta := &taskinfo.TaskMeta{}
 	if err = json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 
 	sch.GlobalSort = taskMeta.Plan.CloudStorageURI != ""
+	sch.sourceStep = getStepOfEncode(&taskMeta.Plan)
 	sch.BaseScheduler.Extension = sch
 	return sch.BaseScheduler.Init()
 }
@@ -287,7 +291,7 @@ func (sch *importScheduler) unregisterTask(ctx context.Context, task *proto.Task
 	}
 }
 
-func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta *TaskMeta) error {
+func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta *taskinfo.TaskMeta) error {
 	return sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(sch.TaskRuntime.Store(), se, taskMeta.Plan.TableInfo)
 		if err2 != nil {
@@ -325,7 +329,7 @@ func (*importScheduler) writePreparedChunkMap(
 
 // OnPrepare implements scheduler.Extension.
 func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
-	taskMeta := &TaskMeta{}
+	taskMeta := &taskinfo.TaskMeta{}
 	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
@@ -397,17 +401,16 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle storage.TaskHandle,
 	task *proto.Task,
-	execIDs []string,
+	nodeCnt int,
 	nextStep proto.Step,
 ) (resSubtaskMeta [][]byte, err error) {
-	nodeCnt := len(execIDs)
 	if kerneltype.IsNextGen() {
 		// in nextgen, node resource are scaled out automatically, we only consider
 		// the max allowed node for the task, and ignore how many node currently
 		// available.
 		nodeCnt = task.MaxNodeCount
 	}
-	taskMeta := &TaskMeta{}
+	taskMeta := &taskinfo.TaskMeta{}
 	err = json.Unmarshal(task.Meta, taskMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -435,7 +438,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 
 	previousSubtaskMetas := make(map[proto.Step][][]byte, 1)
 	switch nextStep {
-	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 		if metrics, ok := metric.GetCommonMetric(ctx); ok {
 			metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(taskMeta.Plan.TotalFileSize))
 		}
@@ -456,18 +459,18 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 			dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventTooManyIdx).Inc()
 		}
 	case proto.ImportStepMergeSort:
-		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
+		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(task.ID, sch.sourceStep)
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
+		previousSubtaskMetas[sch.sourceStep] = sortAndEncodeMeta
 	case proto.ImportStepWriteAndIngest:
 		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error"))
 		})
 		// merge sort might be skipped for some kv groups, so we need to get all
-		// subtask metas of ImportStepEncodeAndSort step too.
-		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
+		// subtask metas of the source (encode or query) step too.
+		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, sch.sourceStep)
 		if err != nil {
 			return nil, err
 		}
@@ -475,13 +478,13 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
+		previousSubtaskMetas[sch.sourceStep] = encodeAndSortMetas
 		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
 		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
 	case proto.ImportStepCollectConflicts, proto.ImportStepConflictResolution:
-		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
+		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, sch.sourceStep)
 		if err != nil {
 			return nil, err
 		}
@@ -493,7 +496,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
+		previousSubtaskMetas[sch.sourceStep] = encodeAndSortMetas
 		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
 		previousSubtaskMetas[proto.ImportStepWriteAndIngest] = ingestMetas
 		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepResolvingConflicts); err != nil {
@@ -510,8 +513,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error after ImportStepImport"))
 		})
-		step := getStepOfEncode(sch.GlobalSort)
-		metas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, step)
+		metas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, sch.sourceStep)
 		if err != nil {
 			return nil, err
 		}
@@ -519,7 +521,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[step] = metas
+		previousSubtaskMetas[sch.sourceStep] = metas
 		previousSubtaskMetas[proto.ImportStepCollectConflicts] = conflictResMetas
 		logger.Info("move to post-process step", zap.Any("result", taskMeta.Summary))
 	case proto.StepDone:
@@ -566,7 +568,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
 	logger := sch.GetLogger().With(zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	logger.Info("task done", zap.Stringer("state", task.State), zap.Error(task.Error))
-	taskMeta := &TaskMeta{}
+	taskMeta := &taskinfo.TaskMeta{}
 	err := json.Unmarshal(task.Meta, taskMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -586,7 +588,7 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 	return sch.finishJob(ctx, logger, task, taskMeta)
 }
 
-func (sch *importScheduler) switchTableMode2NormalMode(ctx context.Context, taskMeta *TaskMeta, logger *zap.Logger) {
+func (sch *importScheduler) switchTableMode2NormalMode(ctx context.Context, taskMeta *taskinfo.TaskMeta, logger *zap.Logger) {
 	if !kerneltype.IsClassic() {
 		return
 	}
@@ -609,7 +611,7 @@ func (sch *importScheduler) switchTableMode2NormalMode(ctx context.Context, task
 
 // GetEligibleInstances implements scheduler.Extension interface.
 func (*importScheduler) GetEligibleInstances(_ context.Context, task *proto.Task) ([]string, error) {
-	taskMeta := &TaskMeta{}
+	taskMeta := &taskinfo.TaskMeta{}
 	err := json.Unmarshal(task.Meta, taskMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -633,11 +635,8 @@ func (*importScheduler) IsRetryableErr(err error) bool {
 func (sch *importScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
 	case proto.StepInit, proto.StepPrepared:
-		if sch.GlobalSort {
-			return proto.ImportStepEncodeAndSort
-		}
-		return proto.ImportStepImport
-	case proto.ImportStepEncodeAndSort:
+		return sch.sourceStep
+	case proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 		return proto.ImportStepMergeSort
 	case proto.ImportStepMergeSort:
 		return proto.ImportStepWriteAndIngest
@@ -683,7 +682,7 @@ func (sch *importScheduler) switchTiKV2NormalMode(ctx context.Context, task *pro
 
 func (sch *importScheduler) updateCurrentTask(task *proto.Task) {
 	if sch.currTaskID.Swap(task.ID) != task.ID {
-		taskMeta := &TaskMeta{}
+		taskMeta := &taskinfo.TaskMeta{}
 		if err := json.Unmarshal(task.Meta, taskMeta); err == nil {
 			// for raftkv2, switch mode in local backend
 			sch.disableTiKVImportMode.Store(taskMeta.Plan.DisableTiKVImportMode || taskMeta.Plan.IsRaftKV2)
@@ -696,7 +695,7 @@ func (*importScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]by
 	return oldMeta, nil
 }
 
-func updateMeta(task *proto.Task, taskMeta *TaskMeta) error {
+func updateMeta(task *proto.Task, taskMeta *taskinfo.TaskMeta) error {
 	bs, err := json.Marshal(taskMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -706,8 +705,11 @@ func updateMeta(task *proto.Task, taskMeta *TaskMeta) error {
 	return nil
 }
 
-func getStepOfEncode(globalSort bool) proto.Step {
-	if globalSort {
+func getStepOfEncode(plan *importer.Plan) proto.Step {
+	if plan.QuerySource != nil {
+		return proto.ImportStepQuery
+	}
+	if plan.IsGlobalSort() {
 		return proto.ImportStepEncodeAndSort
 	}
 	return proto.ImportStepImport
@@ -718,13 +720,13 @@ func getStepOfEncode(globalSort bool) proto.Step {
 func updateTaskSummary(
 	handle storage.TaskHandle,
 	task *proto.Task,
-	taskMeta *TaskMeta,
+	taskMeta *taskinfo.TaskMeta,
 	nextStep proto.Step,
 	p *LogicalPlan,
 ) error {
 	// Process row count and data size
 	switch nextStep {
-	case proto.ImportStepEncodeAndSort, proto.ImportStepImport:
+	case proto.ImportStepEncodeAndSort, proto.ImportStepImport, proto.ImportStepQuery:
 		taskMeta.Summary.EncodeSummary = p.summary
 	case proto.ImportStepMergeSort:
 		taskMeta.Summary.MergeSummary = p.summary
@@ -735,7 +737,7 @@ func updateTaskSummary(
 	case proto.ImportStepConflictResolution:
 		taskMeta.Summary.ResolveConflictsSummary = p.summary
 	case proto.ImportStepPostProcess:
-		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(taskMeta.Plan.IsGlobalSort()))
+		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(&taskMeta.Plan))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -771,7 +773,7 @@ func updateTaskSummary(
 	return updateMeta(task, taskMeta)
 }
 
-func (sch *importScheduler) startJob(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, jobStep string) error {
+func (sch *importScheduler) startJob(ctx context.Context, logger *zap.Logger, taskMeta *taskinfo.TaskMeta, jobStep string) error {
 	failpoint.InjectCall("syncBeforeJobStarted", taskMeta.JobID)
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
 	if err != nil {
@@ -794,7 +796,7 @@ func (sch *importScheduler) startJob(ctx context.Context, logger *zap.Logger, ta
 	return err
 }
 
-func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step string) error {
+func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, taskMeta *taskinfo.TaskMeta, step string) error {
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
 	if err != nil {
 		return err
@@ -816,7 +818,7 @@ func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, ta
 func (sch *importScheduler) checkImportJobNotCancelled(
 	ctx context.Context,
 	logger *zap.Logger,
-	taskMeta *TaskMeta,
+	taskMeta *taskinfo.TaskMeta,
 ) error {
 	if kerneltype.IsClassic() {
 		// Classic creates the import job and DXF task in the same transaction, so
@@ -879,7 +881,7 @@ func (sch *importScheduler) updatePreparedJobInfo(ctx context.Context, logger *z
 }
 
 func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
-	task *proto.Task, taskMeta *TaskMeta) error {
+	task *proto.Task, taskMeta *taskinfo.TaskMeta) error {
 	// we have already switched import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
@@ -924,7 +926,7 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 }
 
 func (sch *importScheduler) failJob(ctx context.Context, task *proto.Task,
-	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
+	taskMeta *taskinfo.TaskMeta, logger *zap.Logger, errorMsg string) error {
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
@@ -944,7 +946,7 @@ func (sch *importScheduler) failJob(ctx context.Context, task *proto.Task,
 }
 
 func (sch *importScheduler) cancelJob(ctx context.Context, task *proto.Task,
-	meta *TaskMeta, logger *zap.Logger) error {
+	meta *taskinfo.TaskMeta, logger *zap.Logger) error {
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
@@ -976,7 +978,7 @@ func (sch *importScheduler) getTaskMgrForAccessingImportJob() (scheduler.TaskMan
 	return sch.taskKSTaskMgr, nil
 }
 
-func redactSensitiveInfo(task *proto.Task, taskMeta *TaskMeta) {
+func redactSensitiveInfo(task *proto.Task, taskMeta *taskinfo.TaskMeta) {
 	taskMeta.Stmt = ""
 	taskMeta.Plan.Path = ast.RedactURL(taskMeta.Plan.Path)
 	if taskMeta.Plan.CloudStorageURI != "" {

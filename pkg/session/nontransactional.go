@@ -207,6 +207,10 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se sessionapi.Session) e
 	if sessVars.SnapshotTS != 0 {
 		return errors.New("can't do non-transactional DML when tidb_snapshot is set")
 	}
+	if sessVars.TxnReadTS.PeakTxnReadTS() != 0 {
+		// Preserve the pending read timestamp for the next statement.
+		return errors.New("can't do non-transactional DML when tx_read_ts is set")
+	}
 
 	switch s := stmt.DMLStmt.(type) {
 	case *ast.DeleteStmt:

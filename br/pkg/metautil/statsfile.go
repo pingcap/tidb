@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util"
@@ -155,11 +154,22 @@ func (s *StatsWriter) BackupStatsDone(ctx context.Context) ([]*backuppb.StatsFil
 	return s.statsFileIndexes, nil
 }
 
+// StatsLoader loads the stats of a table from JSON into the stats storage.
+type StatsLoader interface {
+	LoadStatsFromJSONConcurrently(
+		ctx context.Context,
+		tableInfo *model.TableInfo,
+		taskCh chan *statstypes.PartitionStatisticLoadTask,
+		concurrencyForPartition int,
+	) error
+}
+
+// RestoreStats downloads the stats files of a table and loads them through statsLoader.
 func RestoreStats(
 	ctx context.Context,
 	storage storeapi.Storage,
 	cipher *backuppb.CipherInfo,
-	statsHandler *handle.Handle,
+	statsLoader StatsLoader,
 	newTableInfo *model.TableInfo,
 	statsFileIndexes []*backuppb.StatsFileIndex,
 	rewriteIDMap map[int64]int64,
@@ -171,7 +181,7 @@ func RestoreStats(
 	})
 	eg.Go(func() error {
 		// NOTICE: skip updating cache after load stats from json
-		return statsHandler.LoadStatsFromJSONConcurrently(ectx, newTableInfo, taskCh, 0)
+		return statsLoader.LoadStatsFromJSONConcurrently(ectx, newTableInfo, taskCh, 0)
 	})
 	return eg.Wait()
 }

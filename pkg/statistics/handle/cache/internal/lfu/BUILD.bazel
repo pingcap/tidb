@@ -11,7 +11,6 @@ go_library(
     visibility = ["//pkg/statistics/handle/cache:__subpackages__"],
     deps = [
         "//pkg/statistics",
-        "//pkg/statistics/handle/cache/internal",
         "//pkg/statistics/handle/cache/metrics",
         "//pkg/util/intest",
         "//pkg/util/logutil",

@@ -14,7 +14,12 @@
 package auth
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"hash"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -80,5 +85,120 @@ func BenchmarkShaPassword(b *testing.B) {
 		m, err := CheckHashingPassword(foobarPwdSHA2Hash, "foobar", mysql.AuthCachingSha2Password)
 		require.Nil(b, err)
 		require.True(b, m)
+	}
+}
+
+// Fixed fixtures use salt 01234567890123456789 and 1000 rounds. They cover
+// digest/block boundaries and byte-oriented passwords (NUL, UTF-8, invalid UTF-8).
+func TestHashCryptCompatibility(t *testing.T) {
+	cases := []struct {
+		length int
+		sha2   string
+		sm3    string
+	}{
+		{0, "$A$001$01234567890123456789DNqfbUS3KF2i3eAp7mzNRoCNpPERpdYQN3rQulIHZjA", "$A$001$01234567890123456789QIhtDy6HqozOF2YkdnqZmKm/FimFA/YwhDlrZIhTh8/"},
+		{1, "$A$001$01234567890123456789mn.jPpkj5fgNLGBjhW02eOGU4FYNmuSVCJn4ZhLV6QD", "$A$001$01234567890123456789y7/yy2T1er.VDIWjHV4v2.hg1y8Trdwj63QnTaR5OJ6"},
+		{31, "$A$001$01234567890123456789IqMNZ9VR2Mr17N7dAiWB1Q2KvjaI/M2MK34R0CheMT/", "$A$001$01234567890123456789Q/b3t9dqfnq3qSkMsSIHyPaiauSh8YojAhu4sDKkpR6"},
+		{32, "$A$001$01234567890123456789H.6MH6ooQ5i/wfQExqCV86vdMMB5.aswRG6oa6oGS52", "$A$001$01234567890123456789noOsZ4CEqaBqJbWc4i3DhGF56KXtLShrQO1TKAspEE8"},
+		{33, "$A$001$01234567890123456789Hf2TH6ARa.mRB9YprCQvFcfehFH4zAhn5Jhc/TNgmhA", "$A$001$01234567890123456789yZzcfLx2tJrts8.l4kpzAoxLpwhTAh8AkA5/xMsS/36"},
+		{63, "$A$001$01234567890123456789w.7bA9.cpGMq8r.efwn6ks5nzIf3T9hwk7HOlKTiT4/", "$A$001$01234567890123456789ZALXIPD6tfilBSDbbS5xqq5tx9c.KAu8U.0Lme.DRp."},
+		{64, "$A$001$01234567890123456789VFwC5AGFuEe.noCCbST3TEzXE7/ECfBvWfaCZxXu9J4", "$A$001$01234567890123456789QTmv3U9Of1BBXmCEtuwZq21GxVbiE61mVnRQ/IZJJ/3"},
+		{65, "$A$001$01234567890123456789VNi4DnJ3GgqbOaKSOOuSW8V9G1FTHxhq7niEXF7eVwC", "$A$001$01234567890123456789LaZxsx33EfYJ0LDjEB4HPHiQvf67ww87iWlwiZu1Ft/"},
+		{255, "$A$001$01234567890123456789hH6mCDzdkKSw.M6r62/nSrr6TNv95/Iy1cpxB5flIkC", "$A$001$01234567890123456789typDgvTgD6I2CIxUz4EamttedRN6/tA4boDZRbjNME6"},
+		{256, "$A$001$01234567890123456789cTMpT04nI.0hwMsiFiBsqI.IuTmZKakq3Sese5VBOB6", "$A$001$01234567890123456789Ho0PX1frZX9DCX/vUAb7JXE4z46VYcsiDW3zhRZyocC"},
+	}
+	for _, tc := range cases {
+		password := strings.Repeat("\x00\xc3\xa9\xff", (tc.length+3)/4)[:tc.length]
+		for _, algorithm := range []struct{ plugin, digest string }{
+			{mysql.AuthCachingSha2Password, tc.sha2},
+			{mysql.AuthTiDBSM3Password, tc.sm3},
+		} {
+			t.Run(fmt.Sprintf("%s/%d", algorithm.plugin, tc.length), func(t *testing.T) {
+				ok, err := CheckHashingPassword([]byte(algorithm.digest), password, algorithm.plugin)
+				require.NoError(t, err)
+				require.True(t, ok)
+			})
+		}
+	}
+}
+
+func TestHashCryptAllocations(t *testing.T) {
+	for _, algorithm := range []struct {
+		name    string
+		hash    func([]byte) []byte
+		newHash func() hash.Hash
+	}{
+		{mysql.AuthCachingSha2Password, Sha256Hash, sha256.New},
+		{mysql.AuthTiDBSM3Password, Sm3Hash, NewSM3},
+	} {
+		for _, length := range []int{128, 512, 2048} {
+			t.Run(fmt.Sprintf("%s/%d", algorithm.name, length), func(t *testing.T) {
+				password := strings.Repeat("p", length)
+				salt := []byte("01234567890123456789")
+				var before, after runtime.MemStats
+				runtime.ReadMemStats(&before)
+				// One round isolates password preparation from the stretching rounds.
+				result := hashCrypt(password, salt, 1, algorithm.hash, algorithm.newHash)
+				runtime.ReadMemStats(&after)
+				require.NotEmpty(t, result)
+				allocated := after.TotalAlloc - before.TotalAlloc
+				t.Logf("%d-byte password: %d bytes allocated", length, allocated)
+				// Allow allocator and race-instrumentation overhead while keeping
+				// the budget linear and well below the old quadratic allocation.
+				require.Less(t, allocated, uint64(64*1024+64*length))
+			})
+		}
+	}
+}
+
+func TestHashingPasswordLength(t *testing.T) {
+	for _, algorithm := range []struct {
+		plugin string
+		legacy string
+	}{
+		{mysql.AuthCachingSha2Password, "$A$001$01234567890123456789Upag/MxAud6snDfLlZtpcfcUH6KrG49kq78PIQlaR77"},
+		{mysql.AuthTiDBSM3Password, "$A$001$01234567890123456789cSAm/xjpP6pWCxom0/CiaMY/jThLKK3miAlzMPJtu35"},
+	} {
+		t.Run(algorithm.plugin, func(t *testing.T) {
+			// Preserve authentication of existing passwords longer than 256 bytes.
+			ok, err := CheckHashingPassword([]byte(algorithm.legacy), strings.Repeat("p", 257), algorithm.plugin)
+			require.NoError(t, err)
+			require.True(t, ok)
+			for _, password := range []string{strings.Repeat("p", 257), strings.Repeat("界", 86), strings.Repeat("p", 512)} {
+				digest := NewHashPassword(password, algorithm.plugin)
+				require.NotEmpty(t, digest)
+				ok, err := CheckHashingPassword([]byte(digest), password, algorithm.plugin)
+				require.NoError(t, err)
+				require.True(t, ok)
+				// A long password must be hashed in full, without truncation.
+				ok, err = CheckHashingPassword([]byte(digest), password[:256], algorithm.plugin)
+				require.NoError(t, err)
+				require.False(t, ok)
+			}
+		})
+	}
+}
+
+func BenchmarkCheckHashingPassword(b *testing.B) {
+	for _, algorithm := range []struct {
+		plugin string
+		digest []byte
+	}{
+		{mysql.AuthCachingSha2Password, foobarPwdSHA2Hash},
+		{mysql.AuthTiDBSM3Password, foobarPwdSM3Hash},
+	} {
+		for _, length := range []int{32, 512, 2048} {
+			b.Run(fmt.Sprintf("%s/%d", algorithm.plugin, length), func(b *testing.B) {
+				password := strings.Repeat("p", length)
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					ok, err := CheckHashingPassword(algorithm.digest, password, algorithm.plugin)
+					if err != nil || ok {
+						b.Fatalf("unexpected password verification result: match=%t, err=%v", ok, err)
+					}
+				}
+			})
+		}
 	}
 }

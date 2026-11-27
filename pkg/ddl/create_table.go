@@ -152,6 +152,8 @@ func createTable(w *worker, jobCtx *jobContext, job *model.Job, r autoid.Require
 			return tbInfo, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
+		// If the job is cancelled, deleteAffinityGroupsOfCancelledJob deletes the
+		// groups of the table, including groups PD created before it failed.
 		if tbInfo.Affinity != nil {
 			if err = createTableAffinityGroupsInPD(jobCtx, tbInfo); err != nil {
 				job.State = model.JobStateCancelled
@@ -861,6 +863,8 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 		if tp.GetDecimal() != types.UnspecifiedFsp && (tp.GetDecimal() < types.MinFsp || tp.GetDecimal() > types.MaxFsp) {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.GetDecimal(), colName, types.MaxFsp)
 		}
+	case mysql.TypeGeometry:
+		return dbterror.ErrNotSupportedYet.GenWithStackByArgs("geometry columns")
 	}
 	return nil
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/metrics"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -66,6 +67,17 @@ func init() {
 	// Setup the Hooks to dynamic control global resource controller.
 	variable.EnableGlobalResourceControlFunc = tikv.EnableResourceControl
 	variable.DisableGlobalResourceControlFunc = tikv.DisableResourceControl
+}
+
+// ListCachedStores returns every TiKV store opened in this process (each keyspace).
+func ListCachedStores() []kv.Storage {
+	mc.Lock()
+	defer mc.Unlock()
+	out := make([]kv.Storage, 0, len(mc.cache))
+	for _, s := range mc.cache {
+		out = append(out, s)
+	}
+	return out
 }
 
 // Option is a function that changes some config of Driver
@@ -294,7 +306,35 @@ func newSafePointKV(
 }
 
 func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
-	opts := []opt.ClientOption{
+	tsoBatchWaitInterval := time.Duration(float64(time.Millisecond) * vardef.DefTiDBTSOClientBatchMaxWaitTime)
+	tsoRPCConcurrency := vardef.TSOClientRPCModeToConcurrency(vardef.DefTiDBTSOClientRPCMode)
+	if tsoRPCConcurrency == 0 {
+		logutil.BgLogger().Warn("invalid TiDB default for PD client TSO RPC mode; using PD client default",
+			zap.String("variable", vardef.TiDBTSOClientRPCMode),
+			zap.String("value", vardef.DefTiDBTSOClientRPCMode))
+	}
+	opts := make([]opt.ClientOption, 0, 9)
+	opts = append(opts,
+		opt.ClientOption(func(o *opt.Option) {
+			if err := o.SetMaxTSOBatchWaitInterval(tsoBatchWaitInterval); err != nil {
+				logutil.BgLogger().Warn("invalid TiDB default for PD client TSO batch wait interval; using PD client default",
+					zap.String("variable", vardef.TiDBTSOClientBatchMaxWaitTime),
+					zap.Float64("value_ms", vardef.DefTiDBTSOClientBatchMaxWaitTime),
+					zap.Error(err))
+			}
+		}),
+		opt.ClientOption(func(o *opt.Option) {
+			o.SetEnableTSOFollowerProxy(vardef.DefTiDBEnableTSOFollowerProxy)
+		}),
+		opt.WithEnableFollowerHandle(vardef.DefPDEnableFollowerHandleRegion),
+	)
+	if tsoRPCConcurrency != 0 {
+		opts = append(opts, opt.ClientOption(func(o *opt.Option) {
+			o.SetTSOClientRPCConcurrency(tsoRPCConcurrency)
+		}))
+	}
+	opts = append(opts,
+		opt.WithEnableRouterClient(vardef.DefTiDBEnableBatchQueryRegion),
 		opt.WithGRPCDialOptions(
 			// keep the same with etcd, see
 			// https://github.com/etcd-io/etcd/blob/5704c6148d798ea444db26a966394406d8c10526/server/etcdserver/api/v3rpc/grpc.go#L34
@@ -304,9 +344,9 @@ func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
 				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 			}),
 		),
-		opt.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout) * time.Second),
+		opt.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
 		opt.WithForwardingOption(config.GetGlobalConfig().EnableForwarding),
-	}
+	)
 	if labels := metricscommon.GetConstLabels(); len(labels) > 0 {
 		opts = append(opts, opt.WithMetricsLabels(labels))
 	}

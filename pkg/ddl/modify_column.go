@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	parser_types "github.com/pingcap/tidb/pkg/parser/types"
@@ -49,20 +48,16 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
 )
 
 func hasModifyFlag(col *model.ColumnInfo) bool {
 	return col.ChangingFieldType != nil || mysql.HasPreventNullInsertFlag(col.GetFlag())
-}
-
-func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
-	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
 }
 
 func isColumnCommentOnlyChange(oldCol, newCol *model.ColumnInfo) bool {
@@ -82,78 +77,6 @@ func clearModifyColumnTempFlags(col *model.ColumnInfo) {
 	}
 	col.DelFlag(mysql.PreventNullInsertFlag)
 	col.ChangingFieldType = nil
-}
-
-func isIntegerChange(from, to *model.ColumnInfo) bool {
-	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
-}
-
-func isCharChange(from, to *model.ColumnInfo) bool {
-	return types.IsTypeChar(from.GetType()) && types.IsTypeChar(to.GetType())
-}
-
-// getModifyColumnType gets the modify column type.
-//  1. ModifyTypeNoReorg: The range of new type is a superset of the old type
-//  2. ModifyTypeNoReorgWithCheck: The range of new type is a subset of the old type, but we are running in strict SQL mode.
-//     And there is no index on this column.
-//     The difference between ModifyTypeNoReorgWithCheck and ModifyTypeNoReorg is that we need some additional checks.
-//  3. ModifyTypeIndexReorg: The range of new type is a subset of the old type, and there are indexes on this column.
-//  4. ModifyTypeReorg: other
-//
-// We need to ensure it's compatible with job submitted from older version of TiDB.
-func getModifyColumnType(
-	args *model.ModifyColumnArgs,
-	tblInfo *model.TableInfo,
-	oldCol *model.ColumnInfo,
-	sqlMode mysql.SQLMode) byte {
-	newCol := args.Column
-	if noReorgDataStrict(tblInfo, oldCol, args.Column) {
-		// It's not NULL->NOTNULL change
-		if !isNullToNotNullChange(oldCol, newCol) {
-			return model.ModifyTypeNoReorg
-		}
-		return model.ModifyTypeNoReorgWithCheck
-	}
-
-	// For backward compatibility
-	if args.ModifyColumnType == mysql.TypeNull {
-		return model.ModifyTypeReorg
-	}
-
-	// FIXME(joechenrh): handle partition and TiFlash replica case
-	if tblInfo.Partition != nil || (tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0) {
-		return model.ModifyTypeReorg
-	}
-
-	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
-		if v, ok := val.(bool); ok && v {
-			failpoint.Return(model.ModifyTypeReorg)
-		}
-	})
-
-	// FIXME(joechenrh): remove this when stats correctness is resolved.
-	// Since stats may store bytes encoded by codec.EncodeKey, we should disable the optimization
-	// if the same data produces different encoded bytes for the old and new types.
-	if (isIntegerChange(oldCol, args.Column) &&
-		mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(args.Column.GetFlag())) ||
-		(isCharChange(oldCol, args.Column) &&
-			!collate.CompatibleCollate(oldCol.GetCollate(), args.Column.GetCollate())) {
-		return model.ModifyTypeReorg
-	}
-
-	if !sqlMode.HasStrictMode() {
-		return model.ModifyTypeReorg
-	}
-
-	if needRowReorg(oldCol, args.Column) {
-		return model.ModifyTypeReorg
-	}
-
-	relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
-	if len(relatedIndexes) == 0 || !needIndexReorg(oldCol, args.Column) {
-		return model.ModifyTypeNoReorgWithCheck
-	}
-	return model.ModifyTypeIndexReorg
 }
 
 func getChangingCol(
@@ -276,35 +199,41 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	// For first time running this job, or the job from older version,
-	// we need to fill the ModifyColumnType.
+	// validate and resolve ModifyColumnType from current metadata.
+	resolvedModifyType := false
 	if args.ModifyColumnType == model.ModifyTypeNone ||
-		args.ModifyColumnType == mysql.TypeNull {
-		// Check the modify types again, as the type may be changed by other no-reorg modify-column jobs.
-		// For example, there are two DDLs submitted in parallel:
-		//      CREATE TABLE t (c VARCHAR(255) charset utf8);
-		// 		ALTER TABLE t MODIFY COLUMN c VARCHAR(255) charset utf8mb4;
-		// 		ALTER TABLE t MODIFY COLUMN c VARCHAR(100) charset utf8;
-		// Previously, the second DDL will be submitted successfully (VARCHAR(255) utf8 -> VARCHAR(100) utf8 is OK)
-		// but fail during execution, since the columnID has changed. However, as we now may reuse the old column,
-		// we must check the type again here as utf8mb4->utf8 is an invalid change.
-		if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+		args.ModifyColumnType == model.ModifyColumnType(mysql.TypeNull) {
+		var modifyType model.ModifyColumnType
+		if args.ChangingColumn != nil {
+			// Legacy jobs that already created a changing column/indexes on an
+			// older binary must stay on the full-reorg state machine for both
+			// resume and rollback cleanup.
+			modifyType = model.ModifyTypeReorg
+		} else {
+			// Check the modify types again, as the type may be changed by other no-reorg modify-column jobs.
+			// For example, there are two DDLs submitted in parallel:
+			//      CREATE TABLE t (c VARCHAR(255) charset utf8);
+			// 		ALTER TABLE t MODIFY COLUMN c VARCHAR(255) charset utf8mb4;
+			// 		ALTER TABLE t MODIFY COLUMN c VARCHAR(100) charset utf8;
+			// Previously, the second DDL will be submitted successfully (VARCHAR(255) utf8 -> VARCHAR(100) utf8 is OK)
+			// but fail during execution, since the columnID has changed. However, as we now may reuse the old column,
+			// we must check the type again here as utf8mb4->utf8 is an invalid change.
+			var resolveErr error
+			modifyType, resolveErr = resolveModifyColumnType(tblInfo, oldCol, args.Column, args.ModifyColumnType, job.SQLMode)
+			if resolveErr != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(resolveErr)
+			}
 		}
 
-		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode)
+		args.ModifyColumnType = modifyType
+		resolvedModifyType = true
 		logutil.DDLLogger().Info("get type for modify column",
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
 			zap.Int64("oldColumnID", oldCol.ID),
 			zap.String("type", model.ModifyTypeToString(args.ModifyColumnType)),
 		)
-		if oldCol.GetType() == mysql.TypeVarchar && args.Column.GetType() == mysql.TypeString &&
-			(args.ModifyColumnType == model.ModifyTypeNoReorgWithCheck ||
-				args.ModifyColumnType == model.ModifyTypeIndexReorg) {
-			logutil.DDLLogger().Info("meet varchar to char modify column, change type to precheck")
-			args.ModifyColumnType = model.ModifyTypePrecheck
-		}
 	}
 
 	if job.IsRollingback() {
@@ -328,9 +257,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+	if !resolvedModifyType {
+		if _, err = analyzeModifyColumn(tblInfo, oldCol, args.Column); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	if err = checkColumnReferencedByPartialCondition(tblInfo, args.Column.Name); err != nil {
@@ -341,6 +272,19 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	if args.ChangingColumn == nil {
 		if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
 			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
+	if tblInfo.MaterializedViewBase != nil && job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible &&
+		(args.ModifyColumnType == model.ModifyTypeNoReorg || args.ModifyColumnType == model.ModifyTypeNoReorgWithCheck) {
+		// Reject unsupported descendant changes before this sub-job's last reversible
+		// point. Applying the change rechecks dependencies, which can grow outside
+		// the submitted involving set between job steps.
+		if _, err := buildMaterializedViewRelatedTableInfoForModifyColumn(
+			jobCtx.infoCache.GetLatest(), jobCtx.metaMut, "MODIFY COLUMN", tblInfo, oldCol, args.Column,
+		); err != nil {
+			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
 	}
@@ -543,7 +487,7 @@ func (w *worker) finishModifyColumnWithoutReorg(
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	mvRelatedInfos, err := buildMaterializedViewRelatedTableInfoForModifyColumn(jobCtx, tblInfo, oldCol, newCol)
+	mvRelatedInfos, err := buildMaterializedViewRelatedTableInfoForModifyColumn(jobCtx.infoCache.GetLatest(), jobCtx.metaMut, "MODIFY COLUMN", tblInfo, oldCol, newCol)
 	if err != nil {
 		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
@@ -563,71 +507,114 @@ func (w *worker) finishModifyColumnWithoutReorg(
 }
 
 func buildMaterializedViewRelatedTableInfoForModifyColumn(
-	jobCtx *jobContext,
+	is infoschema.InfoSchema,
+	metaMut *meta.Mutator,
+	op string,
 	baseTblInfo *model.TableInfo,
 	oldCol *model.ColumnInfo,
 	newCol *model.ColumnInfo,
 ) ([]schemaIDAndTableInfo, error) {
-	baseInfo := baseTblInfo.MaterializedViewBase
-	if baseInfo == nil || isColumnCommentOnlyChange(oldCol, newCol) {
+	if baseTblInfo.MaterializedViewBase == nil || isColumnCommentOnlyChange(oldCol, newCol) {
 		return nil, nil
 	}
 
-	is := jobCtx.infoCache.GetLatest()
 	var relatedInfos []schemaIDAndTableInfo
-	if baseInfo.MLogID != 0 {
-		mlogInfoFromIS, ok := is.TableInfoByID(baseInfo.MLogID)
+	// Keep one pending TableInfo per table so all column changes are persisted together.
+	relatedIndexes := make(map[int64]int)
+	loadTable := func(tableID int64, description string) (schemaIDAndTableInfo, error) {
+		if index, ok := relatedIndexes[tableID]; ok {
+			return relatedInfos[index], nil
+		}
+		infoFromIS, ok := is.TableInfoByID(tableID)
 		if !ok {
-			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: materialized view log table not found")
+			return schemaIDAndTableInfo{}, dbterror.ErrInvalidDDLJob.GenWithStack("modify column: %s table not found", description)
 		}
-		mlogDB, ok := infoschema.SchemaByTable(is, mlogInfoFromIS)
+		db, ok := infoschema.SchemaByTable(is, infoFromIS)
 		if !ok {
-			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: materialized view log schema not found")
+			return schemaIDAndTableInfo{}, dbterror.ErrInvalidDDLJob.GenWithStack("modify column: %s schema not found", description)
 		}
-		mlogTableInfo, err := getTableInfo(jobCtx.metaMut, baseInfo.MLogID, mlogDB.ID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if err := validateMaterializedViewLogInfoForModifyColumn(baseTblInfo, mlogTableInfo); err != nil {
-			return nil, err
-		}
-		mlogCol, tracked, err := trackedMaterializedViewLogColumnForModifyColumn(mlogTableInfo, oldCol.Name.L)
-		if err != nil {
-			return nil, err
-		}
-		if tracked {
-			newFieldType, err := validateMaterializedViewLogColumnTypeForModifyColumn("MODIFY COLUMN", mlogTableInfo, mlogCol, newCol)
+		var info *model.TableInfo
+		if metaMut == nil {
+			// Preflight must not mutate shared InfoSchema metadata.
+			info = infoFromIS.Clone()
+		} else {
+			var err error
+			info, err = getTableInfo(metaMut, tableID, db.ID)
 			if err != nil {
-				return nil, err
+				return schemaIDAndTableInfo{}, errors.Trace(err)
 			}
-			mlogCol.FieldType = newFieldType
-			relatedInfos = append(relatedInfos, schemaIDAndTableInfo{schemaID: mlogDB.ID, tblInfo: mlogTableInfo})
+		}
+		return schemaIDAndTableInfo{schemaID: db.ID, tblInfo: info}, nil
+	}
+	addChangedTable := func(info schemaIDAndTableInfo) {
+		if _, ok := relatedIndexes[info.tblInfo.ID]; !ok {
+			relatedIndexes[info.tblInfo.ID] = len(relatedInfos)
+			relatedInfos = append(relatedInfos, info)
 		}
 	}
 
-	for _, mviewID := range baseInfo.MViewIDs {
-		mviewInfoFromIS, ok := is.TableInfoByID(mviewID)
-		if !ok {
-			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: dependent materialized view table not found")
+	var visit func(*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo) error
+	visit = func(base *model.TableInfo, oldCol, newCol *model.ColumnInfo) error {
+		baseInfo := base.MaterializedViewBase
+		if baseInfo == nil {
+			return nil
 		}
-		mviewDB, ok := infoschema.SchemaByTable(is, mviewInfoFromIS)
-		if !ok {
-			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: dependent materialized view schema not found")
+		if baseInfo.MLogID != 0 {
+			mlogInfo, err := loadTable(baseInfo.MLogID, "materialized view log")
+			if err != nil {
+				return err
+			}
+			if err := validateMaterializedViewLogInfoForModifyColumn(base, mlogInfo.tblInfo); err != nil {
+				return err
+			}
+			mlogCol, tracked, err := trackedMaterializedViewLogColumnForModifyColumn(mlogInfo.tblInfo, oldCol.Name.L)
+			if err != nil {
+				return err
+			}
+			if tracked {
+				if isNullToNotNullChange(oldCol, newCol) {
+					return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("%s on base table with materialized view log does not support changing tracked columns from NULL to NOT NULL", op)
+				}
+				newFieldType, err := validateMaterializedViewLogColumnTypeForModifyColumn(op, mlogInfo.tblInfo, mlogCol, newCol)
+				if err != nil {
+					return err
+				}
+				if !mlogCol.FieldType.Equals(&newFieldType) {
+					mlogCol.FieldType = newFieldType
+					addChangedTable(mlogInfo)
+				}
+			}
 		}
-		mviewTableInfo, err := getTableInfo(jobCtx.metaMut, mviewID, mviewDB.ID)
-		if err != nil {
-			return nil, errors.Trace(err)
+
+		for _, mviewID := range baseInfo.MViewIDs {
+			mviewInfo, err := loadTable(mviewID, "dependent materialized view")
+			if err != nil {
+				return err
+			}
+			mview := mviewInfo.tblInfo
+			usage, err := validateDependentMaterializedViewModifyColumn(op, base, mview, oldCol, newCol)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			for _, off := range usage.directOutputOffsets {
+				mviewOldCol := mview.Columns[off]
+				mviewNewCol := mviewOldCol.Clone()
+				mviewNewCol.FieldType = fieldTypeForMVRelatedColumn(mviewOldCol, newCol)
+				if mviewOldCol.FieldType.Equals(&mviewNewCol.FieldType) {
+					continue
+				}
+				mview.Columns[off] = mviewNewCol
+				addChangedTable(mviewInfo)
+				// Follow the MV's actual output column name, which may differ from the base column.
+				if err := visit(mview, mviewOldCol, mviewNewCol); err != nil {
+					return err
+				}
+			}
 		}
-		usage, err := validateDependentMaterializedViewModifyColumn("MODIFY COLUMN", baseTblInfo, mviewTableInfo, oldCol, newCol)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for _, off := range usage.directOutputOffsets {
-			mviewTableInfo.Columns[off].FieldType = fieldTypeForMVRelatedColumn(mviewTableInfo.Columns[off], newCol)
-		}
-		if len(usage.directOutputOffsets) > 0 {
-			relatedInfos = append(relatedInfos, schemaIDAndTableInfo{schemaID: mviewDB.ID, tblInfo: mviewTableInfo})
-		}
+		return nil
+	}
+	if err := visit(baseTblInfo, oldCol, newCol); err != nil {
+		return nil, err
 	}
 	return relatedInfos, nil
 }
@@ -661,7 +648,7 @@ func validateMaterializedViewLogColumnTypeForModifyColumn(
 	newFieldType := fieldTypeForMVRelatedColumn(mlogCol, newCol)
 	mlogNewCol := mlogCol.Clone()
 	mlogNewCol.FieldType = newFieldType
-	if !noReorgDataStrict(mlogTableInfo, mlogCol, mlogNewCol) {
+	if !isMetaOnlyChange(mlogTableInfo, mlogCol, mlogNewCol) {
 		return newFieldType, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 			fmt.Sprintf("%s on base table with materialized view log only supports no-reorg compatible type changes", op),
 		)
@@ -717,7 +704,7 @@ func validateDependentMaterializedViewModifyColumn(
 		mviewOldCol := mviewTableInfo.Columns[off]
 		mviewNewCol := mviewOldCol.Clone()
 		mviewNewCol.FieldType = fieldTypeForMVRelatedColumn(mviewOldCol, newCol)
-		if !noReorgDataStrict(mviewTableInfo, mviewOldCol, mviewNewCol) {
+		if !isMetaOnlyChange(mviewTableInfo, mviewOldCol, mviewNewCol) {
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				fmt.Sprintf("%s on base table with materialized view dependencies only supports no-reorg compatible type changes for direct output columns", op),
 			)
@@ -909,7 +896,7 @@ func (w *worker) precheckForVarcharToChar(
 		if isNullToNotNullChange(oldCol, newCol) {
 			oldCol.AddFlag(mysql.PreventNullInsertFlag)
 		}
-		if !noReorgDataStrict(tblInfo, oldCol, newCol) {
+		if !isMetaOnlyChange(tblInfo, oldCol, newCol) {
 			oldCol.ChangingFieldType = &newCol.FieldType
 		}
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
@@ -924,7 +911,7 @@ func (w *worker) precheckForVarcharToChar(
 	// If existing data is in range, we continue running without row reorg.
 	// The flag is retained, so string with trailing spaces still can't be inserted.
 	if err == nil {
-		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode)
+		args.ModifyColumnType = resolveModifyColumnTypeAfterPrecheck(tblInfo, oldCol, newCol, args.ModifyColumnType, job.SQLMode)
 		logutil.DDLLogger().Info("precheck done, change modify type",
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
@@ -976,7 +963,7 @@ func (w *worker) doModifyColumnWithCheck(
 		if isNullToNotNullChange(oldCol, newCol) {
 			oldCol.AddFlag(mysql.PreventNullInsertFlag)
 		}
-		if !noReorgDataStrict(tblInfo, oldCol, newCol) {
+		if !isMetaOnlyChange(tblInfo, oldCol, newCol) {
 			oldCol.ChangingFieldType = &newCol.FieldType
 		}
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
@@ -986,7 +973,7 @@ func (w *worker) doModifyColumnWithCheck(
 		jobCtx.stepCtx, w,
 		dbInfo.Name, tblInfo.Name,
 		oldCol, newCol,
-		!noReorgDataStrict(tblInfo, oldCol, newCol),
+		!isMetaOnlyChange(tblInfo, oldCol, newCol),
 	)
 	if err != nil {
 		// If checked is true, it means we have done the check and found invalid data.
@@ -1008,11 +995,31 @@ func (w *worker) doModifyColumnWithCheck(
 	return w.finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
 }
 
+// preserveOriginDefaultValue retains oldCol's origin default value when
+// MODIFY COLUMN reuses existing row storage without rewriting rows.
+func preserveOriginDefaultValue(newCol, oldCol *model.ColumnInfo) {
+	newCol.OriginDefaultValue = oldCol.OriginDefaultValue
+	newCol.OriginDefaultValueBit = oldCol.OriginDefaultValueBit
+	newCol.Version = oldCol.Version
+	if newCol.GetOriginDefaultValue() == nil || oldCol.FieldType.Equals(&newCol.FieldType) {
+		return
+	}
+	// If the old origin default does not fit the narrowed target type (possible
+	// only when no row depends on it, otherwise data validation would have failed),
+	// clear it so coprocessor scans do not emit truncation warnings when encoding defaults.
+	ctx := exprctx.CtxWithHandleTruncateErrLevel(newReorgExprCtx(), errctx.LevelError)
+	if _, err := table.GetColOriginDefaultValue(ctx, newCol); err != nil {
+		newCol.OriginDefaultValue = nil
+		newCol.OriginDefaultValueBit = nil
+	}
+}
+
 func adjustTableInfoAfterModifyColumn(
 	tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) error {
 	// We need the latest column's offset and state. This information can be obtained from the store.
 	newCol.Offset = oldCol.Offset
 	newCol.State = oldCol.State
+	preserveOriginDefaultValue(newCol, oldCol)
 	if pos != nil && pos.RelativeColumn != nil && oldCol.Name.L == pos.RelativeColumn.Name.L {
 		// For cases like `modify column b after b`, it should report this error.
 		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
@@ -1092,39 +1099,6 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
-func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	if isIntegerChange(oldCol, changingCol) {
-		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
-	}
-
-	intest.Assert(isCharChange(oldCol, changingCol))
-
-	// Check index key part, ref tablecodec.GenIndexKey
-	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
-		return true
-	}
-
-	// Check index value part, ref tablecodec.GenIndexValuePortal
-	// TODO(joechenrh): It's better to check each index here, because not all indexes need
-	// reorg even if the below condition is true.
-	return types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&changingCol.FieldType)
-}
-
-func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	// Integer changes can skip reorg
-	if isIntegerChange(oldCol, changingCol) {
-		return false
-	}
-
-	// Other changes except char changes need row reorg.
-	if !isCharChange(oldCol, changingCol) {
-		return true
-	}
-
-	// We have checked charset before, only need to check binary string, which needs padding.
-	return types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType)
-}
-
 // checkModifyColumnData checks the values of the old column data
 func checkModifyColumnData(
 	ctx context.Context,
@@ -1176,15 +1150,19 @@ func buildCheckSQLFromModifyColumn(
 
 	var conditions []string
 	template := "SELECT %s FROM %s WHERE %s LIMIT 1"
-	checkColName := fmt.Sprintf("`%s`", oldCol.Name.O)
-	tableName := fmt.Sprintf("`%s`.`%s`", dbName.O, tblName.O)
+	checkColName := sqlescape.MustEscapeSQL("%n", oldCol.Name.O)
+	tableName := sqlescape.MustEscapeSQL("%n.%n", dbName.O, tblName.O)
 
 	if checkValueRange {
 		if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
 			// Integer conversion
 			conditions = append(conditions, buildCheckRangeForIntegerTypes(oldCol, changingCol))
 		} else {
-			conditions = append(conditions, fmt.Sprintf("LENGTH(%s) > %d", checkColName, changingCol.FieldType.GetFlen()))
+			lengthFunc := "CHAR_LENGTH"
+			if stringLengthInBytes(changingCol) {
+				lengthFunc = "LENGTH"
+			}
+			conditions = append(conditions, fmt.Sprintf("%s(%s) > %d", lengthFunc, checkColName, changingCol.GetFlen()))
 			if oldTp == mysql.TypeVarchar && changingTp == mysql.TypeString {
 				conditions = append(conditions, fmt.Sprintf("%s LIKE '%% '", checkColName))
 			}
@@ -1193,7 +1171,7 @@ func buildCheckSQLFromModifyColumn(
 
 	if isNullToNotNullChange(oldCol, changingCol) {
 		if !(oldTp != mysql.TypeTimestamp && changingTp == mysql.TypeTimestamp) {
-			conditions = append(conditions, fmt.Sprintf("`%s` IS NULL", oldCol.Name.O))
+			conditions = append(conditions, fmt.Sprintf("%s IS NULL", checkColName))
 		}
 	}
 
@@ -1209,7 +1187,7 @@ func buildCheckRangeForIntegerTypes(oldCol, changingCol *model.ColumnInfo) strin
 	changingTp := changingCol.GetType()
 	changingUnsigned := mysql.HasUnsignedFlag(changingCol.GetFlag())
 
-	columnName := fmt.Sprintf("`%s`", oldCol.Name.O)
+	columnName := sqlescape.MustEscapeSQL("%n", oldCol.Name.O)
 
 	if changingUnsigned {
 		upperBound := types.IntegerUnsignedUpperBound(changingTp)
@@ -1595,7 +1573,9 @@ func (w *worker) doModifyColumnIndexReorg(
 			oldTp := oldCol.FieldType
 			oldName := oldCol.Name
 			oldID := oldCol.ID
-			tblInfo.Columns[oldCol.Offset] = args.Column.Clone()
+			newCol := args.Column.Clone()
+			preserveOriginDefaultValue(newCol, oldCol)
+			tblInfo.Columns[oldCol.Offset] = newCol
 			tblInfo.Columns[oldCol.Offset].ChangingFieldType = &oldTp
 			tblInfo.Columns[oldCol.Offset].Offset = oldCol.Offset
 			tblInfo.Columns[oldCol.Offset].ID = oldID
@@ -2246,10 +2226,11 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(col.ColumnInfo, newCol.ColumnInfo, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
+	change, err := analyzeModifyColumn(t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	mayNeedChangeColData := !noReorgDataStrict(t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
+	mayNeedChangeColData := change != model.ModifyTypeNoReorg
 	if err := validateMaterializedViewBaseModifyColumn(ctx, is, t, col.ColumnInfo, newCol.ColumnInfo, spec, mayNeedChangeColData); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2335,6 +2316,8 @@ func GetModifiableColumnJob(
 		return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 
+	// Earlier DDLs can change the source type before this job runs. Reserve
+	// reorg scheduling and settings; execution selects the actual conversion.
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
@@ -2343,7 +2326,7 @@ func GetModifiableColumnJob(
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionModifyColumn,
 		BinlogInfo:     &model.HistoryInfo{},
-		NeedReorg:      mayNeedChangeColData,
+		NeedReorg:      true,
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
@@ -2370,41 +2353,54 @@ func buildInvolvingSchemaInfoForMaterializedViewBaseModifyColumn(
 	schema *model.DBInfo,
 	baseTblInfo *model.TableInfo,
 ) []model.InvolvingSchemaInfo {
-	if is == nil || baseTblInfo == nil || schema == nil || baseTblInfo.MaterializedViewBase == nil {
+	if is == nil || baseTblInfo == nil || schema == nil {
 		return nil
 	}
 	baseInfo := baseTblInfo.MaterializedViewBase
-	if baseInfo.MLogID == 0 && len(baseInfo.MViewIDs) == 0 {
+	if baseInfo == nil || (baseInfo.MLogID == 0 && len(baseInfo.MViewIDs) == 0) {
 		return nil
 	}
+
 	involving := make([]model.InvolvingSchemaInfo, 0, 2+len(baseInfo.MViewIDs))
 	seen := make(map[string]struct{}, 2+len(baseInfo.MViewIDs))
-	addTable := func(dbName, tableName string) {
+	addTable := func(dbName, tableName string) bool {
 		if dbName == "" || tableName == "" {
-			return
+			return false
 		}
 		key := dbName + "\x00" + tableName
 		if _, ok := seen[key]; ok {
-			return
+			return false
 		}
 		seen[key] = struct{}{}
 		involving = append(involving, model.InvolvingSchemaInfo{Database: dbName, Table: tableName})
+		return true
 	}
-	addTable(schema.Name.L, baseTblInfo.Name.L)
-	if baseInfo.MLogID != 0 {
-		if mlogMeta, ok := is.TableInfoByID(baseInfo.MLogID); ok {
-			if mlogDB, ok := infoschema.SchemaByTable(is, mlogMeta); ok {
-				addTable(mlogDB.Name.L, mlogMeta.Name.L)
+
+	var addDependencies func(string, *model.TableInfo)
+	addDependencies = func(dbName string, info *model.TableInfo) {
+		if !addTable(dbName, info.Name.L) || info.MaterializedViewBase == nil {
+			return
+		}
+		baseInfo := info.MaterializedViewBase
+		if baseInfo.MLogID != 0 {
+			if mlogMeta, ok := is.TableInfoByID(baseInfo.MLogID); ok {
+				if mlogDB, ok := infoschema.SchemaByTable(is, mlogMeta); ok {
+					addTable(mlogDB.Name.L, mlogMeta.Name.L)
+				}
+			}
+		}
+		for _, mviewID := range baseInfo.MViewIDs {
+			mviewMeta, ok := is.TableInfoByID(mviewID)
+			if !ok {
+				continue
+			}
+			mviewDB, ok := infoschema.SchemaByTable(is, mviewMeta)
+			if ok {
+				addDependencies(mviewDB.Name.L, mviewMeta)
 			}
 		}
 	}
-	for _, mviewID := range baseInfo.MViewIDs {
-		if mviewMeta, ok := is.TableInfoByID(mviewID); ok {
-			if mviewDB, ok := infoschema.SchemaByTable(is, mviewMeta); ok {
-				addTable(mviewDB.Name.L, mviewMeta.Name.L)
-			}
-		}
-	}
+	addDependencies(schema.Name.L, baseTblInfo)
 	return involving
 }
 
@@ -2433,7 +2429,6 @@ func validateMaterializedViewBaseModifyColumn(
 		op = "CHANGE COLUMN"
 	}
 	var mlogTableInfo *model.TableInfo
-	var mlogCol *model.ColumnInfo
 	tracked := false
 	if hasMLog {
 		mlogTable, ok := is.TableByID(ctx, baseInfo.MLogID)
@@ -2445,7 +2440,7 @@ func validateMaterializedViewBaseModifyColumn(
 			return err
 		}
 		var err error
-		mlogCol, tracked, err = trackedMaterializedViewLogColumnForModifyColumn(mlogTableInfo, oldCol.Name.L)
+		_, tracked, err = trackedMaterializedViewLogColumnForModifyColumn(mlogTableInfo, oldCol.Name.L)
 		if err != nil {
 			return err
 		}
@@ -2474,113 +2469,8 @@ func validateMaterializedViewBaseModifyColumn(
 		}
 		return nil
 	}
-	if tracked {
-		if _, err := validateMaterializedViewLogColumnTypeForModifyColumn(op, mlogTableInfo, mlogCol, newCol); err != nil {
-			return err
-		}
-	}
-	for _, mviewID := range baseInfo.MViewIDs {
-		mviewTable, ok := is.TableByID(ctx, mviewID)
-		if !ok {
-			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: dependent materialized view table not found")
-		}
-		if _, err := validateDependentMaterializedViewModifyColumn(op, baseTbl.Meta(), mviewTable.Meta(), oldCol, newCol); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-// noReorgDataStrict is a strong check to decide whether we need to change the column data.
-// If it returns true, it means we don't need the reorg no matter what the data is.
-func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
-	toUnsigned := mysql.HasUnsignedFlag(newCol.GetFlag())
-	originUnsigned := mysql.HasUnsignedFlag(oldCol.GetFlag())
-	needTruncationOrToggleSign := func() bool {
-		return (newCol.GetFlen() > 0 && (newCol.GetFlen() < oldCol.GetFlen() || newCol.GetDecimal() < oldCol.GetDecimal())) ||
-			(toUnsigned != originUnsigned)
-	}
-	// Ignore the potential max display length represented by integer's flen, use default flen instead.
-	defaultOldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.GetType())
-	defaultNewColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.GetType())
-	needTruncationOrToggleSignForInteger := func() bool {
-		return (defaultNewColFlen > 0 && defaultNewColFlen < defaultOldColFlen) || (toUnsigned != originUnsigned)
-	}
-
-	// Deal with the same type.
-	if oldCol.GetType() == newCol.GetType() {
-		switch oldCol.GetType() {
-		case mysql.TypeNewDecimal:
-			// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
-			// cut to eliminate data reorg change for column type change between decimal.
-			return oldCol.GetFlen() == newCol.GetFlen() && oldCol.GetDecimal() == newCol.GetDecimal() && toUnsigned == originUnsigned
-		case mysql.TypeEnum, mysql.TypeSet:
-			return !IsElemsChangedToModifyColumn(oldCol.GetElems(), newCol.GetElems())
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return toUnsigned == originUnsigned
-		case mysql.TypeString:
-			// Due to the behavior of padding \x00 at binary type, always change column data when binary length changed
-			if types.IsBinaryStr(&oldCol.FieldType) {
-				return newCol.GetFlen() == oldCol.GetFlen()
-			}
-		case mysql.TypeTiDBVectorFloat32:
-			return !(newCol.GetFlen() != types.UnspecifiedLength && oldCol.GetFlen() != newCol.GetFlen())
-		}
-
-		return !needTruncationOrToggleSign()
-	}
-
-	oldTp := oldCol.GetType()
-	newTp := newCol.GetType()
-	// VARCHAR->CHAR, may need reorg.
-	if types.IsTypeVarchar(oldTp) && newTp == mysql.TypeString {
-		return false
-	}
-	// CHAR->VARCHAR
-	if oldTp == mysql.TypeString && types.IsTypeVarchar(newTp) {
-		// If there are related index, the index may need reorg.
-		relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
-		if len(relatedIndexes) > 0 {
-			return false
-		}
-	}
-
-	// Deal with the different type.
-	switch oldCol.GetType() {
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		switch newCol.GetType() {
-		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			return !needTruncationOrToggleSign()
-		}
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		switch newCol.GetType() {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return !needTruncationOrToggleSignForInteger()
-		}
-		// conversion between float and double needs reorganization, see issue #31372
-	}
-
-	return false
-}
-
-// ConvertBetweenCharAndVarchar check whether column converted between char and varchar
-// TODO: it is used for plugins. so change plugin's using and remove it.
-func ConvertBetweenCharAndVarchar(oldCol, newCol byte) bool {
-	return types.ConvertBetweenCharAndVarchar(oldCol, newCol)
-}
-
-// IsElemsChangedToModifyColumn check elems changed
-func IsElemsChangedToModifyColumn(oldElems, newElems []string) bool {
-	if len(newElems) < len(oldElems) {
-		return true
-	}
-	for index, oldElem := range oldElems {
-		newElem := newElems[index]
-		if oldElem != newElem {
-			return true
-		}
-	}
-	return false
+	_, err := buildMaterializedViewRelatedTableInfoForModifyColumn(is, nil, op, baseTbl.Meta(), oldCol, newCol)
+	return err
 }
 
 // ProcessColumnCharsetAndCollation process column charset and collation
@@ -2709,42 +2599,6 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxInfo *model.I
 	return nil
 }
 
-// checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
-// or change by reorg. It returns error if the two types are incompatible and correlated change are not
-// supported. However, even the two types can be change, if the "origin" type contains primary key, error will be returned.
-func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool) error {
-	fromFt := &from.FieldType
-	toFt := &to.FieldType
-	canReorg, err := types.CheckModifyTypeCompatible(fromFt, toFt)
-	if err != nil {
-		if !canReorg {
-			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(err.Error()))
-		}
-		if mysql.HasPriKeyFlag(fromFt.GetFlag()) {
-			msg := "this column has primary key flag"
-			return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-	}
-
-	err = checkModifyCharsetAndCollation(toFt.GetCharset(), toFt.GetCollate(), fromFt.GetCharset(), fromFt.GetCollate(), needRewriteCollationData)
-
-	if err != nil {
-		if toFt.GetCharset() == charset.CharsetGBK || fromFt.GetCharset() == charset.CharsetGBK {
-			return errors.Trace(err)
-		}
-		if strings.Contains(err.Error(), "Unsupported modifying collation") {
-			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
-			err = dbterror.ErrUnsupportedModifyCollation.GenWithStack(colErrMsg, from.Name.L, from.GetCollate(), to.GetCollate())
-		}
-
-		// column type change can handle the charset change between these two types in the process of the reorg.
-		if dbterror.ErrUnsupportedModifyCharset.Equal(err) && canReorg {
-			return nil
-		}
-	}
-	return errors.Trace(err)
-}
-
 // ProcessModifyColumnOptions process column options.
 // Export for tiflow.
 func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
@@ -2811,6 +2665,11 @@ func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify with full text"))
 		case ast.ColumnOptionCheck:
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify with check"))
+		case ast.ColumnOptionSRID:
+			// A geometry column is rejected by checkColumnAttributes.
+			if col.GetType() != mysql.TypeGeometry {
+				return errors.Trace(dbterror.ErrWrongUsage.GenWithStackByArgs("SRID", "non-geometry column"))
+			}
 		// Ignore ColumnOptionAutoRandom. It will be handled later.
 		case ast.ColumnOptionAutoRandom:
 		default:

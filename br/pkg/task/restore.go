@@ -37,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/indexrepair"
+	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
@@ -400,7 +402,7 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 	config := immutableRestoreConfig{
 		CmdName:           cmdName,
 		UpstreamClusterID: cfg.UpstreamClusterID,
-		Storage:           ast.RedactURL(cfg.Storage),
+		Storage:           storageURLForRestoreHash(cfg.Storage),
 		Layout:            layout,
 		BackupID:          backupID,
 		FilterStr:         cfg.FilterStr,
@@ -414,6 +416,12 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	hash := sha256.Sum256(data)
+	// The legacy hash input can contain secrets; log a separately redacted copy.
+	config.Storage = objstore.RedactURL(cfg.Storage)
+	data, err = json.Marshal(config)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	log.Info("hash of restore config", zap.String("hash", hex.EncodeToString(hash[:])), zap.String("config", string(data)))
 	return hash[:], nil
 }
@@ -786,7 +794,7 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
 	log.Info("creating storage checkpoint meta managers for PiTR",
 		zap.Uint64("restoreID", restoreID),
 		zap.Uint64("downstreamClusterID", downstreamClusterID),
-		zap.String("checkpointStorage", cfg.CheckpointStorage),
+		zap.String("checkpointStorage", objstore.RedactURL(cfg.CheckpointStorage)),
 		zap.Bool("hasFullBackupStorage", len(cfg.FullBackupStorage) > 0))
 
 	_, checkpointStorage, err := GetStorage(ctx, cfg.CheckpointStorage, &cfg.Config)
@@ -1866,6 +1874,26 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}()
 	}
 
+	restoreDBConfig := tweakLocalConfForRestore()
+	defer restoreDBConfig()
+
+	// Repair SQLs are saved only after ingestion, checksum and system schema restore.
+	// Re-entering those stages after DROP/ADD INDEX would use obsolete index IDs.
+	if cfg.UseCheckpoint && !isPiTR {
+		repairStarted, err := cfg.snapshotCheckpointMetaManager.ExistsCheckpointIngestIndexRepairSQLs(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if repairStarted {
+			if err := indexrepair.RepairIndexes(ctx, mgr.GetDomain(), nil, cfg.snapshotCheckpointMetaManager, g, nil); err != nil {
+				return errors.Trace(err)
+			}
+			canRestoreSchedulers = true
+			summary.SetSuccessStatus(true)
+			return nil
+		}
+	}
+
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
 		PDCli:            mgr.GetPDClient(),
 		EtcdCli:          mgr.GetDomain().GetEtcdClient(),
@@ -1924,10 +1952,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	// pre-set TiDB config for restore
-	restoreDBConfig := tweakLocalConfForRestore()
-	defer restoreDBConfig()
 
 	if client.GetSupportPolicy() {
 		// create policy if backupMeta has policies.
@@ -2099,6 +2123,26 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter, loadSysTablePhysical)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// PITR must keep the original index IDs until all log KVs have been replayed.
+	if !isPiTR {
+		recorder := ingestrec.New()
+		for _, table := range createdTables {
+			for oldID, newID := range restoreutils.GetTableIDMap(table.Table, table.OldTable.Info) {
+				if oldID != newID {
+					recorder.AddGlobalIndexes(table.Table)
+					break
+				}
+			}
+		}
+		var repairCheckpoint checkpoint.IndexRepairMetaManager
+		if cfg.UseCheckpoint {
+			repairCheckpoint = cfg.snapshotCheckpointMetaManager
+		}
+		if err := indexrepair.RepairIndexes(ctx, mgr.GetDomain(), recorder, repairCheckpoint, g, nil); err != nil {
+			return errors.Annotate(err, "failed to rebuild global indexes")
+		}
 	}
 
 	failpoint.InjectCall("run-snapshot-restore-about-to-finish", &err)

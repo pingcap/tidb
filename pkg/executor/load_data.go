@@ -30,6 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -40,6 +43,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -180,11 +184,11 @@ func NewLoadDataWorker(
 	plan *plannercore.LoadData,
 	tbl table.Table,
 ) (w *LoadDataWorker, err error) {
-	importPlan, err := importer.NewPlanFromLoadDataPlan(userSctx, plan)
+	importPlan, err := NewPlanFromLoadDataPlan(userSctx, plan)
 	if err != nil {
 		return nil, err
 	}
-	astArgs := importer.ASTArgsFromPlan(plan)
+	astArgs := ASTArgsFromPlan(plan)
 	controller, err := importer.NewLoadDataController(importPlan, tbl, astArgs)
 	if err != nil {
 		return nil, err
@@ -545,13 +549,18 @@ func (w *encodeWorker) parserData2TableData(
 				continue
 			}
 
-			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
-			if types.IsTypeTime(fieldMappings[i].Column.GetType()) && mysql.HasNotNullFlag(fieldMappings[i].Column.GetFlag()) {
-				row = append(row, types.NewTimeDatum(types.CurrentTime(fieldMappings[i].Column.GetType())))
-				continue
+			// Missing fields use schema defaults; explicit NULL and empty fields do not.
+			col := fieldMappings[i].Column
+			var d types.Datum
+			if !col.IsGenerated() {
+				var err error
+				d, err = w.getColDefaultValue(col.Offset, col)
+				if err != nil {
+					return nil, err
+				}
 			}
 
-			row = append(row, types.NewDatum(nil))
+			row = append(row, d)
 			continue
 		}
 
@@ -834,4 +843,78 @@ type loadDataVarKeyType int
 // String defines a Stringer function for debugging and pretty printing.
 func (loadDataVarKeyType) String() string {
 	return "load_data_var"
+}
+
+// NewPlanFromLoadDataPlan creates a import plan from LOAD DATA.
+func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.LoadData) (*importer.Plan, error) {
+	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
+	logger := log.L().With(zap.String("table", fullTableName))
+	charset := plan.Charset
+	if charset == nil {
+		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
+		d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
+			context.Background(), vardef.CharsetDatabase)
+		if err2 != nil {
+			logger.Error("LOAD DATA get charset failed", zap.Error(err2))
+		} else {
+			charset = &d
+		}
+	}
+	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode() &&
+		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
+
+	var ignoreLines uint64
+	if plan.IgnoreLines != nil {
+		ignoreLines = *plan.IgnoreLines
+	}
+
+	var (
+		nullDef              []string
+		nullValueOptEnclosed = false
+	)
+
+	lineFieldsInfo := importdef.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo)
+	// todo: move null defined into importdef.LineFieldsInfo
+	// in load data, there maybe multiple null def, but in SELECT ... INTO OUTFILE there's only one
+	if plan.FieldsInfo != nil && plan.FieldsInfo.DefinedNullBy != nil {
+		nullDef = append(nullDef, *plan.FieldsInfo.DefinedNullBy)
+		nullValueOptEnclosed = plan.FieldsInfo.NullValueOptEnclosed
+	} else if len(lineFieldsInfo.FieldsEnclosedBy) != 0 {
+		nullDef = append(nullDef, "NULL")
+	}
+	if len(lineFieldsInfo.FieldsEscapedBy) != 0 {
+		nullDef = append(nullDef, string([]byte{lineFieldsInfo.FieldsEscapedBy[0], 'N'}))
+	}
+
+	return &importer.Plan{
+		DBName: plan.Table.Schema.L,
+		DBID:   plan.Table.DBInfo.ID,
+
+		Path:                 plan.Path,
+		Format:               importer.DataFormatDelimitedData,
+		Restrictive:          restrictive,
+		FieldNullDef:         nullDef,
+		NullValueOptEnclosed: nullValueOptEnclosed,
+		LineFieldsInfo:       lineFieldsInfo,
+		IgnoreLines:          ignoreLines,
+
+		SQLMode:          userSctx.GetSessionVars().SQLMode,
+		Charset:          charset,
+		ImportantSysVars: importer.GetImportantSysVars(userSctx),
+
+		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
+		DataSourceType:         importer.DataSourceTypeFile,
+	}, nil
+}
+
+// ASTArgsFromPlan creates ASTArgs from plan.
+func ASTArgsFromPlan(plan *plannercore.LoadData) *importer.ASTArgs {
+	return &importer.ASTArgs{
+		FileLocRef:         plan.FileLocRef,
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		OnDuplicate:        plan.OnDuplicate,
+		FieldsInfo:         plan.FieldsInfo,
+		LinesInfo:          plan.LinesInfo,
+	}
 }

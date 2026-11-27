@@ -1700,3 +1700,14 @@ set sql_mode = default;
 # Issue 59420
 SELECT GET_FORMAT(TIME, 'usa'), GET_FORMAT(TIME, 'USA'), GET_FORMAT(TIME, 'UsA'), GET_FORMAT(time, 'UsA'), GET_FORMAT(TIme, 'UsA');
 SELECT GET_FORMAT(DATE, 'jis'),GET_FORMAT(DATETIME, 'iso'),GET_FORMAT(TIMESTAMP, 'eur'),GET_FORMAT(TIME, 'internal');
+
+# Issue 73150
+drop table if exists t;
+create table t (a int, b int, x int);
+insert into t values (10, NULL, 1);
+select interval(5, a, b, x) from t;
+set tidb_enable_vectorized_expression = 0;
+select interval(5, a, b, x) from t;
+set tidb_enable_vectorized_expression = default;
+select interval(5, 10, NULL, 1);
+select interval(5.5, a, b, x) from t;

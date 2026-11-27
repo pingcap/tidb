@@ -15,57 +15,49 @@
 package storage
 
 import (
-	"context"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
-	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
-// statsGCImpl implements StatsGC interface.
-type statsGCImpl struct {
-	statsHandle types.StatsHandle
+// GC removes the stats that are not needed any more.
+type GC struct {
+	pool   util.SessionPool
+	lease  util.LeaseGetter
+	tables util.TableInfoGetter
 }
 
-// NewStatsGC creates a new StatsGC.
-func NewStatsGC(statsHandle types.StatsHandle) types.StatsGC {
-	return &statsGCImpl{
-		statsHandle: statsHandle,
+// NewGC creates a GC that removes the stats in the sessions of pool.
+func NewGC(pool util.SessionPool, lease util.LeaseGetter, tables util.TableInfoGetter) *GC {
+	return &GC{
+		pool:   pool,
+		lease:  lease,
+		tables: tables,
 	}
 }
 
 // GCStats will garbage collect the useless stats' info.
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
-func (gc *statsGCImpl) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
-	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		return GCStats(sctx, gc.statsHandle, is, ddlLease)
+func (gc *GC) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
+	return util.CallWithSCtx(gc.pool.SPool(), func(sctx sessionctx.Context) error {
+		return GCStats(sctx, gc.lease, gc.tables, is, ddlLease)
 	})
-}
-
-// ClearOutdatedHistoryStats clear outdated historical stats.
-// Only for test.
-func (gc *statsGCImpl) ClearOutdatedHistoryStats() error {
-	return util.CallWithSCtx(gc.statsHandle.SPool(), ClearOutdatedHistoryStats)
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
-func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error) {
-	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+func (gc *GC) DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error) {
+	return util.CallWithSCtx(gc.pool.SPool(), func(sctx sessionctx.Context) error {
 		return DeleteTableStatsFromKV(sctx, statsIDs, soft)
 	}, util.FlagWrapTxn)
 }
@@ -75,13 +67,14 @@ func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err 
 // so that other tidb could know that table is deleted.
 func GCStats(
 	sctx sessionctx.Context,
-	statsHandle types.StatsHandle,
+	statsLease util.LeaseGetter,
+	tables util.TableInfoGetter,
 	is infoschema.InfoSchema,
 	ddlLease time.Duration,
 ) (err error) {
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
-	lease := max(statsHandle.Lease(), ddlLease)
+	lease := max(statsLease.Lease(), ddlLease)
 	offset := util.DurationToTS(10 * lease)
 	now := oracle.GoTimeToTS(time.Now())
 	if now < offset {
@@ -110,21 +103,9 @@ func GCStats(
 		return errors.Trace(err)
 	}
 	for _, row := range rows {
-		if err := gcTableStats(sctx, statsHandle, is, row.GetInt64(0)); err != nil {
+		if err := gcTableStats(sctx, tables, is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
-		_, existed := is.TableByID(context.Background(), row.GetInt64(0))
-		if !existed {
-			if err := gcHistoryStatsFromKV(sctx, row.GetInt64(0)); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-
-	if err := ClearOutdatedHistoryStats(sctx); err != nil {
-		logutil.BgLogger().Warn("failed to gc outdated historical stats",
-			zap.Duration("duration", vardef.HistoricalStatsDuration.Load()),
-			zap.Error(err))
 	}
 
 	return nil
@@ -180,60 +161,6 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64, soft bool
 	return nil
 }
 
-func forCount(total int64, batch int64) int64 {
-	result := total / batch
-	if total%batch > 0 {
-		result++
-	}
-	return result
-}
-
-// ClearOutdatedHistoryStats clear outdated historical stats
-func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
-	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-	rs, err := util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
-	if err != nil {
-		return err
-	}
-	if rs == nil {
-		return nil
-	}
-	var rows []chunk.Row
-	defer terror.Call(rs.Close)
-	if rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 8); err != nil {
-		return errors.Trace(err)
-	}
-	count := rows[0].GetInt64(0)
-	if count > 0 {
-		for range forCount(count, int64(1000)) {
-			sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 1000 "
-			_, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
-			if err != nil {
-				return err
-			}
-		}
-		for range forCount(count, int64(50)) {
-			sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 50 "
-			_, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
-			return err
-		}
-		logutil.BgLogger().Info("clear outdated historical stats")
-	}
-	return nil
-}
-
-// gcHistoryStatsFromKV delete history stats from kv.
-func gcHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error) {
-	sql := "delete from mysql.stats_history where table_id = %?"
-	_, err = util.Exec(sctx, sql, physicalID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	sql = "delete from mysql.stats_meta_history where table_id = %?"
-	_, err = util.Exec(sctx, sql, physicalID)
-	return err
-}
-
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
 func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int64, isIndex int) (err error) {
 	startTS, err := util.GetStartTS(sctx)
@@ -274,9 +201,9 @@ func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int
 // 1. Delete the column/index's stats from storage. Then other TiDB nodes will be aware that those stats are deleted.
 // 2. Then delete the record in stats_meta.
 func gcTableStats(sctx sessionctx.Context,
-	statsHandler types.StatsHandle,
+	tables util.TableInfoGetter,
 	is infoschema.InfoSchema, physicalID int64) error {
-	tbl, ok := statsHandler.TableInfoByID(is, physicalID)
+	tbl, ok := tables.TableInfoByID(is, physicalID)
 	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
 	if err != nil {
 		return errors.Trace(err)

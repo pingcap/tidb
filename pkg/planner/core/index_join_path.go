@@ -303,9 +303,8 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 
 	// reuse Skyline pruning to compare the index join paths.
 	prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64} // default property without any requirement
-	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
 
-	cmpResult, _ := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, current.candidate, best.candidate, preferRange)
+	cmpResult, _ := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, current.candidate, best.candidate)
 	if cmpResult == 1 {
 		return true
 	} else if cmpResult == -1 {
@@ -851,6 +850,11 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 		innerCopTask = buildDataSource2IndexScanByIndexJoinProp(ds, prop)
 	}
 	if innerCopTask.Invalid() {
+		return base.InvalidTask, nil
+	}
+	// This path bypasses normal property enforcement. An ordered parent such as
+	// StreamAgg must not consume a probe task that cannot preserve the required order.
+	if !prop.IsSortItemEmpty() && !innerCopTask.(*physicalop.CopTask).KeepOrder {
 		return base.InvalidTask, nil
 	}
 	if prop.TaskTp == property.RootTaskType {

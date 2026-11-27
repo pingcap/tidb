@@ -57,7 +57,6 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
-	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -85,6 +84,11 @@ func (s *Server) startStatusHTTP() error {
 	if !s.cfg.Status.ReportStatus {
 		return nil
 	}
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	if s.statusClosed {
+		return net.ErrClosed
+	}
 	if diagnosticmode.Enabled() {
 		return s.startDiagnosticHTTP()
 	}
@@ -92,7 +96,7 @@ func (s *Server) startStatusHTTP() error {
 	if err != nil {
 		return err
 	}
-	go s.startHTTPServer()
+	s.statusWG.Run(s.startHTTPServer)
 	return nil
 }
 
@@ -116,7 +120,7 @@ func (s *Server) startDiagnosticHTTP() error {
 	// Publish before Serve starts so closeListener also handles early shutdown.
 	s.statusServer.Store(statusServer)
 	listener := s.statusListener
-	go util.WithRecovery(func() {
+	s.statusWG.RunWithRecover(func() {
 		if err := statusServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			logutil.BgLogger().Warn("diagnostic http server error", zap.Error(err))
 		}
@@ -171,6 +175,12 @@ func (s *Server) listenStatusHTTPServer() error {
 	} else if RunInGoTest && s.cfg.Status.StatusPort == 0 {
 		s.statusAddr = s.statusListener.Addr().String()
 		s.cfg.Status.StatusPort = uint(s.statusListener.Addr().(*net.TCPAddr).Port)
+	}
+	// Diagnostic HTTP bypasses cmux and tracks connections itself. Leave its
+	// TLS connections unwrapped so net/http can recognize them.
+	if !diagnosticmode.Enabled() {
+		// Track connections before cmux can block reading their protocol prefix.
+		s.statusListener = newStatusListener(s.statusListener)
 	}
 	return nil
 }
@@ -284,8 +294,6 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).
 		Name("StatsDump")
-	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).
-		Name("StatsHistoryDump")
 	router.Handle("/stats/priority-queue", s.newStatsPriorityQueueHandler()).
 		Name("StatsPriorityQueue")
 
@@ -296,6 +304,8 @@ func (s *Server) startHTTPServer() {
 
 	tikvHandlerTool := s.NewTikvHandlerTool()
 	router.Handle("/settings", tikvhandler.NewSettingsHandler(tikvHandlerTool)).Name("Settings")
+	router.Handle("/regions/cache/status", tikvhandler.NewRegionCacheHandler(tikvHandlerTool)).Methods("GET").Name("RegionCacheStatus")
+	router.Handle("/regions/cache/refresh", tikvhandler.NewRegionCacheHandler(tikvHandlerTool)).Methods("POST").Name("RegionCacheRefresh")
 
 	router.Handle("/schema", tikvhandler.NewSchemaHandler(tikvHandlerTool)).Name("Schema")
 	router.Handle("/schema/{db}", tikvhandler.NewSchemaHandler(tikvHandlerTool))
@@ -650,66 +660,88 @@ func (s *Server) startHTTPServer() {
 }
 
 // setupAutoIDService initializes and registers the AutoID service for TiKV stores
-func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
-	keyspaceName := config.GetGlobalKeyspaceName()
-
-	var fullPath string
-	if keyspaceName == "" {
-		fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
-	} else {
-		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
+func (s *Server) setupAutoIDService(ctx context.Context, grpcServer *grpc.Server) *autoid.Service {
+	failpoint.InjectCall("beforeAutoIDService")
+	driver, ok := s.driver.(*TiDBDriver)
+	if !ok {
+		return nil
 	}
-
-	store, err := store.New(fullPath)
-	if err != nil {
-		logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
-		return
-	}
+	// Reuse the server's store. Reopening it initializes a PD client before the
+	// store cache lookup and cannot be canceled when shutdown starts.
+	store := driver.store
 
 	ebd, ok := store.(kv.EtcdBackend)
 	if !ok {
-		return
+		return nil
 	}
 
 	etcdAddr, err := ebd.EtcdAddrs()
 	if err != nil {
 		logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
-		return
+		return nil
+	}
+	// Mock stores can implement EtcdBackend without supporting etcd.
+	if len(etcdAddr) == 0 {
+		return nil
 	}
 
 	selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
-	service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
+	service, err := autoid.NewWithContext(ctx, selfAddr, etcdAddr, store, ebd.TLSConfig())
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		logutil.BgLogger().Fatal("initialize auto ID service failed", zap.Error(err))
+	}
 	logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
 	pb.RegisterAutoIDAllocServer(grpcServer, service)
-	s.autoIDService = service
+	return service
 }
 
 func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
+	failpoint.InjectCall("beforeStatusServerInit")
+	ctx := s.statusInitializationContext()
+	s.statusMu.Lock()
+	if s.statusClosed {
+		s.statusMu.Unlock()
+		return
+	}
 	m := cmux.New(s.statusListener)
 	// Match connections in order:
 	// First HTTP, and otherwise grpc.
-	httpL := m.Match(cmux.HTTP1Fast())
+	httpL := m.Match(cmux.HTTP1Fast(http.MethodPatch))
 	grpcL := m.Match(cmux.Any())
 
 	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(serverMux, s.cfg)}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
+	var autoIDService *autoid.Service
 	if s.cfg.Store == config.StoreTypeTiKV {
-		s.setupAutoIDService(grpcServer)
+		autoIDService = s.setupAutoIDService(ctx, grpcServer)
+	}
+	if ctx.Err() != nil {
+		if autoIDService != nil {
+			autoIDService.Close()
+		}
+		grpcServer.Stop()
+		s.statusMu.Unlock()
+		return
 	}
 
+	s.autoIDService = autoIDService
 	s.statusServer.Store(statusServer)
 	s.grpcServer = grpcServer
 
-	go util.WithRecovery(func() {
+	s.statusWG.RunWithRecover(func() {
 		err := grpcServer.Serve(grpcL)
 		logutil.BgLogger().Warn("grpc server error", zap.Error(err))
 	}, nil)
 
-	go util.WithRecovery(func() {
+	s.statusWG.RunWithRecover(func() {
 		err := statusServer.Serve(httpL)
 		logutil.BgLogger().Warn("http server error", zap.Error(err))
 	}, nil)
+	s.statusMu.Unlock()
 
 	err := m.Serve()
 	if err != nil {
@@ -792,19 +824,6 @@ func (s *Server) newStatsHandler() *optimizor.StatsHandler {
 		panic("Failed to get domain")
 	}
 	return optimizor.NewStatsHandler(do)
-}
-
-func (s *Server) newStatsHistoryHandler() *optimizor.StatsHistoryHandler {
-	store, ok := s.driver.(*TiDBDriver)
-	if !ok {
-		panic("Illegal driver")
-	}
-
-	do, err := session.GetDomain(store.store)
-	if err != nil {
-		panic("Failed to get domain")
-	}
-	return optimizor.NewStatsHistoryHandler(do)
 }
 
 func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHandler {

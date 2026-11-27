@@ -418,8 +418,16 @@ func buildTimeRanges(tr *plannercore.TimeRange) []*stmtsummaryv2.StmtTimeRange {
 		return nil
 	}
 
+	// Records carry whole-second begin/end, while the coarse range can carry a
+	// fractional-second bound. Floor the lower bound and ceil the upper one so the
+	// range only widens: rows the exact SQL predicates would keep must survive the
+	// coarse clipping (the retained predicates still filter precisely).
+	end := tr.EndTime.Unix()
+	if tr.EndTime.Nanosecond() != 0 {
+		end++
+	}
 	return []*stmtsummaryv2.StmtTimeRange{{
 		Begin: tr.StartTime.Unix(),
-		End:   tr.EndTime.Unix(),
+		End:   end,
 	}}
 }

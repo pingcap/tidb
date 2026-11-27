@@ -748,14 +748,14 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle) (err error) {
+func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsCache StatsCache, tables util.TableInfoGetter) (err error) {
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
-			err = loadNeededColumnHistograms(sctx, statsHandle, item.TableItemID, item.FullLoad)
+			err = loadNeededColumnHistograms(sctx, statsCache, tables, item.TableItemID, item.FullLoad)
 		} else {
 			// Index is always full load.
-			err = loadNeededIndexHistograms(sctx, is, statsHandle, item.TableItemID)
+			err = loadNeededIndexHistograms(sctx, is, statsCache, tables, item.TableItemID)
 		}
 		if err != nil {
 			statslogutil.StatsSampleLogger().Error("load needed histogram failed",
@@ -774,7 +774,7 @@ func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, sta
 }
 
 // CleanFakeItemsForShowHistInFlights cleans the invalid inserted items.
-func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
+func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCacheGetter) int {
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	reallyNeeded := 0
 	for _, item := range items {
@@ -800,7 +800,7 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 	return reallyNeeded
 }
 
-func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, fullLoad bool) (err error) {
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache StatsCache, tables util.TableInfoGetter, col model.TableItemID, fullLoad bool) (err error) {
 	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
 	// The principle is to load the histogram for each column at most once in async load, as we already have a retry mechanism in the sync load.
 	defer asyncload.AsyncLoadHistogramNeededItems.Delete(col)
@@ -809,7 +809,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	if col.ID <= 0 {
 		return nil
 	}
-	statsTbl, ok := statsHandle.Get(col.TableID)
+	statsTbl, ok := statsCache.Get(col.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
 		statslogutil.StatsSampleLogger().Info(
@@ -823,7 +823,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	// Because we don't want to access all table information when init stats.
 	// Therefore, we need to get the column info from the domain on demand.
 	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
-	tbl, ok := statsHandle.TableInfoByID(is, col.TableID)
+	tbl, ok := tables.TableInfoByID(is, col.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
 		statslogutil.StatsSampleLogger().Info(
@@ -854,7 +854,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
 			statsTbl = statsTbl.CopyAs(statistics.ColumnMapWritable)
 			statsTbl.SetCol(col.ID, fakeCol)
-			statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+			statsCache.UpdateStatsCache(statstypes.CacheUpdate{
 				Updated: []*statistics.Table{statsTbl},
 			})
 		}
@@ -898,7 +898,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	statsTbl, ok = statsHandle.Get(col.TableID)
+	statsTbl, ok = statsCache.Get(col.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
 		statslogutil.StatsSampleLogger().Info(
@@ -921,7 +921,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		}
 	}
 	statsTbl.SetCol(col.ID, colHist)
-	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+	statsCache.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{statsTbl},
 	})
 	if col.IsSyncLoadFailed {
@@ -935,12 +935,12 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 
 // loadNeededIndexHistograms loads the necessary index histograms.
 // It is similar to loadNeededColumnHistograms, but for index.
-func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID) (err error) {
+func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsCache StatsCache, tables util.TableInfoGetter, idx model.TableItemID) (err error) {
 	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
 	// The principle is to load the histogram for each index at most once in async load, as we already have a retry mechanism in the sync load.
 	defer asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 
-	tbl, ok := statsHandle.Get(idx.TableID)
+	tbl, ok := statsCache.Get(idx.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
 		statslogutil.StatsSampleLogger().Info(
@@ -965,7 +965,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		}
 		return err
 	}
-	tblInfo, ok := statsHandle.TableInfoByID(is, idx.TableID)
+	tblInfo, ok := tables.TableInfoByID(is, idx.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
 		statslogutil.StatsSampleLogger().Info(
@@ -1003,7 +1003,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 	}
 
-	tbl, ok = statsHandle.Get(idx.TableID)
+	tbl, ok = statsCache.Get(idx.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
 		statslogutil.StatsSampleLogger().Info(
@@ -1019,7 +1019,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	}
 	tbl.SetIdx(idx.ID, idxHist)
-	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+	statsCache.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{tbl},
 	})
 	if idx.IsSyncLoadFailed {

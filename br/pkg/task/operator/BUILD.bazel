@@ -78,10 +78,11 @@ go_test(
     srcs = [
         "checksum_table_test.go",
         "crr_checkpoint_test.go",
+        "test_storage_test.go",
     ],
     embed = [":operator"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/metautil",
@@ -92,8 +93,10 @@ go_test(
         "//pkg/meta/model",
         "//pkg/metaservice",
         "//pkg/objstore",
+        "//pkg/objstore/s3like",
         "//pkg/objstore/storeapi",
         "//pkg/parser/ast",
+        "//pkg/util/logutil",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/pdpb",
@@ -105,5 +108,7 @@ go_test(
         "@com_github_tikv_pd_client//pkg/caller",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_tests_v3//integration",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

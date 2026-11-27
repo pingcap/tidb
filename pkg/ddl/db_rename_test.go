@@ -516,3 +516,141 @@ func TestShowRunningRenameTable(t *testing.T) {
 
 	tk1.MustExec("rename table test.t1 to test2.t2")
 }
+
+// TestRenameTableRevision covers renames that preserve table IDs but change the
+// name-to-ID bindings used by cached plans.
+func TestRenameTableRevision(t *testing.T) {
+	for _, enableFK := range []bool{true, false} {
+		t.Run(fmt.Sprintf("foreign_keys=%t", enableFK), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_foreign_key = %t", enableFK))
+			t.Cleanup(func() { tk.MustExec("set global tidb_enable_foreign_key = on") })
+			tk.MustExec("create database rename_revision")
+			tk.MustExec("use test")
+			getInfo := func(db, name string) *model.TableInfo {
+				tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
+					context.Background(), ast.NewCIStr(db), ast.NewCIStr(name))
+				require.NoError(t, err)
+				return tbl.Meta()
+			}
+			checkRename := func(sql, oldDB, oldName, newDB, newName string) {
+				before := getInfo(oldDB, oldName)
+				tk.MustExec(sql)
+				after := getInfo(newDB, newName)
+				require.Equal(t, before.ID, after.ID)
+				require.Greater(t, after.Revision, before.Revision, sql)
+			}
+			tk.MustExec("create table t1(a int primary key)")
+			tk.MustExec("create table t2(a int primary key)")
+			tk.MustExec("insert into t1 values(1)")
+			tk.MustExec("insert into t2 values(2)")
+			checkRename("rename table t1 to tmp", "test", "t1", "test", "tmp")
+			checkRename("rename table t2 to t1", "test", "t2", "test", "t1")
+			checkRename("rename table tmp to t2", "test", "tmp", "test", "t2")
+			tk.MustQuery("select t1.a,t2.a from t1 join t2").Check(testkit.Rows("2 1"))
+			checkRename("alter table t1 rename to tmp", "test", "t1", "test", "tmp")
+			checkRename("rename table tmp to rename_revision.tmp", "test", "tmp", "rename_revision", "tmp")
+			checkRename("rename table rename_revision.tmp to test.t1", "rename_revision", "tmp", "test", "t1")
+			before1, before2 := getInfo("test", "t1"), getInfo("test", "t2")
+			tk.MustExec("rename table t1 to tmp, t2 to t1, tmp to t2")
+			after1, after2 := getInfo("test", "t2"), getInfo("test", "t1")
+			require.Equal(t, before1.ID, after1.ID)
+			require.Equal(t, before2.ID, after2.ID)
+			require.Greater(t, after1.Revision, before1.Revision)
+			require.Greater(t, after2.Revision, before2.Revision)
+			tk.MustQuery("select t1.a,t2.a from t1 join t2").Check(testkit.Rows("1 2"))
+
+			// The first rename has already written an increased revision when the
+			// second rename fails. Neither change may survive the failed job.
+			before1, before2 = getInfo("test", "t1"), getInfo("test", "t2")
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/renameTableErr", `return("fail_name")`)
+			err := tk.ExecToErr("rename table t1 to tmp, t2 to fail_name")
+			require.ErrorContains(t, err, "occur an error after renaming table")
+			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/renameTableErr")
+			require.Equal(t, before1, getInfo("test", "t1"))
+			require.Equal(t, before2, getInfo("test", "t2"))
+			tk.MustQuery("select t1.a,t2.a from t1 join t2").Check(testkit.Rows("1 2"))
+			// A successful retry must read the original durable revision.
+			checkRename("rename table t1 to tmp", "test", "t1", "test", "tmp")
+			require.Equal(t, before1.Revision+1, getInfo("test", "tmp").Revision)
+		})
+	}
+}
+
+func TestRenameTableRevisionWithForeignKeys(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table parent(a int primary key, b int, foreign key(b) references parent(a))")
+	tk.MustExec("create table child(a int primary key, b int, foreign key(b) references parent(a))")
+	getInfo := func(name string) *model.TableInfo {
+		tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+		require.NoError(t, err)
+		return tbl.Meta()
+	}
+	parent, child := getInfo("parent"), getInfo("child")
+	tk.MustExec("rename table parent to renamed_parent")
+	newParent, newChild := getInfo("renamed_parent"), getInfo("child")
+	require.Equal(t, parent.ID, newParent.ID)
+	require.Greater(t, newParent.Revision, parent.Revision)
+	require.Greater(t, newChild.Revision, child.Revision)
+	require.Equal(t, "renamed_parent", newParent.ForeignKeys[0].RefTable.L)
+	require.Equal(t, "renamed_parent", newChild.ForeignKeys[0].RefTable.L)
+	parent, child = newParent, newChild
+	tk.MustExec("rename table child to renamed_child, renamed_parent to parent")
+	newParent, newChild = getInfo("parent"), getInfo("renamed_child")
+	require.Equal(t, parent.ID, newParent.ID)
+	require.Equal(t, child.ID, newChild.ID)
+	require.Greater(t, newParent.Revision, parent.Revision)
+	require.Greater(t, newChild.Revision, child.Revision)
+	require.Equal(t, "parent", newParent.ForeignKeys[0].RefTable.L)
+	require.Equal(t, "parent", newChild.ForeignKeys[0].RefTable.L)
+}
+
+func TestRenameTableRevisionRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table revision_retry(a int)")
+	getInfo := func(name string) *model.TableInfo {
+		tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+		require.NoError(t, err)
+		return tbl.Meta()
+	}
+	before := getInfo("revision_retry")
+	injected := make(chan struct{}, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, err *error) {
+		if job.Type != model.ActionRenameTable || job.TableID != before.ID || job.SchemaState != model.StatePublic || *err != nil {
+			return
+		}
+		select {
+		case injected <- struct{}{}:
+			*err = fmt.Errorf("retry rename before committing metadata")
+		default:
+		}
+	})
+	// The new name must already carry the new revision after the first schema
+	// synchronization, before the separate step that marks the job done.
+	observed := make(chan uint64, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type == model.ActionRenameTable && job.TableID == before.ID && job.SchemaState == model.StatePublic && job.State == model.JobStateRunning {
+			tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("revision_renamed"))
+			if err == nil {
+				select {
+				case observed <- tbl.Meta().Revision:
+				default:
+				}
+			}
+		}
+	})
+	tk.MustExec("rename table revision_retry to revision_renamed")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+	require.Len(t, injected, 1)
+	require.Len(t, observed, 1)
+	require.Equal(t, before.Revision+1, <-observed)
+	after := getInfo("revision_renamed")
+	require.Equal(t, before.ID, after.ID)
+	require.Equal(t, before.Revision+1, after.Revision)
+}

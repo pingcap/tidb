@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -979,6 +981,11 @@ func genIndexKeyStrs(colVals []types.Datum) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
+			// Chunk readers represent binary columns as strings with the binary collation.
+			if cv.Kind() == types.KindBytes || cv.Kind() == types.KindMysqlBit || cv.Kind() == types.KindBinaryLiteral ||
+				(cv.Kind() == types.KindString && cv.Collation() == charset.CollationBin) {
+				cvs = util.FmtNonASCIIPrintableCharToHex(cvs, len(cvs), true)
+			}
 		}
 		strVals = append(strVals, cvs)
 	}
@@ -1016,20 +1023,18 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if err != nil {
 			return nil, err
 		}
-		var dupErr error
 		if !skipCheck && v.Meta().Unique {
 			// Make error message consistent with MySQL.
 			tablecodec.TruncateIndexValues(t.meta, v.Meta(), indexVals)
-			colStrVals, err := genIndexKeyStrs(indexVals)
-			if err != nil {
-				return nil, err
-			}
-			dupErr = kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 		}
 		rsData := TryGetHandleRestoredDataWrapper(t, r, nil, v.Meta())
 		if dupHandle, err := asIndex(v).create(sctx, txn, indexVals, recordID, rsData, false, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
-				return dupHandle, dupErr
+				colStrVals, err := genIndexKeyStrs(indexVals)
+				if err != nil {
+					return nil, err
+				}
+				return dupHandle, kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 			}
 			return nil, err
 		}
@@ -1347,7 +1352,7 @@ func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
 		return nil
 	}
 
-	logutil.BgLogger().Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
+	logutil.BgLogger().Debug("iterate records", zap.String("startKey", redact.Value(string(startKey))), zap.String("key", redact.Value(string(it.Key()))), zap.String("value", redact.Value(string(it.Value()))))
 
 	colMap := make(map[int64]*types.FieldType, len(cols))
 	for _, col := range cols {

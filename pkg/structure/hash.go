@@ -50,6 +50,37 @@ func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	return value, errors.Trace(err)
 }
 
+// HGetBatch gets hash fields in input order, returning nil for missing fields.
+func (t *TxStructure) HGetBatch(ctx context.Context, key []byte, fields [][]byte) ([][]byte, error) {
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	keys := make([]kv.Key, len(fields))
+	for i, field := range fields {
+		keys[i] = t.encodeHashDataKey(key, field)
+	}
+	values := make([][]byte, len(keys))
+	if getter, ok := t.reader.(kv.BatchGetter); ok {
+		entries, err := getter.BatchGet(ctx, keys)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for i, key := range keys {
+			values[i] = entries[string(key)].Value
+		}
+		return values, nil
+	}
+	// Some in-memory retrievers only implement point reads.
+	for i, key := range keys {
+		value, err := kv.GetValue(ctx, t.reader, key)
+		if err != nil && !kv.ErrNotExist.Equal(err) {
+			return nil, errors.Trace(err)
+		}
+		values[i] = value
+	}
+	return values, nil
+}
+
 func (*TxStructure) hashFieldIntegerVal(val int64) []byte {
 	return []byte(strconv.FormatInt(val, 10))
 }
@@ -308,7 +339,7 @@ func (i *ReverseHashIterator) Next() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !i.iter.Key().HasPrefix(i.prefix) {
+	if !i.iter.Valid() || !i.iter.Key().HasPrefix(i.prefix) {
 		i.done = true
 		return nil
 	}
@@ -341,15 +372,21 @@ func (*ReverseHashIterator) Close() {}
 
 // NewHashReverseIter creates a reverse hash iterator.
 func NewHashReverseIter(t *TxStructure, key []byte) (*ReverseHashIterator, error) {
-	return newHashReverseIter(t, key, nil)
+	return newHashReverseIter(t, key, nil, nil)
+}
+
+// NewHashReverseIterWithLowerBound creates a reverse hash iterator with an inclusive lower field bound.
+// A nil lowerBoundField leaves the scan unbounded.
+func NewHashReverseIterWithLowerBound(t *TxStructure, key, lowerBoundField []byte) (*ReverseHashIterator, error) {
+	return newHashReverseIter(t, key, nil, lowerBoundField)
 }
 
 // NewHashReverseIterBeginWithField creates a reverse hash iterator, begin with field.
 func NewHashReverseIterBeginWithField(t *TxStructure, key []byte, field []byte) (*ReverseHashIterator, error) {
-	return newHashReverseIter(t, key, field)
+	return newHashReverseIter(t, key, field, nil)
 }
 
-func newHashReverseIter(t *TxStructure, key []byte, field []byte) (*ReverseHashIterator, error) {
+func newHashReverseIter(t *TxStructure, key, field, lowerBoundField []byte) (*ReverseHashIterator, error) {
 	var iterStart kv.Key
 	dataPrefix := t.hashDataKeyPrefix(key)
 	if len(field) == 0 {
@@ -358,7 +395,11 @@ func newHashReverseIter(t *TxStructure, key []byte, field []byte) (*ReverseHashI
 		iterStart = t.encodeHashDataKey(key, field).PrefixNext()
 	}
 
-	it, err := t.reader.IterReverse(iterStart, nil)
+	var lowerBound kv.Key
+	if len(lowerBoundField) > 0 {
+		lowerBound = t.encodeHashDataKey(key, lowerBoundField)
+	}
+	it, err := t.reader.IterReverse(iterStart, lowerBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

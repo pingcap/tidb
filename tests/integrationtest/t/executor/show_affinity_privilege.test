@@ -1,0 +1,38 @@
+create database secret_db;
+create database pub_db;
+create table secret_db.secret_t (id int) affinity='table';
+create table pub_db.part_t (id int) affinity='partition'
+partition by range (id) (
+    partition p0 values less than (100),
+    partition p1 values less than maxvalue
+);
+create user nopriv;
+
+sorted_result;
+--replace_column 4 <leader_store_id> 5 <voter_store_ids> 6 <status> 7 <region_count> 8 <affinity_region_count>
+show affinity;
+connect (affinity_user,localhost,nopriv,,);
+connection affinity_user;
+show databases like '%_db';
+show affinity;
+
+connection default;
+grant select on pub_db.part_t to nopriv;
+connection affinity_user;
+sorted_result;
+--replace_column 4 <leader_store_id> 5 <voter_store_ids> 6 <status> 7 <region_count> 8 <affinity_region_count>
+show affinity;
+sorted_result;
+--replace_column 4 <leader_store_id> 5 <voter_store_ids> 6 <status> 7 <region_count> 8 <affinity_region_count>
+show affinity like 'part%';
+
+connection default;
+revoke select on pub_db.part_t from nopriv;
+connection affinity_user;
+show affinity;
+
+connection default;
+disconnect affinity_user;
+drop user nopriv;
+drop database secret_db;
+drop database pub_db;

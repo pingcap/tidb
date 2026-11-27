@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
@@ -32,31 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
 )
-
-// TaskMeta is the task of IMPORT INTO.
-// All the field should be serializable.
-type TaskMeta struct {
-	// IMPORT INTO job id, see mysql.tidb_import_jobs.
-	JobID int64
-	Plan  importer.Plan
-	Stmt  string
-
-	// Summary is the summary of the whole import task.
-	Summary importer.Summary
-
-	// eligible instances to run this task, we run on all instances if it's empty.
-	// we only need this when run IMPORT INTO without distributed option now, i.e.
-	// running on the instance that initiate the IMPORT INTO.
-	EligibleInstances []*serverinfo.ServerInfo
-	// the file chunks to import, when import from server file, we need to pass those
-	// files to the framework scheduler which might run on another instance.
-	// we use a map from engine ID to chunks since we need support split_file for CSV,
-	// so need to split them into engines before passing to scheduler.
-	ChunkMap map[int32][]importer.Chunk
-	// PreparedMetaExternalPath points to external chunk metadata prepared by
-	// framework OnPrepare for nextgen global-sort path.
-	PreparedMetaExternalPath string `json:"prepared_meta_external_path,omitempty"`
-}
 
 // PreparedMeta stores metadata generated in prepare stage.
 type PreparedMeta struct {

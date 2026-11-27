@@ -55,7 +55,7 @@ func (e *UnlockExec) Next(context.Context, *chunk.Chunk) error {
 			return err
 		}
 		tableName := fmt.Sprintf("%s.%s", table.Schema.O, table.Name.O)
-		msg, err := h.RemoveLockedPartitions(tid, tableName, pidNames)
+		msg, err := h.Locker().RemoveLockedPartitions(tid, tableName, pidNames)
 		if err != nil {
 			return err
 		}
@@ -67,7 +67,7 @@ func (e *UnlockExec) Next(context.Context, *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		msg, err := h.RemoveLockedTables(tableWithPartitions)
+		msg, err := h.Locker().RemoveLockedTables(tableWithPartitions)
 		if err != nil {
 			return err
 		}

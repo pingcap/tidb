@@ -104,9 +104,9 @@ func TestSession(t *testing.T) {
 	require.Equal(t, uint64(2), ss.RecordRows())
 
 	// For FoundRows
-	ss.AddFoundRows(1)
+	ss.SetFoundRows(1)
 	require.Equal(t, uint64(1), ss.FoundRows())
-	ss.AddFoundRows(1)
+	ss.SetFoundRows(2)
 	require.Equal(t, uint64(2), ss.FoundRows())
 
 	// For UpdatedRows
@@ -747,6 +747,14 @@ func TestRowIDShardGenerator(t *testing.T) {
 	// set step will reset clear remain
 	g.SetShardStep(5)
 	require.NotEqual(t, shard, g.GetCurrentShard(1))
+
+	// An allocation stays on one shard even when it consumes more than the remaining step.
+	g.SetShardStep(5)
+	shard = g.GetCurrentShard(3)
+	require.Equal(t, shard, g.GetCurrentShard(3))
+	next := g.GetCurrentShard(3)
+	require.NotEqual(t, shard, next)
+	require.Equal(t, next, g.GetCurrentShard(1))
 }
 
 func TestUserVars(t *testing.T) {
@@ -981,13 +989,13 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	t.Cleanup(s.Close)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	// Set to noop
+	// Set to noop. Unknown schemes drop the query on read; the stored value keeps it.
 	noopURI := "noop://blackhole?access-key=hello&secret-access-key=world"
 	err := mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, noopURI)
 	require.NoError(t, err)
 	val, err1 := mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.TiDBCloudStorageURI)
 	require.NoError(t, err1)
-	require.Equal(t, noopURI, val)
+	require.Equal(t, "noop://blackhole", val)
 	require.Equal(t, noopURI, vardef.CloudStorageURI.Load())
 
 	// Set to s3, should fail

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "hint",
@@ -21,5 +21,18 @@ go_library(
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "hint_test",
+    timeout = "short",
+    srcs = ["hint_test.go"],
+    embed = [":hint"],
+    flaky = True,
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/mysql",
+        "@com_github_stretchr_testify//require",
     ],
 )

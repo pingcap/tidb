@@ -10,6 +10,7 @@ header:
     - ".dockerignore"
     - ".gitattributes"
     - ".cilinter.yaml"
+    - ".coderabbit.yaml"
     - ".golangci.yml"
     - ".golangci.bck.yml"
     - ".golangci_br.yml"

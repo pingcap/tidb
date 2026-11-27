@@ -290,6 +290,34 @@ func TestIntervalFunc(t *testing.T) {
 	}
 }
 
+func TestIntervalFuncCloneKeepsHasNullable(t *testing.T) {
+	ctx := createContext(t)
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	notNullIntTp := types.NewFieldType(mysql.TypeLonglong)
+	notNullIntTp.AddFlag(mysql.NotNullFlag)
+	notNullRealTp := types.NewFieldType(mysql.TypeDouble)
+	notNullRealTp.AddFlag(mysql.NotNullFlag)
+	// The list is not sorted, so the linear search and the binary search give different results.
+	row := chunk.MutRowFromDatums(types.MakeDatums(10, nil, 1)).ToRow()
+	cols := []Expression{
+		&Column{Index: 0, RetType: notNullIntTp},
+		&Column{Index: 1, RetType: intTp},
+		&Column{Index: 2, RetType: notNullIntTp},
+	}
+	for _, n := range []*Constant{
+		{Value: types.NewIntDatum(5), RetType: notNullIntTp},
+		{Value: types.NewFloat64Datum(5.5), RetType: notNullRealTp},
+	} {
+		f, err := funcs[ast.Interval].getFunction(ctx, append([]Expression{n}, cols...))
+		require.NoError(t, err)
+		for _, sig := range []builtinFunc{f, f.Clone()} {
+			v, err := evalBuiltinFunc(sig, ctx, row)
+			require.NoError(t, err)
+			require.Equal(t, int64(0), v.GetInt64(), "%T", sig)
+		}
+	}
+}
+
 // greatest/least function is compatible with MySQL 8.0
 func TestGreatestLeastFunc(t *testing.T) {
 	ctx := createContext(t)

@@ -13,7 +13,6 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/logutil",
-        "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/util/chunk",
         "//pkg/util/intest",

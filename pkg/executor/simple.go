@@ -3428,7 +3428,7 @@ func (e *SimpleExec) executeFlushStatsDeltaOnCurrentInstance(ctx context.Context
 			return nil
 		}
 	}
-	return domain.GetDomain(e.Ctx()).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
+	return domain.GetDomain(e.Ctx()).StatsHandle().Usage().DumpStatsDeltaToKV(true, targetIDs...)
 }
 
 func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
@@ -3559,10 +3559,10 @@ func (e *SimpleExec) executeDropStats(ctx context.Context, s *ast.DropStatsStmt)
 			}
 		}
 	}
-	if err := h.DeleteTableStatsFromKV(statsIDs, true); err != nil {
+	if err := h.GC().DeleteTableStatsFromKV(statsIDs, true); err != nil {
 		return err
 	}
-	return h.Update(ctx, e.Ctx().GetInfoSchema().(infoschema.InfoSchema))
+	return h.Cache().Update(ctx, e.Ctx().GetInfoSchema().(infoschema.InfoSchema))
 }
 
 func (e *SimpleExec) autoNewTxn() bool {

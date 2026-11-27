@@ -32,6 +32,11 @@ go_test(
         "test/ldap.key",
     ],
     flaky = True,
-    shard_count = 4,
-    deps = ["@com_github_stretchr_testify//require"],
+    shard_count = 5,
+    deps = [
+        "@com_github_go_asn1_ber_asn1_ber//:asn1-ber",
+        "@com_github_go_ldap_ldap_v3//:ldap",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
+    ],
 )

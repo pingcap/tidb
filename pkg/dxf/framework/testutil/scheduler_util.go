@@ -84,7 +84,7 @@ func GetMockSchedulerExt(ctrl *gomock.Controller, schedulerInfo SchedulerInfo) s
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ storage.TaskHandle, _ *proto.Task, _ []string, nextStep proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ storage.TaskHandle, _ *proto.Task, _ int, nextStep proto.Step) (metas [][]byte, err error) {
 			stepInfo, ok := stepInfoMap[nextStep]
 			if !ok {
 				return nil, nil
@@ -172,7 +172,7 @@ func GetPlanErrSchedulerExt(ctrl *gomock.Controller, testContext *TestContext) s
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ int, _ proto.Step) (metas [][]byte, err error) {
 			if task.Step == proto.StepInit {
 				if testContext.CallTime == 0 {
 					testContext.CallTime++

@@ -250,7 +250,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "The max request unit cost for resource groups during in a period(20s).",
+               "description": "Maximum combined read and write RU/s of one natural second in a 60-second rolling window ending about 30 seconds before the point, summed over clients. Under normal reporting a peak is visible for about a minute and a scrape interval of at most 60 seconds does not miss it; data that arrives late, is retried, or follows a leader change is visible only from its arrival until the window ends and can be missed. A peak may span two adjacent points at a 1-minute step; the two ends of a queried range can be off by up to about 60 seconds. Compare with RU, which shows average consumption rates. RU is attributed to the second in which the client settles it, so a long request concentrates its RU in its settlement second; covers the foreground RU that TiDB confirms by second; excludes TiFlash and background task RU, SQL CPU RU and RUv2.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -260,11 +260,12 @@
                   "y": 0
                },
                "id": 5,
+               "interval": "1m",
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
                   "current": true,
-                  "max": false,
+                  "max": true,
                   "min": false,
                   "rightSide": true,
                   "show": true,
@@ -287,24 +288,18 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(resource_manager_resource_unit_read_request_unit_max_per_sec{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}) by (resource_group)",
+                     "expr": "max by (keyspace_name, resource_group) (max_over_time(resource_manager_resource_unit_peak_per_second_rolling_60s{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[$__interval]))",
                      "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}-read",
+                     "interval": "1m",
+                     "intervalFactor": 1,
+                     "legendFormat": "{{keyspace_name}}-{{resource_group}}",
                      "refId": "A"
-                  },
-                  {
-                     "expr": "sum(resource_manager_resource_unit_write_request_unit_max_per_sec{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}) by (resource_group)",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}-write",
-                     "refId": "B"
                   }
                ],
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "RU Max(Max Cost During 20s Period)",
+               "title": "Peak RU/s",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -322,9 +317,9 @@
                   {
                      "format": "short",
                      "label": null,
-                     "logBase": 10,
+                     "logBase": 1,
                      "max": null,
-                     "min": null,
+                     "min": 0,
                      "show": true
                   },
                   {
@@ -332,7 +327,7 @@
                      "label": null,
                      "logBase": 1,
                      "max": null,
-                     "min": null,
+                     "min": 0,
                      "show": true
                   }
                ]

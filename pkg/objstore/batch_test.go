@@ -37,7 +37,13 @@ func TestBatched(t *testing.T) {
 		{
 			name: "DeleteFiles",
 			op: func() error {
-				return bat.DeleteFiles(ctx, []string{"file1.txt", "file2.txt"})
+				names := []string{"file1.txt", "file2.txt"}
+				if err := bat.DeleteFiles(ctx, names); err != nil {
+					return err
+				}
+				// The caller may reuse the slice after DeleteFiles returns.
+				names[0] = "reused.txt"
+				return nil
 			},
 			expected: []Effect{EffDeleteFiles{Files: []string{"file1.txt", "file2.txt"}}},
 		},

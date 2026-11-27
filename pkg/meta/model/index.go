@@ -297,6 +297,13 @@ type IndexInfo struct {
 	RegionSplitPolicy  *RegionSplitPolicy `json:"region_split_policy,omitempty"` // RegionSplitPolicy is the persistent split policy.
 }
 
+// HypoIndexInfo keeps a session-local index together with its expression columns.
+// Embedding IndexInfo preserves the session-state JSON format of ordinary hypothetical indexes.
+type HypoIndexInfo struct {
+	*IndexInfo
+	HiddenColumns []*ColumnInfo `json:"hidden_columns,omitempty"`
+}
+
 // Hash64 implement HashEquals interface.
 func (index *IndexInfo) Hash64(h base.Hasher) {
 	h.HashInt64(index.ID)

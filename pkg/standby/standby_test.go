@@ -22,7 +22,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -155,6 +157,84 @@ func TestActivateWaitsUntilServerReady(t *testing.T) {
 	require.True(t, readyServer.called)
 	require.Equal(t, http.StatusOK, resp.Code)
 	require.JSONEq(t, `{"state":"activated","keyspace_name":"ks"}`, resp.Body.String())
+}
+
+func TestActivateAbort(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		completed  bool
+		startupErr error
+		timeout    bool
+	}{
+		{name: "during activation"},
+		{name: "after successful activation", completed: true},
+		{name: "after failed activation", completed: true, startupErr: errors.New("listener failed")},
+		{name: "timeout during activation", timeout: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				resetStandbyTestState(t)
+				var signals []syscall.Signal
+				oldExit := tidbExit
+				tidbExit = func(sig syscall.Signal) {
+					signals = append(signals, sig)
+				}
+				t.Cleanup(func() {
+					tidbExit = oldExit
+				})
+
+				controller := NewLoadKeyspaceController(nil)
+				_, mux := controller.Handler(nil)
+				if tt.completed {
+					go func() {
+						<-activateCh
+						controller.EndStandby(tt.startupErr)
+					}()
+					req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{"keyspace_name":"ks"}`))
+					resp := httptest.NewRecorder()
+					mux.ServeHTTP(resp, req)
+					if tt.startupErr == nil {
+						require.Equal(t, http.StatusOK, resp.Code)
+						require.JSONEq(t, `{"state":"activated","keyspace_name":"ks"}`, resp.Body.String())
+					} else {
+						require.Equal(t, http.StatusInternalServerError, resp.Code)
+						require.Equal(t, tt.startupErr.Error(), resp.Body.String())
+					}
+				}
+
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				if tt.timeout {
+					activationTimeout = 1
+				} else {
+					cancel()
+				}
+				// Repeated requests exercise both select cases after activation completes.
+				for i := range 64 {
+					req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{"keyspace_name":"ks"}`))
+					resp := httptest.NewRecorder()
+					mux.ServeHTTP(resp, req)
+					if tt.timeout && i == 0 {
+						require.Equal(t, http.StatusRequestTimeout, resp.Code)
+					}
+					// Wait for any asynchronous shutdown before checking signals or retrying.
+					synctest.Wait()
+				}
+
+				if tt.completed {
+					require.Empty(t, signals)
+					require.Equal(t, tt.startupErr, controller.startServerErr)
+				} else {
+					require.Equal(t, []syscall.Signal{syscall.SIGTERM}, signals)
+					if tt.timeout {
+						require.EqualError(t, controller.startServerErr, "timeout waiting for activation")
+					} else {
+						require.EqualError(t, controller.startServerErr, "client closed connection")
+					}
+				}
+			})
+		})
+	}
 }
 
 func TestOnServerShutdownNoopOutsideStarter(t *testing.T) {

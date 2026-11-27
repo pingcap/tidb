@@ -20,6 +20,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -46,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -60,6 +63,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/gc"
 	"github.com/tikv/pd/client/constants"
+	"github.com/tikv/pd/client/pkg/caller"
 )
 
 type mockGCWorkerLockResolver struct {
@@ -201,6 +205,14 @@ func withMockStoreOptions(opt ...mockstore.MockTiKVStoreOption) mockGCWorkerSuit
 	}
 }
 
+func newTestGCWorker(t *testing.T, store kv.Storage, pdClient pd.Client) *GCWorker {
+	t.Helper()
+	worker, err := NewGCWorker(store, pdClient)
+	require.NoError(t, err)
+	t.Cleanup(func() { variable.UnregisterStatistics(worker) })
+	return worker
+}
+
 func createGCWorkerSuite(t *testing.T, opts ...mockGCWorkerSuiteOption) *mockGCWorkerSuite {
 	options := &mockGCWorkerSuiteOptions{
 		storeType:        mockstore.EmbedUnistore,
@@ -241,11 +253,9 @@ func createGCWorkerSuite(t *testing.T, opts ...mockGCWorkerSuiteOption) *mockGCW
 
 	s.tikvStore = s.store.(tikv.Storage)
 
-	gcWorker, err := NewGCWorker(s.store, s.pdClient)
-	require.NoError(t, err)
-	gcWorker.Start()
-	gcWorker.Close()
-	s.gcWorker = gcWorker
+	s.gcWorker = newTestGCWorker(t, s.store, s.pdClient)
+	s.gcWorker.Start()
+	s.gcWorker.Close()
 
 	return s
 }
@@ -438,6 +448,188 @@ func TestGetOracleTime(t *testing.T) {
 	t2, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
 	timeEqual(t, t2, t1.Add(time.Second*10), time.Millisecond*10)
+}
+
+func TestCheckGCEnableWithDisableGC(t *testing.T) {
+	// Starter can schedule a GC job on the first tick in a normal build.
+	if kerneltype.IsNextGen() {
+		mode := deploymode.Get()
+		t.Cleanup(func() { require.NoError(t, deploymode.Set(mode)) })
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+	}
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(conf *config.Config) { conf.DisableGC = true })
+	s := createGCWorkerSuite(t)
+	se := createSession(s.store)
+	defer se.Close()
+
+	for _, tc := range []struct {
+		name      string
+		disableGC bool
+		sqlEnable string
+		want      bool
+	}{
+		{name: "config overrides SQL on", disableGC: true, sqlEnable: "ON", want: false},
+		{name: "config with SQL off", disableGC: true, sqlEnable: "OFF", want: false},
+		{name: "SQL on without config override", disableGC: false, sqlEnable: "ON", want: true},
+		{name: "SQL off without config override", disableGC: false, sqlEnable: "OFF", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config.UpdateGlobal(func(conf *config.Config) { conf.DisableGC = tc.disableGC })
+			worker := newTestGCWorker(t, s.store, s.pdClient)
+			// A live worker retains the configuration it started with.
+			config.UpdateGlobal(func(conf *config.Config) { conf.DisableGC = !tc.disableGC })
+			_, err := se.ExecuteInternal(gcContext(), "SET GLOBAL tidb_gc_enable = "+tc.sqlEnable)
+			require.NoError(t, err)
+			enabled, err := worker.checkGCEnable()
+			require.NoError(t, err)
+			require.Equal(t, tc.want, enabled)
+			sqlEnable, err := se.GetSessionVars().GetGlobalSystemVar(gcContext(), "tidb_gc_enable")
+			require.NoError(t, err)
+			require.Equal(t, tc.sqlEnable, sqlEnable)
+		})
+	}
+}
+
+func TestDisableGCDoesNotInitializeEnable(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(conf *config.Config) { conf.DisableGC = true })
+	s := createGCWorkerSuite(t)
+	se := createSession(s.store)
+	defer se.Close()
+	_, err := se.ExecuteInternal(gcContext(), "DELETE FROM mysql.tidb WHERE variable_name = %?", gcEnableKey)
+	require.NoError(t, err)
+
+	enabled, err := s.gcWorker.checkGCEnable()
+	require.NoError(t, err)
+	require.False(t, enabled)
+	value, err := s.gcWorker.loadValueFromSysTable(gcEnableKey)
+	require.NoError(t, err)
+	require.Empty(t, value)
+
+	config.UpdateGlobal(func(conf *config.Config) { conf.DisableGC = false })
+	worker := newTestGCWorker(t, s.store, s.pdClient)
+	enabled, err = worker.checkGCEnable()
+	require.NoError(t, err)
+	require.True(t, enabled)
+	value, err = s.gcWorker.loadValueFromSysTable(gcEnableKey)
+	require.NoError(t, err)
+	require.Equal(t, booleanTrue, value)
+}
+
+// Keyspace-level GC must use its own controller. Report unexpected writes even
+// if the worker handles the error or the target safepoint was already reached.
+type keyspaceGCWorkerTestClient struct {
+	pd.Client
+	t          *testing.T
+	keyspaceID uint32
+}
+
+func (c keyspaceGCWorkerTestClient) WithCallerComponent(component caller.Component) pd.Client {
+	c.Client = c.Client.WithCallerComponent(component)
+	return c
+}
+
+func (c keyspaceGCWorkerTestClient) GetGCInternalController(id uint32) gc.InternalController {
+	if id != c.keyspaceID {
+		c.t.Errorf("GC worker for keyspace %d requested a controller for %d", c.keyspaceID, id)
+	}
+	return c.Client.GetGCInternalController(id)
+}
+
+func (c keyspaceGCWorkerTestClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	if safePoint != 0 {
+		c.t.Errorf("keyspace GC worker attempted global GC safepoint update to %d", safePoint)
+	}
+	return c.Client.UpdateGCSafePoint(ctx, safePoint)
+}
+
+func (c keyspaceGCWorkerTestClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	c.t.Errorf("keyspace GC worker attempted global service safepoint update for %q with TTL %d and safepoint %d", serviceID, ttl, safePoint)
+	return c.Client.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
+}
+
+func TestDisableGCAcrossWorkerRestart(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(conf *config.Config) { conf.DisableGC = true })
+	oldWait := txnSafePointSyncWaitTime
+	txnSafePointSyncWaitTime = 0
+	t.Cleanup(func() { txnSafePointSyncWaitTime = oldWait })
+
+	s := createGCWorkerSuite(t)
+	ctx := gcContext()
+	keyspaceID := uint32(s.store.GetCodec().GetKeyspaceID())
+	client := s.pdClient
+	if kerneltype.IsNextGen() {
+		require.NotEqual(t, constants.NullKeyspaceID, keyspaceID)
+		require.True(t, pd.IsKeyspaceUsingKeyspaceLevelGC(s.store.GetCodec().GetKeyspaceMeta()))
+		client = keyspaceGCWorkerTestClient{Client: client, t: t, keyspaceID: keyspaceID}
+	} else {
+		require.Equal(t, constants.NullKeyspaceID, keyspaceID)
+	}
+
+	now, err := s.gcWorker.getOracleTime()
+	require.NoError(t, err)
+	oldSafePointTime := now.Add(-2 * time.Hour)
+	oldSafePoint := oracle.GoTimeToTS(oldSafePointTime)
+	oldLastRun := now.Add(-time.Hour)
+	require.NoError(t, s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue))
+	require.NoError(t, s.gcWorker.saveTime(gcLastRunTimeKey, oldLastRun))
+	require.NoError(t, s.gcWorker.saveTime(gcSafePointKey, oldSafePointTime))
+	controller := s.pdClient.GetGCInternalController(keyspaceID)
+	_, err = controller.AdvanceTxnSafePoint(ctx, oldSafePoint)
+	require.NoError(t, err)
+	_, err = controller.AdvanceGCSafePoint(ctx, oldSafePoint)
+	require.NoError(t, err)
+	states := s.pdClient.GetGCStatesClient(keyspaceID)
+	barrierTS := oracle.GoTimeToTS(now.Add(-5 * time.Minute))
+	_, err = states.SetGCBarrier(ctx, "backup", barrierTS, gc.TTLNeverExpire)
+	require.NoError(t, err)
+
+	configFile := filepath.Join(t.TempDir(), "tidb.toml")
+	for _, frozen := range []bool{true, false} {
+		require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf("disable-gc = %t", frozen)), 0600))
+		config.UpdateGlobal(func(conf *config.Config) { require.NoError(t, conf.Load(configFile)) })
+		worker := newTestGCWorker(t, s.store, client)
+		// Exercise Start's first tick with an expired leader lease and startup cooldown.
+		require.NoError(t, worker.saveTime(gcLeaderLeaseKey, time.Now().Add(-gcWorkerLease)))
+		worker.lastFinish = time.Now().Add(-gcWaitTime)
+		worker.tick(ctx)
+		if worker.gcIsRunning {
+			select {
+			case err := <-worker.done:
+				require.NoError(t, err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("timed out waiting for GC")
+			}
+		}
+		require.Equal(t, !frozen, worker.gcIsRunning)
+		leader, err := worker.loadValueFromSysTable(gcLeaderUUIDKey)
+		require.NoError(t, err)
+		require.Equal(t, worker.uuid, leader)
+
+		lastRun, err := worker.loadTime(gcLastRunTimeKey)
+		require.NoError(t, err)
+		sqlSafePoint, err := worker.loadTime(gcSafePointKey)
+		require.NoError(t, err)
+		state, err := states.GetGCState(ctx, gc.ExcludeGCBarriers(false))
+		require.NoError(t, err)
+		if frozen {
+			require.True(t, lastRun.Equal(oldLastRun))
+			require.Equal(t, oldSafePoint, state.GCSafePoint)
+		} else {
+			require.True(t, lastRun.After(oldLastRun))
+			require.Greater(t, state.GCSafePoint, oldSafePoint)
+		}
+		require.Equal(t, state.GCSafePoint, state.TxnSafePoint)
+		require.Equal(t, state.GCSafePoint, oracle.GoTimeToTS(*sqlSafePoint))
+		barriers, err := state.GetGCBarriers()
+		require.NoError(t, err)
+		require.Len(t, barriers, 1)
+		require.Equal(t, "backup", barriers[0].BarrierID)
+		require.Equal(t, barrierTS, barriers[0].BarrierTS)
+		require.Equal(t, gc.TTLNeverExpire, barriers[0].TTL)
+	}
 }
 
 func TestPrepareGC(t *testing.T) {
@@ -2434,13 +2626,14 @@ func TestGCPlacementRulesForCreateMaterializedViewRollback(t *testing.T) {
 	historyJobFailpointEnabled = false
 
 	for _, test := range []struct {
-		name      string
-		failpoint string
-		tableID   int64
+		name          string
+		failpoint     string
+		tableID       int64
+		shadowTableID int64
 	}{
 		{name: "drop materialized view", failpoint: "drop-mview:20", tableID: 20},
 		{name: "drop materialized view log", failpoint: "drop-mlog:30", tableID: 30},
-		{name: "out of place materialized view cutover", failpoint: "mview-cutover:40:41", tableID: 40},
+		{name: "out of place materialized view cutover", failpoint: "mview-cutover:40:41", tableID: 40, shadowTableID: 41},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", `return("`+test.failpoint+`")`))
@@ -2452,7 +2645,13 @@ func TestGCPlacementRulesForCreateMaterializedViewRollback(t *testing.T) {
 			bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1, r2"})
 			require.NoError(t, err)
 			bundle.ID = bundleID
-			require.NoError(t, infosync.PutRuleBundles(context.Background(), []*placement.Bundle{bundle}))
+			bundles := []*placement.Bundle{bundle}
+			if test.shadowTableID != 0 {
+				shadowBundle := bundle.Clone()
+				shadowBundle.ID = placement.GroupID(test.shadowTableID)
+				bundles = append(bundles, shadowBundle)
+			}
+			require.NoError(t, infosync.PutRuleBundles(context.Background(), bundles))
 
 			var cache sync.Map
 			dr := util.DelRangeTask{JobID: 1, ElementID: test.tableID}
@@ -2463,6 +2662,89 @@ func TestGCPlacementRulesForCreateMaterializedViewRollback(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, got)
 			require.True(t, got.IsEmpty())
+			if test.shadowTableID != 0 {
+				got, err = infosync.GetRuleBundle(context.Background(), placement.GroupID(test.shadowTableID))
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				require.False(t, got.IsEmpty())
+			}
+		})
+	}
+}
+
+func TestGCPlacementRulesForMaterializedViewOutOfPlaceCutover(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		oldMLogID int64
+		cancelled bool
+	}{
+		{name: "without log"},
+		{name: "with log", oldMLogID: 40},
+		{name: "cancelled", oldMLogID: 40, cancelled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := createGCWorkerSuite(t)
+			tiflash := infosync.NewMockTiFlash()
+			infosync.SetMockTiFlash(tiflash)
+			defer func() {
+				infosync.SetMockTiFlash(nil)
+				tiflash.StatusServer.Close()
+			}()
+
+			historyJob := "mview-cutover:20:30"
+			retiredIDs := []int64{20}
+			preservedIDs := []int64{30, 50}
+			if tc.oldMLogID != 0 {
+				historyJob += fmt.Sprintf(":%d", tc.oldMLogID)
+				retiredIDs = append(retiredIDs, tc.oldMLogID)
+			}
+			if tc.cancelled {
+				historyJob += ":50"
+				retiredIDs = []int64{50}
+				preservedIDs = []int64{20, 30, tc.oldMLogID}
+			}
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", fmt.Sprintf("return(%q)", historyJob)))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+			}()
+
+			bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{
+				PrimaryRegion: "r1",
+				Regions:       "r1, r2",
+			})
+			require.NoError(t, err)
+			allIDs := []int64{20, 30, 50}
+			if tc.oldMLogID != 0 {
+				allIDs = append(allIDs, tc.oldMLogID)
+			}
+			for _, id := range allIDs {
+				current := bundle.Clone()
+				current.ID = fmt.Sprintf("TiDB_DDL_%d", id)
+				require.NoError(t, infosync.PutRuleBundles(context.Background(), []*placement.Bundle{current}))
+				require.NoError(t, infosync.ConfigureTiFlashPDForTable(id, 1, &[]string{}))
+			}
+
+			var gcPlacementRuleCache sync.Map
+			dr := util.DelRangeTask{JobID: 1, ElementID: retiredIDs[0]}
+			require.NoError(t, doGCPlacementRules(createSession(s.store), 1, dr, &gcPlacementRuleCache))
+			for _, id := range retiredIDs {
+				_, ok := gcPlacementRuleCache.Load(id)
+				require.True(t, ok)
+				got, err := infosync.GetRuleBundle(context.Background(), fmt.Sprintf("TiDB_DDL_%d", id))
+				require.NoError(t, err)
+				require.True(t, got.IsEmpty())
+				_, ok = tiflash.GetPlacementRule(infosync.MakeRuleID(id))
+				require.False(t, ok)
+			}
+			for _, id := range preservedIDs {
+				_, ok := gcPlacementRuleCache.Load(id)
+				require.False(t, ok)
+				_, ok = tiflash.GetPlacementRule(infosync.MakeRuleID(id))
+				require.True(t, ok)
+				got, err := infosync.GetRuleBundle(context.Background(), fmt.Sprintf("TiDB_DDL_%d", id))
+				require.NoError(t, err)
+				require.False(t, got.IsEmpty())
+			}
 		})
 	}
 }

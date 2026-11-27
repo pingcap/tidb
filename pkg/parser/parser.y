@@ -402,6 +402,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	commit                     "COMMIT"
 	committed                  "COMMITTED"
 	compact                    "COMPACT"
+	compare                    "COMPARE"
 	complete                   "COMPLETE"
 	compressed                 "COMPRESSED"
 	compression                "COMPRESSION"
@@ -479,6 +480,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	full                       "FULL"
 	function                   "FUNCTION"
 	general                    "GENERAL"
+	geomCollection             "GEOMCOLLECTION"
+	geometry                   "GEOMETRY"
+	geometryCollection         "GEOMETRYCOLLECTION"
 	global                     "GLOBAL"
 	grants                     "GRANTS"
 	handler                    "HANDLER"
@@ -515,6 +519,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	lastBackup                 "LAST_BACKUP"
 	less                       "LESS"
 	level                      "LEVEL"
+	lineString                 "LINESTRING"
 	list                       "LIST"
 	loadStats                  "LOAD_STATS"
 	local                      "LOCAL"
@@ -543,6 +548,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	modify                     "MODIFY"
 	monitor                    "MONITOR"
 	month                      "MONTH"
+	multiLineString            "MULTILINESTRING"
+	multiPoint                 "MULTIPOINT"
+	multiPolygon               "MULTIPOLYGON"
 	names                      "NAMES"
 	national                   "NATIONAL"
 	ncharType                  "NCHAR"
@@ -572,6 +580,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	open                       "OPEN"
 	operate                    "OPERATE"
 	optional                   "OPTIONAL"
+	output                     "OUTPUT"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
 	pageChecksum               "PAGE_CHECKSUM"
@@ -592,6 +601,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	plugins                    "PLUGINS"
 	point                      "POINT"
 	policy                     "POLICY"
+	polygon                    "POLYGON"
 	preceding                  "PRECEDING"
 	prepare                    "PREPARE"
 	preserve                   "PRESERVE"
@@ -682,6 +692,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	sqlTsiSecond               "SQL_TSI_SECOND"
 	sqlTsiWeek                 "SQL_TSI_WEEK"
 	sqlTsiYear                 "SQL_TSI_YEAR"
+	srid                       "SRID"
 	start                      "START"
 	statsAutoRecalc            "STATS_AUTO_RECALC"
 	statsColChoice             "STATS_COL_CHOICE"
@@ -741,6 +752,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	variables                  "VARIABLES"
 	vectorType                 "VECTOR"
 	view                       "VIEW"
+	views                      "VIEWS"
 	visible                    "VISIBLE"
 	wait                       "WAIT"
 	waitTiflashReady           "WAIT_TIFLASH_READY"
@@ -1048,6 +1060,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	BRIEStmt                      "BACKUP or RESTORE statement"
 	CalibrateResourceStmt         "CALIBRATE RESOURCE statement"
 	CancelDistributionJobStmt     "CANCEL DISTRIBUTION JOB statement"
+	CompareMaterializedViewStmt   "COMPARE MATERIALIZED VIEW statement"
 	CommitStmt                    "COMMIT statement"
 	CreateTableStmt               "CREATE TABLE statement"
 	CreateViewStmt                "CREATE VIEW  statement"
@@ -1186,6 +1199,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	LikeOrIlikeEscapeOpt                   "like or ilike escape option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
+	AlterDatabaseOptionList                "Alter database option list"
 	AlterJobOptionList                     "Alter job option list"
 	AlterJobOption                         "Alter job option"
 	AlterTableSpecSingleOpt                "Alter table single option"
@@ -1249,6 +1263,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	DatabaseOption                         "CREATE Database specification"
 	DatabaseOptionList                     "CREATE Database specification list"
 	DatabaseOptionListOpt                  "CREATE Database specification list opt"
+	DatabaseReadOnlyOpt                    "Database read only option"
 	DistinctOpt                            "Explicit distinct option"
 	DefaultFalseDistinctOpt                "Distinct option which defaults to false"
 	DefaultTrueDistinctOpt                 "Distinct option which defaults to true"
@@ -1545,6 +1560,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	RefreshWithAsyncModeOpt                "REFRESH MATERIALIZED VIEW WITH ASYNC MODE option"
 	RefreshMaterializedViewObserveOpt      "REFRESH MATERIALIZED VIEW DRY RUN/WITH PROFILE option"
 	RefreshCompleteMode                    "REFRESH MATERIALIZED VIEW COMPLETE mode option"
+	CompareMaterializedViewOutputOpt       "COMPARE MATERIALIZED VIEW OUTPUT INTO TABLE option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -1597,6 +1613,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	FloatingPointType                      "Approximate value types"
 	BitValueType                           "bit value types"
 	StringType                             "String types"
+	GeometryTypeName                       "Geometry type names"
+	GeometrySubtypeName                    "Geometry subtype names"
 	BlobType                               "Blob types"
 	TextType                               "Text types"
 	DateAndTimeType                        "Date and Time types"
@@ -4189,6 +4207,24 @@ ColumnOption:
 		}
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionMariaDBRowEnd}
 	}
+|	"SRID" NUM
+	{
+		srid := getUint64FromNUM($2)
+		if srid > 0xffffffff { // math.MaxUint32
+			yylex.AppendError(ErrDataOutOfRange.GenWithStackByArgs("SRID", "SRID"))
+			return 1
+		}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionSRID, SRID: uint32(srid)}
+	}
+|	"SRID" hexLit
+	{
+		srid, ok := getUint64FromBinaryLiteral($2.(ast.BinaryLiteral))
+		if !ok || srid > 0xffffffff { // math.MaxUint32
+			yylex.AppendError(ErrDataOutOfRange.GenWithStackByArgs("SRID", "SRID"))
+			return 1
+		}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionSRID, SRID: uint32(srid)}
+	}
 
 AutoRandomOpt:
 	{
@@ -4304,6 +4340,21 @@ ConstraintElem:
 	{
 		c := &ast.Constraint{
 			Tp:           ast.ConstraintFulltext,
+			Keys:         $5.([]*ast.IndexPartSpecification),
+			Name:         $3.(*ast.NullString).String,
+			IsEmptyIndex: $3.(*ast.NullString).Empty,
+		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
+		}
+		$$ = c
+	}
+|	"SPATIAL" KeyOrIndexOpt IndexName '(' IndexPartSpecificationList ')' IndexOptionList
+	{
+		c := &ast.Constraint{
+			Tp:           ast.ConstraintSpatial,
 			Keys:         $5.([]*ast.IndexPartSpecification),
 			Name:         $3.(*ast.NullString).String,
 			IsEmptyIndex: $3.(*ast.NullString).Empty,
@@ -4833,7 +4884,7 @@ IndexKeyTypeOpt:
  * | [DEFAULT] ENCRYPTION [=] {'Y' | 'N'}
  *******************************************************************************************/
 AlterDatabaseStmt:
-	"ALTER" DatabaseSym DBName DatabaseOptionList
+	"ALTER" DatabaseSym DBName AlterDatabaseOptionList
 	{
 		$$ = &ast.AlterDatabaseStmt{
 			Name:                 ast.NewCIStr($3),
@@ -4841,12 +4892,40 @@ AlterDatabaseStmt:
 			Options:              $4.([]*ast.DatabaseOption),
 		}
 	}
-|	"ALTER" DatabaseSym DatabaseOptionList
+|	"ALTER" DatabaseSym AlterDatabaseOptionList
 	{
 		$$ = &ast.AlterDatabaseStmt{
 			Name:                 ast.NewCIStr(""),
 			AlterDefaultDatabase: true,
 			Options:              $3.([]*ast.DatabaseOption),
+		}
+	}
+
+AlterDatabaseOptionList:
+	DatabaseOptionList
+|	"READ" "ONLY" EqOpt DatabaseReadOnlyOpt
+	{
+		$$ = []*ast.DatabaseOption{{
+			Tp:    ast.DatabaseOptionReadOnly,
+			Value: $4.(string),
+		}}
+	}
+
+DatabaseReadOnlyOpt:
+	"DEFAULT"
+	{
+		$$ = "DEFAULT"
+	}
+|	NUM
+	{
+		switch getUint64FromNUM($1) {
+		case 0:
+			$$ = "0"
+		case 1:
+			$$ = "1"
+		default:
+			yylex.AppendError(ErrSyntax)
+			return 1
 		}
 	}
 
@@ -5685,6 +5764,20 @@ CreateMaterializedViewStmt:
 			Select:     $12.(ast.StmtNode).(ast.ResultSetNode),
 		}
 	}
+|	"CREATE" "MATERIALIZED" "VIEW" "IF" NotSym "EXISTS" TableName '(' ColumnList ')' MViewTableOptionListOpt MViewRefreshClauseOpt MViewAttributesOpt "AS" CreateViewSelectOpt
+	{
+		opts := $11.(*mviewCreateOptions)
+		$$ = &ast.CreateMaterializedViewStmt{
+			IfNotExists: true,
+			ViewName:    $7.(*ast.TableName),
+			Cols:        $9.([]ast.CIStr),
+			Comment:     opts.comment,
+			Refresh:     $12.(*ast.MViewRefreshClause),
+			Attributes:  $13.(string),
+			Options:     opts.options,
+			Select:      $15.(ast.StmtNode).(ast.ResultSetNode),
+		}
+	}
 
 MViewTableOptionListOpt:
 	/* EMPTY */
@@ -5800,15 +5893,16 @@ MViewStartWithOrNext:
 	}
 
 CreateMaterializedViewLogStmt:
-	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogCreateOptionListOpt MLogPurgeClauseOpt MLogAccumulationAlertClauseOpt
+	"CREATE" "MATERIALIZED" "VIEW" "LOG" IfNotExists "ON" TableName '(' ColumnList ')' MLogCreateOptionListOpt MLogPurgeClauseOpt MLogAccumulationAlertClauseOpt
 	{
-		opts := $10.(*mlogCreateOptions)
+		opts := $11.(*mlogCreateOptions)
 		$$ = &ast.CreateMaterializedViewLogStmt{
-			Table:             $6.(*ast.TableName),
-			Cols:              $8.([]ast.CIStr),
+			IfNotExists:       $5.(bool),
+			Table:             $7.(*ast.TableName),
+			Cols:              $9.([]ast.CIStr),
 			Options:           opts.options,
-			Purge:             $11.(*ast.MLogPurgeClause),
-			AccumulationAlert: $12.(*ast.MLogAccumulationAlertClause),
+			Purge:             $12.(*ast.MLogPurgeClause),
+			AccumulationAlert: $13.(*ast.MLogAccumulationAlertClause),
 		}
 	}
 
@@ -6012,6 +6106,26 @@ CancelMaterializedViewJobStmt:
 			Tp:    ast.CancelMaterializedViewJobTypeLogPurge,
 			JobID: $7.(int64),
 		}
+	}
+
+CompareMaterializedViewStmt:
+	"COMPARE" "MATERIALIZED" "VIEW" TableName AsOfClause CompareMaterializedViewOutputOpt
+	{
+		$$ = &ast.CompareMaterializedViewStmt{
+			ViewName:    $4.(*ast.TableName),
+			AsOf:        $5.(*ast.AsOfClause),
+			OutputTable: $6.(*ast.TableName),
+		}
+	}
+
+CompareMaterializedViewOutputOpt:
+	%prec empty
+	{
+		$$ = (*ast.TableName)(nil)
+	}
+|	"OUTPUT" "INTO" "TABLE" TableName
+	{
+		$$ = $4.(*ast.TableName)
 	}
 
 RefreshMaterializedViewStmt:
@@ -6996,7 +7110,7 @@ Int64Num:
 	{
 		v, rangeErrMsg := getInt64FromNUM($1)
 		if len(rangeErrMsg) != 0 {
-			yylex.AppendError(yylex.Errorf(rangeErrMsg))
+			yylex.AppendError(yylex.Errorf("%s", rangeErrMsg))
 			return 1
 		}
 		$$ = v
@@ -7837,6 +7951,7 @@ UnReservedKeyword:
 |	"SAN"
 |	"COMMIT"
 |	"COMPACT"
+|	"COMPARE"
 |	"COMPLETE"
 |	"COMPRESSED"
 |	"CONSISTENCY"
@@ -7988,6 +8103,7 @@ UnReservedKeyword:
 |	"BINLOG"
 |	"FUNCTION"
 |	"VIEW"
+|	"VIEWS"
 |	"BINDING"
 |	"BINDINGS"
 |	"MODIFY"
@@ -8170,6 +8286,7 @@ UnReservedKeyword:
 |	"RETURNING"
 |	"OFF"
 |	"OPTIONAL"
+|	"OUTPUT"
 |	"REQUIRED"
 |	"PURGE"
 |	"SKIP"
@@ -8214,6 +8331,15 @@ UnReservedKeyword:
 |	"PAGE_COMPRESSION_LEVEL"
 |	"TRANSACTIONAL"
 |	"IETF_QUOTES"
+|	"GEOMCOLLECTION"
+|	"GEOMETRY"
+|	"GEOMETRYCOLLECTION"
+|	"LINESTRING"
+|	"MULTILINESTRING"
+|	"MULTIPOINT"
+|	"MULTIPOLYGON"
+|	"POLYGON"
+|	"SRID"
 
 TiDBKeyword:
 	"ADMIN"
@@ -9254,16 +9380,23 @@ FunctionNameConflict:
 |	"DATE"
 |	"DATABASE"
 |	"DAY"
+|	"GEOMCOLLECTION"
+|	"GEOMETRYCOLLECTION"
 |	"HOUR"
 |	"IF"
 |	"LOG"
 |	"FORMAT"
 |	"LEFT"
+|	"LINESTRING"
 |	"MICROSECOND"
 |	"MINUTE"
 |	"MONTH"
+|	"MULTILINESTRING"
+|	"MULTIPOINT"
+|	"MULTIPOLYGON"
 |	builtinNow
 |	"POINT"
+|	"POLYGON"
 |	"QUARTER"
 |	"REPEAT"
 |	"REPLACE"
@@ -10233,6 +10366,15 @@ CastType:
 		tp := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
 		tp.SetFlen($3.(int))
 		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
+|	GeometrySubtypeName
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.SetGeometryType($1.(types.GeometryType))
+		tp.AddFlag(mysql.BinaryFlag)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
 		$$ = tp
@@ -12770,6 +12912,54 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
+|	"SHOW" "MATERIALIZED" "VIEWS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{Tp: ast.ShowMaterializedViews}
+		stmt.DBName = $4
+		if $5 != nil {
+			if x, ok := $5.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $5.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
+|	"SHOW" "MATERIALIZED" "VIEW" "LOGS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{Tp: ast.ShowMaterializedViewLogs}
+		stmt.DBName = $5
+		if $6 != nil {
+			if x, ok := $6.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $6.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
+|	"SHOW" "MATERIALIZED" "VIEW" TableName identifier
+	{
+		if !strings.EqualFold($5, "remain_logs") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected REMAIN_LOGS"))
+			return 1
+		}
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowMaterializedViewRemainLogs,
+			Table: $4.(*ast.TableName),
+		}
+	}
+|	"SHOW" "MATERIALIZED" "VIEW" "LOG" "ON" TableName identifier
+	{
+		if !strings.EqualFold($7, "wait_purge") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected WAIT_PURGE"))
+			return 1
+		}
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowMaterializedViewLogWaitPurge,
+			Table: $6.(*ast.TableName),
+		}
+	}
 |	"SHOW" "CREATE" "TABLE" TableName
 	{
 		$$ = &ast.ShowStmt{
@@ -12782,6 +12972,20 @@ ShowStmt:
 		$$ = &ast.ShowStmt{
 			Tp:    ast.ShowCreateView,
 			Table: $4.(*ast.TableName),
+		}
+	}
+|	"SHOW" "CREATE" "MATERIALIZED" "VIEW" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowCreateMaterializedView,
+			Table: $5.(*ast.TableName),
+		}
+	}
+|	"SHOW" "CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowCreateMaterializedViewLog,
+			Table: $7.(*ast.TableName),
 		}
 	}
 |	"SHOW" "CREATE" "DATABASE" IfNotExists DBName
@@ -12959,7 +13163,7 @@ ShowStmt:
 		$$ = &ast.ShowStmt{
 			Tp:           ast.ShowImportJobs,
 			ImportJobID:  &v,
-			ImportJobRaw: $2.(bool),
+			RawImportJob: $2.(bool),
 		}
 	}
 |	"SHOW" "DISTRIBUTION" "JOB" Int64Num
@@ -13331,7 +13535,7 @@ ShowTargetFilterable:
 	}
 |	ShowImportJobsTarget
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs, ImportJobRaw: $1.(bool)}
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs, RawImportJob: $1.(bool)}
 	}
 |	"DISTRIBUTION" "JOBS"
 	{
@@ -13621,6 +13825,7 @@ Statement:
 |	DropMaterializedViewLogStmt
 |	PurgeMaterializedViewLogStmt
 |	CancelMaterializedViewJobStmt
+|	CompareMaterializedViewStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
@@ -14705,6 +14910,56 @@ StringType:
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
 		$$ = tp
+	}
+|	GeometryTypeName
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.SetGeometryType($1.(types.GeometryType))
+		tp.AddFlag(mysql.BinaryFlag)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
+
+GeometryTypeName:
+	"GEOMETRY"
+	{
+		$$ = types.GeomGeometry
+	}
+|	GeometrySubtypeName
+
+GeometrySubtypeName:
+	"POINT"
+	{
+		$$ = types.GeomPoint
+	}
+|	"LINESTRING"
+	{
+		$$ = types.GeomLineString
+	}
+|	"POLYGON"
+	{
+		$$ = types.GeomPolygon
+	}
+|	"MULTIPOINT"
+	{
+		$$ = types.GeomMultiPoint
+	}
+|	"MULTILINESTRING"
+	{
+		$$ = types.GeomMultiLineString
+	}
+|	"MULTIPOLYGON"
+	{
+		$$ = types.GeomMultiPolygon
+	}
+|	"GEOMETRYCOLLECTION"
+	{
+		$$ = types.GeomGeometryCollection
+	}
+|	"GEOMCOLLECTION"
+	{
+		$$ = types.GeomGeometryCollection
 	}
 
 Char:

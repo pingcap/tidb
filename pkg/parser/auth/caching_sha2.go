@@ -37,6 +37,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"hash"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -68,8 +69,8 @@ func Sha256Hash(input []byte) []byte {
 	return res[:]
 }
 
-// 'hash' function should return an array with 32 bytes, the same as SHA-256
-func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) []byte) string {
+// hash and newHash must compute the same 32-byte digest, the same as SHA-256.
+func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) []byte, newHash func() hash.Hash) string {
 	// Numbers in the comments refer to the description of the algorithm on https://www.akkadia.org/drepper/SHA-crypt.txt
 
 	// 1, 2, 3
@@ -106,12 +107,13 @@ func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) 
 	bufA.Reset()
 
 	// 13, 14, 15
-	bufDP := bufA
-	for range []byte(plaintext) {
-		bufDP.WriteString(plaintext)
+	// Hash the repeated password without materializing len(plaintext)^2 bytes.
+	hasher := newHash()
+	plaintextBytes := []byte(plaintext)
+	for range plaintextBytes {
+		hasher.Write(plaintextBytes)
 	}
-	sumDP := hash(bufDP.Bytes())
-	bufDP.Reset()
+	sumDP := hasher.Sum(nil)
 
 	// 16
 	p := make([]byte, 0, sha256.Size)
@@ -211,9 +213,9 @@ func CheckHashingPassword(pwhash []byte, password string, hash string) (bool, er
 	var newHash string
 	switch hash {
 	case mysql.AuthCachingSha2Password:
-		newHash = hashCrypt(password, salt, int(iterations), Sha256Hash)
+		newHash = hashCrypt(password, salt, int(iterations), Sha256Hash, sha256.New)
 	case mysql.AuthTiDBSM3Password:
-		newHash = hashCrypt(password, salt, int(iterations), Sm3Hash)
+		newHash = hashCrypt(password, salt, int(iterations), Sm3Hash, NewSM3)
 	}
 
 	return bytes.Equal(pwhash, []byte(newHash)), nil
@@ -236,9 +238,9 @@ func NewHashPassword(pwd string, hash string) string {
 
 	switch hash {
 	case mysql.AuthCachingSha2Password:
-		return hashCrypt(pwd, salt, 5*ITERATION_MULTIPLIER, Sha256Hash)
+		return hashCrypt(pwd, salt, 5*ITERATION_MULTIPLIER, Sha256Hash, sha256.New)
 	case mysql.AuthTiDBSM3Password:
-		return hashCrypt(pwd, salt, 5*ITERATION_MULTIPLIER, Sm3Hash)
+		return hashCrypt(pwd, salt, 5*ITERATION_MULTIPLIER, Sm3Hash, NewSM3)
 	default:
 		return ""
 	}

@@ -61,6 +61,9 @@ type delRangeManager interface {
 	// removeFromGCDeleteRange removes the deleting table job from gc_delete_range table by jobID and tableID.
 	// It's use for recover the table that was mistakenly deleted.
 	removeFromGCDeleteRange(ctx context.Context, jobID int64) error
+	// removeFromGCDeleteRangeWithSession removes the deleting table job from gc_delete_range
+	// using the caller's session so it participates in the caller's transaction.
+	removeFromGCDeleteRangeWithSession(ctx context.Context, sctx sessionctx.Context, jobID int64) error
 	start()
 	clear()
 }
@@ -145,8 +148,12 @@ func (dr *delRange) removeFromGCDeleteRange(ctx context.Context, jobID int64) er
 		return errors.Trace(err)
 	}
 	defer dr.sessPool.Put(sctx)
-	err = util.RemoveMultiFromGCDeleteRange(ctx, sctx, jobID)
-	return errors.Trace(err)
+	return dr.removeFromGCDeleteRangeWithSession(ctx, sctx, jobID)
+}
+
+// removeFromGCDeleteRangeWithSession implements delRangeManager interface.
+func (*delRange) removeFromGCDeleteRangeWithSession(ctx context.Context, sctx sessionctx.Context, jobID int64) error {
+	return errors.Trace(util.RemoveMultiFromGCDeleteRange(ctx, sctx, jobID))
 }
 
 // start implements delRangeManager interface.
@@ -319,7 +326,13 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		if err != nil {
 			return errors.Trace(err)
 		}
-		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{args.OldMViewID}, ea, "refresh materialized view out-of-place cutover: old table ID"))
+		tableIDs := []int64{args.OldMViewID}
+		if job.IsCancelled() {
+			tableIDs = []int64{args.NewMLogID}
+		} else if args.OldMLogID != 0 {
+			tableIDs = append(tableIDs, args.OldMLogID)
+		}
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, tableIDs, ea, "refresh materialized view out-of-place cutover: retired table ID"))
 	case model.ActionTruncateTable:
 		tableID := job.TableID
 		args, err := model.GetFinishedTruncateTableArgs(job)

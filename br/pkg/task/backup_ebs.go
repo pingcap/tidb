@@ -168,7 +168,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		var e error
 		restoreFunc, e = mgr.RemoveAllPDSchedulers(ctx)
 		if e != nil {
-			return errors.Trace(err)
+			return errors.Trace(e)
 		}
 		if err := preparer.DriveLoopAndWaitPrepare(ctx); err != nil {
 			return err

@@ -154,6 +154,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 	skipHistoryJobs := false
 	schemaNames := set.NewStringSet()
 	tableNames := set.NewStringSet()
+	var minJobID int64
 
 	ex, ok := e.extractor.(*plannercore.InfoSchemaDDLExtractor)
 	if ok {
@@ -173,6 +174,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 
 		schemaNames = ex.ColPredicates["db_name"]
 		tableNames = ex.ColPredicates["table_name"]
+		minJobID = ex.MinJobID
 	}
 
 	var err error
@@ -189,9 +191,8 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 	}
 
 	if !skipHistoryJobs {
-		// For the similar reason, we can only use schema_name and table_name to do filtering here.
 		m := meta.NewMutator(txn)
-		e.historyJobIter, err = m.GetLastHistoryDDLJobsIteratorWithFilter(schemaNames, tableNames)
+		e.historyJobIter, err = m.GetLastHistoryDDLJobsIteratorWithFilter(schemaNames, tableNames, minJobID)
 		if err != nil {
 			return err
 		}

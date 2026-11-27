@@ -186,6 +186,59 @@ func mergeCases() []mergeCase {
 		},
 		{
 			// A global bucket boundary landing exactly on a partition
+			// bucket's upper must retain the whole same-upper group even
+			// when the size gate fires after part of it has been consumed.
+			name:       "same_upper_group_crosses_bucket_gate",
+			expBuckets: 2,
+			parts: func() []partSpec {
+				parts := []partSpec{{hist: []bucketSpec{{lo: di(0), up: di(0), mass: 98, repeat: 98}}}}
+				for range 100 {
+					parts = append(parts, partSpec{hist: []bucketSpec{{lo: di(10), up: di(10), mass: 1, repeat: 1}}})
+				}
+				return append(parts, partSpec{hist: []bucketSpec{{lo: di(20), up: di(20), mass: 1, repeat: 1}}})
+			}(),
+			wantBuckets: []bucketSpec{
+				{lo: di(0), up: di(10), mass: 198},
+				{lo: di(20), up: di(20), mass: 1},
+			},
+			extra: func(t *testing.T, hist *statistics.Histogram, _ *statistics.TopN) {
+				require.Equal(t, int64(100), hist.Buckets[0].Repeat)
+			},
+			globalNDV: 3,
+			estimates: func(t *testing.T, e estimator) {
+				require.Equal(t, float64(100), e.equal(10))
+			},
+		},
+		{
+			// The group can span partition histograms and virtual buckets
+			// made from non-promoted TopN entries, including encoded indexes.
+			name:       "same_upper_group_with_virtual_topn_index",
+			expBuckets: 2,
+			isIndex:    true,
+			parts: func() []partSpec {
+				parts := []partSpec{{hist: []bucketSpec{{lo: di(0), up: di(0), mass: 8, repeat: 8}}}}
+				for range 9 {
+					parts = append(parts, partSpec{hist: []bucketSpec{{lo: di(10), up: di(10), mass: 1, repeat: 1}}})
+				}
+				return append(parts, partSpec{
+					topN: []topnSpec{{val: di(10), count: 1}},
+					hist: []bucketSpec{{lo: di(20), up: di(20), mass: 1, repeat: 1}},
+				})
+			}(),
+			wantBuckets: []bucketSpec{
+				{lo: di(0), up: di(10), mass: 18},
+				{lo: di(20), up: di(20), mass: 1},
+			},
+			extra: func(t *testing.T, hist *statistics.Histogram, _ *statistics.TopN) {
+				require.Equal(t, int64(10), hist.Buckets[0].Repeat)
+			},
+			globalNDV: 3,
+			estimates: func(t *testing.T, e estimator) {
+				require.Equal(t, float64(10), e.equal(10))
+			},
+		},
+		{
+			// A global bucket boundary landing exactly on a partition
 			// bucket's upper must leave that bucket's Repeat on the left,
 			// where the value is the bucket upper. Attributing it to the
 			// right bucket (where the same value is the lower) buries the

@@ -40,7 +40,7 @@
 
 Adaptive LIMIT Scan adds a lightweight controller to one statement execution. The controller translates the remaining LIMIT demand into admission windows for supported execution stages. Workers must reserve capacity before admitting more work, report the actual input and output after that work is consumed, and stop admitting work when the LIMIT is satisfied.
 
-The initial implementation targets the ordered `IndexLookUpJoin` plan involved in [issue #66658](https://github.com/pingcap/tidb/issues/66658) and the related direct ordered `IndexLookUp` plan. The feature can be enabled or disabled through `tidb_enable_adaptive_limit_scan`.
+Adaptive LIMIT supports the ordered `IndexLookUpJoin` plan involved in [issue #66658](https://github.com/pingcap/tidb/issues/66658), ordered joins with an eligible outer `IndexReader` or `TableReader`, and direct ordered `IndexLookUp`. The feature can be enabled or disabled through `tidb_enable_adaptive_limit_scan`.
 
 ## Motivation or Background
 
@@ -108,21 +108,21 @@ The initial implementation does not:
 
 ### Supported Plan Shape
 
-The first version recognizes the following executor shapes:
+The controller recognizes the following executor shapes:
 
 ```text
 Limit
 └─Projection*
   └─IndexLookUpJoin
     └─Projection* (outer)
-      └─IndexLookUp (keep order)
+      └─IndexLookUp, IndexReader, or TableReader (keep order)
 
 Limit
 └─Projection*
   └─IndexLookUp (keep order)
 ```
 
-Only Projection can appear between Limit and the recognized root executor because Projection preserves row cardinality. The IndexLookUp may still contain a table-side Selection inside its coprocessor plan; lookup feedback measures the resulting handle-to-row ratio. An executor-side Selection between Limit and IndexLookUp would need a separate feedback stage. A blocking operator stops budget propagation.
+Only Projection can appear between Limit and the recognized root executor because Projection preserves row cardinality. The reader may contain a Selection inside its coprocessor plan. Feedback uses the rows the reader produces after that filter. A TiDB Selection on the matching path would need a separate feedback stage. A blocking operator stops budget propagation.
 
 The controller is attached while `LimitExec` is built. One controller is owned by one executor tree and one execution lifecycle.
 
@@ -159,7 +159,7 @@ demandRows = offset + count
 
 Rows before the offset are not returned to the client, but the child executor must still produce them, so they consume demand.
 
-The IndexLookUpJoin shape contains two different input/output transformations:
+An IndexLookUpJoin with a double-read outer input contains two different input/output transformations:
 
 ```text
 IndexLookUpJoin outer stage:
@@ -177,7 +177,9 @@ For IndexLookUpJoin, the controller therefore maintains:
 - a logical lookup handle window, which estimates how many handles are justified by current LIMIT demand and observed yield;
 - a lookup execution batch size, which keeps each table lookup task large enough to avoid inefficient tiny RPCs.
 
-The direct IndexLookUp shape has no Join outer stage. Its controller maintains only the lookup handle window and execution batch size. Fully consumed table lookup tasks report final rows directly toward LIMIT demand.
+An IndexLookUpJoin with an outer IndexReader or TableReader uses only the outer row window. Its initial window is also capped by `tidb_max_chunk_size`. If a reader returns a chunk larger than the remaining task capacity, the outer worker admits a prefix and saves the tail for subsequent reservations. Saved rows count toward memory usage until the worker drains or releases the chunk.
+
+The direct IndexLookUp shape uses only the lookup handle window and execution batch size. Fully consumed table lookup tasks report final rows directly toward LIMIT demand.
 
 The physical lookup admission window is derived from the logical window and the execution batch size. A window is an admission bound, not a prediction that the exact number of rows will be needed.
 
@@ -198,7 +200,7 @@ When Join finishes consuming outer rows, it reports both completed outer rows an
 
 ### Lookup Handle Admission
 
-Before the IndexLookUp index worker creates a table lookup task, it calls `ReserveLookup`. Let `B` be the logical lookup window and `Q` be the execution batch size. The controller derives:
+Before the IndexLookUp index worker creates a table lookup task, it calls `ReserveLookup`. Let `B` be the logical lookup window and `Q` be the effective execution batch size. The controller derives:
 
 ```text
 physicalLookupWindow =
@@ -279,7 +281,11 @@ The cumulative and recent lookup estimates are computed independently, and the l
 
 The logical lookup window does not shrink below its statement-derived initial value. The execution batch is tracked independently, so shrinking the logical window does not create row-at-a-time table RPCs. Rounding the logical window to the execution batch intentionally permits less than one batch of physical over-admission.
 
-If a stage produces no output, a ratio cannot estimate the next target. The controller waits until that stage has no outstanding reservation and the zero-output input reaches the current logical window. For the lookup stage, it then doubles both the logical window and execution batch up to their separate configured maxima. This guarantees progress without jumping directly to the maximum after one empty task, while avoiding a long sequence of tiny tasks for a small LIMIT.
+If a stage produces no output, a ratio cannot estimate the next target. When the lookup stage itself produces no rows, it waits until the stage drains and the consumed handles without output reach the current lookup window. It then doubles the logical window and execution batch up to their separate configured maxima.
+
+If the join consumes a full outer window without output and its outer lookup is still producing rows, the outer window can grow while work is in flight. If the lookup is in a zero-output phase or has yet to return a row, outer growth still waits for outstanding outer work to drain. After the first growth decision in a join zero-output phase, each additional full window of misses can also increase the effective lookup batch while the lookup is producing rows. This works anywhere in the input. Join output clears the temporary batch increase as soon as it is reported, even if the outer row has more matches to consume. A completed lookup task that returns zero rows also clears the increase.
+
+For an IndexLookUpJoin with a single-read outer input, the controller retries the initial window at the same size if it drains without a match. With sustained misses, the controller grows the window as the join consumes each window's worth of input, even with tasks still in flight. During this phase, an in-flight task can free space for a full batch. If no task is in flight, a partial batch can still be admitted. Productive join feedback restores ordinary admission.
 
 ### Batch Size and DistSQL Behavior
 
@@ -311,7 +317,7 @@ maxLookupBatchSize = tidb_index_lookup_size
 
 For a direct IndexLookUp with paging enabled by the existing plan, `initialLookupBatchSize` is `initialLookupWindow`. This preserves the existing paging behavior for a small LIMIT instead of raising a `LIMIT 1` lookup task to `tidb_max_chunk_size`. Direct non-paging execution and the IndexLookUp under IndexLookUpJoin retain the formula above so productive scans do not start with unnecessarily small table lookup tasks.
 
-Productive input/output feedback adjusts the logical lookup window but does not shrink the execution batch. A fully drained zero-output phase can grow the execution batch by at most 2x. Both the per-task batch and the aggregate physical window remain bounded by existing session settings.
+Productive lookup feedback adjusts the logical lookup window and leaves the base execution batch at its current size. A drained lookup zero-output window can double the base batch, up to its configured maximum. For an outer lookup under an ordered IndexLookUpJoin, sustained join misses can also temporarily double the effective batch at each growth step, up to the same maximum. The controller uses the larger of the base and temporary batches for task sizing and physical window rounding. Clearing the temporary increase restores the current base batch. Both the per-task batch and the aggregate physical window remain bounded by existing session settings.
 
 The initial implementation does not change DistSQL scan concurrency. `tidb_distsql_scan_concurrency` and the existing RequestBuilder heuristics keep their original behavior. Lookup yield estimates how many handles should enter future table lookup tasks, but it is not a reliable signal for choosing RPC parallelism. Keeping these controls separate avoids serializing a productive multi-Region scan merely because its lookup window has not grown.
 
@@ -337,20 +343,10 @@ Already dispatched tasks and RPCs are not synchronously withdrawn. They follow t
 
 ### Eligibility
 
-The feature first requires all of the following shared conditions:
+The feature requires an enabled `tidb_enable_adaptive_limit_scan`, a physical Limit, and one of the supported executor shapes. The Join must require order from its outer input, and the reader must preserve that order.
 
-1. `tidb_enable_adaptive_limit_scan` is enabled;
-2. the current physical operator is Limit;
-3. Projection is the only executor between Limit and the recognized IndexLookUpJoin or IndexLookUp;
-4. the IndexLookUp is keep-order;
-5. IndexLookUp concurrency is greater than one;
-6. the IndexLookUp is not in partition-table mode;
-7. the IndexLookUp does not use grouped ranges or a double-read merge-sort path;
-8. IndexLookUp pushdown is not enabled for this reader.
-
-The IndexLookUpJoin shape additionally requires that its outer property preserves order and that its outer child is `Projection* -> IndexLookUp`. The direct shape requires `Projection* -> IndexLookUp` and is skipped when the reader already has a pushed-down LIMIT, because that path already bounds lookup work.
-
-The keep-order requirement narrows the experimental rollout to the high-risk case from #66658. It is not a mathematical requirement of admission control. IndexLookUp concurrency must be greater than one because its index worker and table workers share one worker pool. With only one worker, attaching the controller cannot run index production and table lookup concurrently, so this path keeps the existing executor behavior.
+- **IndexReader or TableReader under IndexLookUpJoin.** The outer input must be an ordinary TiKV scan of a nonpartitioned table. Grouped ranges and reader-side merge paths are excluded. TableReader must also use a single result path, which excludes scans of unsigned integer handles that could split across the signed boundary.
+- **IndexLookUp.** The reader must preserve order and have concurrency greater than one so its index and table workers can run concurrently. The controller skips partition-table mode, grouped ranges, merge-sort double reads, IndexLookUp pushdown, and readers with an existing pushed-down LIMIT.
 
 If the feature is disabled or any condition is not met, the executor uses the existing path without a controller.
 
@@ -392,7 +388,7 @@ Existing batch and concurrency variables are unchanged and remain upper bounds. 
 
 ### Observability
 
-For an eligible IndexLookUpJoin, `EXPLAIN ANALYZE` includes a compact runtime summary:
+For an eligible IndexLookUpJoin with a double-read outer input, `EXPLAIN ANALYZE` includes a compact runtime summary:
 
 ```text
 adaptive:{outer:1400/1000, lookup:1000/700, outstanding:400/1000, blocked:outer=1ms,lookup=3ms}
@@ -402,10 +398,16 @@ The fields are:
 
 | Field | Meaning |
 | --- | --- |
-| `outer` | fetched outer rows / consumed outer rows |
+| `outer` | outer rows admitted into Join tasks / outer rows consumed by the Join |
 | `lookup` | lookup handles / returned table rows |
 | `outstanding` | outer / lookup capacity outstanding when admission stopped |
 | `blocked` | wall-clock time during which at least one worker in the stage was blocked by a full admission budget |
+
+An IndexLookUpJoin with a single-read outer input reports only the outer stage. Reader `actRows` can also include a chunk tail awaiting admission.
+
+```text
+adaptive:{outer:1000/1000, outstanding:0, blocked:1ms}
+```
 
 For a direct IndexLookUp, its runtime information contains only the lookup stage:
 
@@ -445,7 +447,7 @@ A TiKV request may process many raw keys before returning a small number of hand
 
 Additional limitations are:
 
-- only the recognized keep-order IndexLookUpJoin outer path and direct keep-order IndexLookUp path are supported;
+- only the recognized keep-order Join and reader paths are supported;
 - physical lookup rounding can admit less than one execution batch beyond the logical window near the LIMIT tail;
 - DistSQL request concurrency and ordered request dispatch are unchanged;
 - runtime stats do not yet include a reason why a plan was not eligible.
@@ -487,6 +489,7 @@ Executor unit tests cover:
 - rejection of Selection and unsupported reader configurations;
 - keep-order and concurrency eligibility;
 - pending-handle splitting and memory accounting;
+- oversized outer chunk splitting in input order and cleanup of saved rows on cancellation;
 - Complete and Abort behavior on success, cancellation, and error;
 - feature ON/OFF lifecycle;
 - result value and order equivalence;
@@ -570,6 +573,15 @@ The #66658 workload retained its early-stop benefit. The dense and zero-output p
 
 This is manual E2E evidence, not a CI guarantee and not proof of a hard per-request scan bound. Acceptance must prioritize result correctness and latency/resource improvement. Lower `actRows` alone is insufficient.
 
+The single-read extension was also tested with three TiKV stores, 400,000 rows per table, and leaders on all three stores for each tested keyspace. Each `LIMIT 1000` case used 50 alternating ON/OFF pairs and returned identical ordered results. Latency is measured from the client. RU and probe rows are from separate `EXPLAIN ANALYZE` samples.
+
+| Join outer reader | p95 latency, OFF → ON | RU, OFF → ON | Probe rows, OFF → ON |
+| --- | --- | --- | --- |
+| TableReader | 26.73 → 7.10 ms | 58.44 → 50.62 | 2,000 → 1,000 |
+| IndexReader | 7.29 → 4.70 ms | 57.88 → 48.62 | 2,000 → 1,000 |
+
+In the same setup, a larger LIMIT, a large OFFSET, a long zero-match prefix, and three concurrent small-LIMIT queries preserved results and had lower p95 latency. The larger LIMIT and OFFSET cases issued more Probe RPCs in the sampled plans because the Join used smaller tasks.
+
 ## Impacts and Risks
 
 Expected positive impacts are:
@@ -595,7 +607,9 @@ Risks include:
 - recent samples may be biased if task completion order does not match the intended ordered consumption contract;
 - unchanged DistSQL concurrency can still read ahead inside requests before TiDB-side admission stops.
 
-The GLOBAL/SESSION gate provides an immediate opt-out if a regression is observed. Fresh clusters start with the feature ON, so performance evaluation must compare latency, throughput, and RU in addition to scan counters. Upgraded clusters remain OFF until operators opt in after validation.
+Long unmatched intervals can still trade lower RU for higher latency. In the three-store double-read comparison in [PR #72863](https://github.com/pingcap/tidb/pull/72863), the updated controller reduced latency relative to the previous ON behavior for an unmatched prefix, an unmatched interval mid-scan, and repeated sparse matches. Compared with OFF, p50 remained 31–42% higher and median RU was 17–19% lower in those three workloads.
+
+Fresh clusters start with the feature ON. During upgrade from a version before this feature, TiDB sets the variable to OFF if no value exists and preserves any existing value. Operators can turn it OFF globally for new sessions or in the current session for subsequent statements.
 
 ## Investigation and Alternatives
 
@@ -619,7 +633,7 @@ This bounds concurrent prefetch but can substantially regress multi-Region laten
 
 ### Consumer-Starvation-Based Growth
 
-Growing concurrency whenever the result queue is temporarily empty confuses normal pipeline gaps with genuine starvation. During system jitter, this can create the same positive feedback that the feature is intended to avoid. The current design does not adapt DistSQL concurrency. Consumed row progress and drained zero-output phases change only logical admission windows and lookup task sizes.
+Growing concurrency whenever the result queue is temporarily empty confuses normal pipeline gaps with genuine starvation. During system jitter, this can create the same positive feedback that the feature is intended to avoid. The current design does not adapt DistSQL concurrency. Consumed row progress and zero-output feedback adjust the logical admission windows and lookup task sizes.
 
 ### Request-Level Scan Budget
 

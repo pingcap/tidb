@@ -65,6 +65,9 @@ type PreparedStatement interface {
 	// Reset removes all bound parameters and opened resultSet/rowContainer.
 	Reset() error
 
+	// CloseCursor releases cursor resources without clearing bound parameters.
+	CloseCursor() error
+
 	// Close closes the statement.
 	Close() error
 

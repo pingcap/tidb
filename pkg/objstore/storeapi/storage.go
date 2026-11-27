@@ -128,11 +128,20 @@ type Uploader interface {
 type WriterOption struct {
 	Concurrency int
 	PartSize    int64
+	// DirectIO bypasses the OS page cache for local streaming writes. Other
+	// backends ignore it. If opening with direct I/O fails, local storage logs a
+	// warning and falls back to buffered I/O.
+	DirectIO bool
 }
 
 // MaxUploadParts is the maximum number of parts a single multipart-uploaded
 // object may have. S3, GCS and OSS all cap this at 10000.
 const MaxUploadParts = 10000
+
+// S3DeleteObjectsLimit is the maximum number of objects in an S3 delete request.
+// OSS shares the same limit.
+// See https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html.
+const S3DeleteObjectsLimit = 1000
 
 // ErrExceedMaxUploadParts is returned by a Create'd writer when a single object
 // would need more than MaxUploadParts parts.
@@ -173,7 +182,9 @@ type Storage interface {
 	// Open a Reader by file path. path is relative path to storage base path.
 	// Some implementation will use the given ctx as the inner context of the reader.
 	Open(ctx context.Context, path string, option *ReaderOption) (objectio.Reader, error)
-	// DeleteFiles delete the files in storage
+	// DeleteFiles deletes the named files from storage.
+	// Implementations must copy names if they retain it after returning,
+	// so callers can reuse the slice and its backing array after the call.
 	DeleteFiles(ctx context.Context, names []string) error
 	// WalkDir traverse all the files in a dir.
 	//

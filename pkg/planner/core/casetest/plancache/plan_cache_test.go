@@ -25,6 +25,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNullSafeDurationPlanCache(t *testing.T) {
+	t.Run("issue70681", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(tm time null)")
+		tk.MustExec("insert into t values (null),('12:00:00')")
+		for _, enabled := range []string{"1", "0"} {
+			t.Run("cache="+enabled, func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec("set tidb_enable_prepared_plan_cache=" + enabled)
+				for _, predicate := range []string{"tm <=> ?", "? <=> tm"} {
+					tk.MustExec("prepare s from 'select count(*) from t where " + predicate + "'")
+					for _, tc := range []struct{ value, count string }{
+						{"'12:00:00'", "1"}, {"'not-a-time'", "0"}, {"NULL", "1"},
+						{"'00:00:00'", "0"}, {"'12:00:00'", "1"},
+					} {
+						tk.MustExec("set @p=" + tc.value)
+						tk.MustQuery("execute s using @p").Check(testkit.Rows(tc.count))
+					}
+					tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+				}
+				// Ordinary TIME equality must remain cacheable.
+				tk.MustExec("prepare s from 'select count(*) from t where tm = ?'")
+				tk.MustExec("set @p='12:00:00'")
+				tk.MustQuery("execute s using @p").Check(testkit.Rows("1"))
+				tk.MustExec("set @p='13:00:00'")
+				tk.MustQuery("execute s using @p").Check(testkit.Rows("0"))
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(enabled))
+			})
+		}
+	})
+}
+
 func TestDropPrepare(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

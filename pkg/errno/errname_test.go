@@ -16,6 +16,7 @@ package errno
 
 import (
 	_ "embed"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -67,5 +68,30 @@ func TestReservedErrCodeRange(t *testing.T) {
 		assert.Falsef(t, code >= reservedStart && code < reservedEnd,
 			"%s must not be in reserved range [%d, %d), but got %d",
 			errName, reservedStart, reservedEnd, code)
+	}
+}
+
+func TestRedactArgsUseStringVerbs(t *testing.T) {
+	// Redacted arguments are replaced with a string placeholder, so they must
+	// be formatted with a verb that can print a string.
+	verbRe := regexp.MustCompile(`%[-+# 0]*(?:[0-9]+|\*)?(?:\.(?:[0-9]+|\*))?([a-zA-Z%])`)
+	for code, msg := range MySQLErrName {
+		if len(msg.RedactArgPos) == 0 {
+			continue
+		}
+		verbs := make([]string, 0, 4)
+		for _, m := range verbRe.FindAllStringSubmatch(msg.Raw, -1) {
+			if m[1] == "%" {
+				continue
+			}
+			verbs = append(verbs, m[1])
+		}
+		for _, pos := range msg.RedactArgPos {
+			if !assert.Lessf(t, pos, len(verbs), "ErrCode %d: redacted argument %d out of range in %q", code, pos, msg.Raw) {
+				continue
+			}
+			assert.Containsf(t, []string{"s", "v", "q"}, verbs[pos],
+				"ErrCode %d: redacted argument %d uses %%%s in %q", code, pos, verbs[pos], msg.Raw)
+		}
 	}
 }

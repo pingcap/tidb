@@ -15,14 +15,17 @@
 package executor
 
 import (
+	"strings"
 	"testing"
-	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -79,7 +82,17 @@ func TestRestoreRefreshMaterializedViewStmtForSlowLog(t *testing.T) {
 		"IMPLEMENT FOR REFRESH MATERIALIZED VIEW `mv` COMPLETE IN PLACE USING TIMESTAMP",
 		restoreStmtTextForSlowLogWhenEmptySQL(stmt),
 	)
+	stmt.RefreshStmt = &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("mv")},
+		Type:     ast.RefreshMaterializedViewTypeFast,
+	}
+	stmt.LastSuccessfulRefreshReadTSO = 123456789
+	require.Equal(t,
+		"IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP",
+		restoreStmtTextForSlowLogWhenEmptySQL(stmt),
+	)
 	require.Empty(t, restoreStmtTextForSlowLogWhenEmptySQL(&ast.RefreshMaterializedViewImplementStmt{}))
+	require.Empty(t, restoreStmtTextForSlowLogWhenEmptySQL(&ast.SelectStmt{}))
 }
 
 func TestBuildMVRefreshOutOfPlaceShadowTableInfoSetsSource(t *testing.T) {
@@ -97,22 +110,49 @@ func TestBuildMVRefreshOutOfPlaceShadowTableInfoSetsSource(t *testing.T) {
 	require.Equal(t, int64(42), shadow.MaterializedViewShadow.SourceMViewID)
 }
 
-func TestInitRefreshMaterializedViewSessionAppliesDefinitionDivPrecisionIncrement(t *testing.T) {
-	sessVars := variable.NewSessionVars(nil)
-	require.False(t, sessVars.EnableMView)
-	sessVars.DivPrecisionIncrement = 2
-	sessVars.TimeZone = time.UTC
-	sessVars.StmtCtx.SetTimeZone(time.UTC)
+func TestPrepareMVRefreshObserveInternalSessionRedaction(t *testing.T) {
+	for _, mode := range []string{vardef.Off, vardef.On, vardef.Marker} {
+		t.Run(mode, func(t *testing.T) {
+			caller := mock.NewContext()
+			caller.GetSessionVars().EnableRedactLog = mode
+			internal := mock.NewContext()
+			originalMode := vardef.On
+			if mode == vardef.On {
+				originalMode = vardef.Off
+			}
+			internal.GetSessionVars().EnableRedactLog = originalMode
+			e := &RefreshMaterializedViewDryRunExec{
+				BaseExecutor: exec.NewBaseExecutor(caller, nil, 0),
+			}
 
-	restore, err := initRefreshMaterializedViewSession(sessVars, &model.MaterializedViewInfo{
-		DefinitionDivPrecisionIncrement: 9,
-		DefinitionTimeZone:              model.TimeZoneLocation{Name: "UTC"},
-	})
+			func() {
+				restore, err := e.prepareMVRefreshObserveInternalSession(internal)
+				require.NoError(t, err)
+				defer restore()
+				require.Equal(t, mode, internal.GetSessionVars().EnableRedactLog)
+				require.Equal(t, mode, internal.GetPlanCtx().GetSessionVars().EnableRedactLog)
+			}()
+			require.Equal(t, originalMode, internal.GetSessionVars().EnableRedactLog)
+			require.Equal(t, originalMode, internal.GetPlanCtx().GetSessionVars().EnableRedactLog)
+			require.Equal(t, mode, caller.GetSessionVars().EnableRedactLog)
+		})
+	}
+}
+
+func TestBuildMVRefreshOutOfPlaceBuildSQLImportOptions(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		Name: ast.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			SQLContent: "select a, count(1) from t group by a",
+		},
+	}
+
+	sql, err := buildMVRefreshOutOfPlaceBuildSQL("test", "__mv_shadow_1", tblInfo, "TiKV", 12, "64gib")
 	require.NoError(t, err)
-	require.True(t, sessVars.EnableMView)
-	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
+	require.Contains(t, sql, "IMPORT INTO `test`.`__mv_shadow_1` FROM (")
+	require.Contains(t, sql, "WITH "+strings.Join(ddl.BuildMViewImportIntoOptions(12, "64gib"), ", "))
 
-	restore()
-	require.False(t, sessVars.EnableMView)
-	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
+	sql, err = buildMVRefreshOutOfPlaceBuildSQL("test", "__mv_shadow_1", tblInfo, kv.TiDB.Name(), 12, "64gib")
+	require.NoError(t, err)
+	require.Equal(t, "INSERT INTO `test`.`__mv_shadow_1` select a, count(1) from t group by a", sql)
 }
