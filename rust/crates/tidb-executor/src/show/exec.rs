@@ -186,7 +186,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     /// predicate evaluates row by row against the same columns.
     /// Go `ShowExec.fetchShowAffinity`: one row per table (`table` level) or
     /// partition (`partition` level) carrying an AFFINITY, with its PD group's
-    /// state from `affinity.GetAllGroupStates` -- NULL where PD holds no such
+    /// state from `affinity.GetGroupStates` -- NULL where PD holds no such
     /// group. The rows follow `ListTablesWithSpecialAttribute` over infoschema
     /// v2: schema name, then table id, both descending, each table the
     /// extractor admits by its lowercased name.
@@ -265,7 +265,10 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 .cmp(&left.db_lower)
                 .then(right.table_id.cmp(&left.table_id))
         });
-        let states = tidb_domain_affinity::get_all_group_states().map_err(|error| {
+        // Query only the groups of the tables the SHOW filters and the
+        // privileges admit.
+        let group_ids: Vec<String> = infos.iter().map(|info| info.group_id.clone()).collect();
+        let states = tidb_domain_affinity::get_group_states(&group_ids).map_err(|error| {
             DriverError::Mysql(crate::MysqlError::unknown(error.to_string()))
         })?;
         let rows = infos

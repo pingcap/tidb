@@ -262,9 +262,43 @@ fn partition_storage_classes_follow_their_scope() {
     );
 }
 
-/// Go master `TestShowAffinityPrivilege` (#73336): SHOW AFFINITY lists only
-/// the tables the user holds some privilege on (`mysql.AllPrivMask`, as SHOW
-/// PLACEMENT does).
+/// Go `mockPDCliForAffinity` as `TestShowAffinityPrivilege` uses it: records
+/// each group lookup and answers no group.
+#[derive(Default)]
+struct RecordingAffinityClient {
+    gets: std::sync::Mutex<Vec<Vec<String>>>,
+    get_alls: std::sync::atomic::AtomicUsize,
+}
+
+impl tidb_domain_affinity::PdAffinityClient for RecordingAffinityClient {
+    fn create_affinity_groups(
+        &self,
+        _: &tidb_domain_affinity::AffinityGroups,
+        _: bool,
+    ) -> Result<tidb_domain_affinity::AffinityGroupStates, tidb_domain_affinity::PdHttpError> {
+        Ok(Default::default())
+    }
+    fn get_affinity_groups(
+        &self,
+        ids: &[String],
+    ) -> Result<tidb_domain_affinity::AffinityGroupStates, tidb_domain_affinity::PdHttpError> {
+        self.gets.lock().unwrap().push(ids.to_vec());
+        Ok(Default::default())
+    }
+    fn get_all_affinity_groups(
+        &self,
+    ) -> Result<tidb_domain_affinity::AffinityGroupStates, tidb_domain_affinity::PdHttpError> {
+        self.get_alls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Default::default())
+    }
+    fn batch_delete_affinity_groups(&self, _: &[String], _: bool) -> Result<(), tidb_domain_affinity::PdHttpError> {
+        Ok(())
+    }
+}
+
+/// Go master `TestShowAffinityPrivilege` (0103aff49f9): SHOW AFFINITY lists
+/// only the tables the user holds some privilege on (`mysql.AllPrivMask`, as
+/// SHOW PLACEMENT does), and asks PD for exactly those tables' groups.
 #[test]
 fn show_affinity_lists_only_visible_tables() {
     let registry = tidb_privilege::PrivilegeRegistry::default();
@@ -280,9 +314,24 @@ fn show_affinity_lists_only_visible_tables() {
     }
     let user = |root: &Session| crate::tests_support::session_as(&registry, root.shared_catalog(), "nopriv", "%");
     let mut nopriv = user(&root);
+    let client = std::sync::Arc::new(RecordingAffinityClient::default());
+    let restore = tidb_domain_affinity::set_pd_client_for_test(Some(
+        std::sync::Arc::clone(&client) as std::sync::Arc<dyn tidb_domain_affinity::PdAffinityClient>,
+    ));
     assert!(rows(&mut nopriv, "show placement").is_empty());
     assert!(rows(&mut nopriv, "show databases like '%_db'").is_empty());
     assert!(rows(&mut nopriv, "show affinity").is_empty());
+    // Row visibility, and no PD request at all.
+    assert!(client.gets.lock().unwrap().is_empty());
+    assert_eq!(client.get_alls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let table_id = rows(&mut root, "select tidb_table_id from information_schema.tables where table_schema = 'pub_db' and table_name = 'part_t'")[0][0].clone();
+    let ids: Vec<String> = rows(
+        &mut root,
+        "select tidb_partition_id from information_schema.partitions where table_schema = 'pub_db' and table_name = 'part_t' order by partition_ordinal_position",
+    )
+    .into_iter()
+    .map(|row| tidb_ddl::ddl_affinity::get_partition_affinity_group_id(table_id.parse().unwrap(), row[0].parse().unwrap()))
+    .collect();
 
     let visible = |session: &mut Session| {
         for sql in ["show affinity", "show affinity like 'part%'", "show affinity where Table_name = 'part_t'"] {
@@ -295,6 +344,9 @@ fn show_affinity_lists_only_visible_tables() {
             };
             assert_eq!(got, vec![row("p0"), row("p1")], "{sql}");
         }
+        let gets = std::mem::take(&mut *client.gets.lock().unwrap());
+        assert_eq!(gets, vec![ids.clone(); 3], "one lookup of exactly the visible groups per SHOW");
+        assert_eq!(client.get_alls.load(std::sync::atomic::Ordering::SeqCst), 0);
     };
     root.run("grant select on pub_db.part_t to nopriv").unwrap();
     visible(&mut user(&root));
@@ -309,4 +361,5 @@ fn show_affinity_lists_only_visible_tables() {
     let mut with_role = user(&root);
     with_role.run("set role affinity_reader").unwrap();
     visible(&mut with_role);
+    restore();
 }

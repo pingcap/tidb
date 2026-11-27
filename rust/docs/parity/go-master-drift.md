@@ -16,6 +16,7 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - 6775607e08c: a parser grammar change the Rust parser takes from the Go hparser branch.
 - ab7355f7981 (rest; its affinity cleanup, job-step state restore, flashback order and multi-schema diff are ported): Rust has no `handleUpdateJobError`, so a job row too large to write (`kv.ErrEntryTooLarge`) neither cancels the job nor cleans up its affinity groups; the `afterAsyncNotifyEvent` failpoint and the storage-class half of `checkpointStorageClassTransitionStep` have no Rust site.
 - Placement bundles and label rules are sent to PD at commit time (`real_tikv_ddl` delivery), so a PD refusal retries the step where Go's `onCreateTable` / `onTruncateTable` cancel the job.
+- 7193401b674 (keyspace half; SHOW AFFINITY's lookup of only its groups is ported): NextGen affinity group ids (`_tidb_ks{id}_...`) and keyspace-encoded group key ranges. The DDL job steps have no keyspace codec: label rules use `CodecV1` too, so both are keyspace-unaware under NextGen.
 - TRUNCATE TABLE does no `preSplitAndScatterTable` (Rust pre-splits only at CREATE TABLE, in the executor).
 - c09f6278deb: needs hypothetical expression indexes, which Rust refuses.
 - c767f6fd8c0: the storage-class transition manager is unported, and with it 56ee5bb2684's transition-completion half and 64e8c4c05ec.
@@ -198,7 +199,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - 92b9c752bca 2026-09-20 1/2 executor: unify RU v1 and v2 fields in slow logs and statement summaries (#71389)
 - 524b942f909 2026-09-21 1/2 ddl: preserve scatter scope for region pre-split (#71311)
 - 3425d786055 2026-09-29 5/10 config: add diagnostic mode state (diagnostic-split-01) (#71654)
-- 7193401b674 2026-10-15 2/4 ddl, executor: scope affinity groups by keyspace (#71874)
 - e2162cacbec 2026-10-19 4/8 HTTP: expose diagnostic HTTP endpoints (#72112)
 - 7fa5afdeb84 2026-10-26 1/2 build: upgrade Go to 1.27.3 (#72180)
 - da76b94491e 2026-10-26 1/2 statistics: build auto-analyze jobs during the table scan (#72229)

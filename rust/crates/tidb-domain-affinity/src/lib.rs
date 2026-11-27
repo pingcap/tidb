@@ -260,29 +260,63 @@ impl Manager for PdManager {
         self.client.batch_delete_affinity_groups(ids, true)
     }
 
+    /// Go `pdManager.GetAffinityGroups`: the unique ids in batches, each
+    /// under `MAX_AFFINITY_GROUP_IDS_COUNT` ids and the URI budget; an id
+    /// that alone exceeds the budget, or a PD that rejects the `ids` query,
+    /// falls back to scanning all groups.
     fn get_affinity_groups(&self, ids: &[String]) -> Result<AffinityGroupStates, PdHttpError> {
         if ids.is_empty() {
             return Ok(AffinityGroupStates::new());
         }
-        if should_use_get_all_affinity_groups(ids) {
-            return self.get_affinity_groups_by_scanning_all(ids);
-        }
-        match self.client.get_affinity_groups(ids) {
-            // Older PD versions may ignore the `ids` query and return every
-            // group; filtering keeps the requested-ids semantics stable.
-            Ok(groups) => Ok(filter_affinity_groups(&groups, ids)),
-            Err(error) if should_fallback_get_affinity_groups(&error) => {
-                self.get_affinity_groups_by_scanning_all(ids)
+        let mut unique_ids: Vec<String> = Vec::with_capacity(ids.len());
+        let mut id_indexes: HashMap<&str, usize> = HashMap::with_capacity(ids.len());
+        for id in ids {
+            if id_indexes.contains_key(id.as_str()) {
+                continue;
             }
-            Err(error) => Err(error),
+            if affinity_group_ids_escaped_query_len(std::slice::from_ref(id)) > MAX_AFFINITY_GROUP_IDS_QUERY_LEN {
+                return self.get_affinity_groups_by_scanning_all(ids);
+            }
+            id_indexes.insert(id.as_str(), unique_ids.len());
+            unique_ids.push(id.clone());
         }
+        let mut result = AffinityGroupStates::with_capacity(unique_ids.len());
+        let mut start = 0;
+        while start < unique_ids.len() {
+            let (mut end, mut query_len) = (start, 0);
+            while end < unique_ids.len() && end - start < MAX_AFFINITY_GROUP_IDS_COUNT {
+                let mut id_query_len = affinity_group_ids_escaped_query_len(&unique_ids[end..end + 1]);
+                if end > start {
+                    // The separator between ids parameters.
+                    id_query_len += 1;
+                }
+                if query_len + id_query_len > MAX_AFFINITY_GROUP_IDS_QUERY_LEN {
+                    break;
+                }
+                query_len += id_query_len;
+                end += 1;
+            }
+            let groups = match self.client.get_affinity_groups(&unique_ids[start..end]) {
+                Ok(groups) => groups,
+                Err(error) if should_fallback_get_affinity_groups(&error) => {
+                    return self.get_affinity_groups_by_scanning_all(&unique_ids);
+                }
+                Err(error) => return Err(error),
+            };
+            for (id, group) in &groups {
+                match id_indexes.get(id.as_str()) {
+                    Some(&index) if (start..end).contains(&index) => {
+                        result.insert(id.clone(), group.clone());
+                    }
+                    // Older PD versions ignore ids and return all groups:
+                    // reuse that response for the whole lookup.
+                    _ => return Ok(filter_affinity_groups(&groups, &unique_ids)),
+                }
+            }
+            start = end;
+        }
+        Ok(result)
     }
-}
-
-/// Go `shouldUseGetAllAffinityGroups`.
-fn should_use_get_all_affinity_groups(ids: &[String]) -> bool {
-    ids.len() > MAX_AFFINITY_GROUP_IDS_COUNT
-        || affinity_group_ids_escaped_query_len(ids) > MAX_AFFINITY_GROUP_IDS_QUERY_LEN
 }
 
 /// Go `affinityGroupIDsEscapedQueryLen`: the length of `ids=a&ids=b...`.
@@ -531,21 +565,22 @@ pub fn get_groups(ids: &[String]) -> Result<AffinityGroupStates, PdHttpError> {
     manager().get_affinity_groups(ids)
 }
 
-/// Go `GetAllGroupStates`: every group PD holds, read from PD directly
-/// (`SHOW AFFINITY`); none without a PD client.
-pub fn get_all_group_states() -> Result<AffinityGroupStates, PdHttpError> {
+/// Go `GetGroupStates`: the requested groups' states from PD for SHOW
+/// AFFINITY, with the DDL lookups' compatibility fallbacks; none without a
+/// PD client.
+pub fn get_group_states(ids: &[String]) -> Result<AffinityGroupStates, PdHttpError> {
     let client = STATE
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .as_ref()
         .and_then(|state| state.pd_client.clone());
     match client {
-        Some(client) => client.get_all_affinity_groups(),
-        None => Ok(AffinityGroupStates::new()),
+        Some(client) if !ids.is_empty() => PdManager::new(client).get_affinity_groups(ids),
+        _ => Ok(AffinityGroupStates::new()),
     }
 }
 
-/// Go `SetPDClientForTest`: installs `client` for `GetAllGroupStates` and
+/// Go `SetPDClientForTest`: installs `client` for `GetGroupStates` and
 /// returns the restore.
 pub fn set_pd_client_for_test(client: Option<Arc<dyn PdAffinityClient>>) -> impl FnOnce() {
     let original = {
@@ -809,7 +844,7 @@ mod tests {
         let mut all = states(&["other"]);
         all.insert(id.clone(), affinity_group_state(&id));
         client.expect_get_all(Ok(all));
-        let result = manager.get_affinity_groups(&[id.clone()]).unwrap();
+        let result = manager.get_affinity_groups(&["short".to_owned(), id.clone()]).unwrap();
         assert_eq!(result.len(), 1);
         assert!(result.contains_key(&id));
         client.assert_expectations();
@@ -854,11 +889,87 @@ mod tests {
     }
 
     #[test]
-    fn should_use_get_all_affinity_groups_by_id_count() {
-        let ids: Vec<String> = (0..=MAX_AFFINITY_GROUP_IDS_COUNT)
-            .map(|position| format!("g{position}"))
-            .collect();
-        assert!(should_use_get_all_affinity_groups(&ids));
+    /// Go `TestGetAffinityGroupsBatchQueryBoundary`.
+    fn get_affinity_groups_batch_query_boundary() {
+        let client = Arc::new(MockPdClient::default());
+        let manager = manager_over(&client);
+        let ids = ["/".repeat(1364), "other".to_owned()];
+        for id in &ids {
+            client.expect_get(&[id.as_str()], Ok(states(&[id.as_str()])));
+        }
+        let result = manager.get_affinity_groups(&ids).unwrap();
+        assert_eq!(result, states(&[ids[0].as_str(), ids[1].as_str()]));
+        client.assert_expectations();
+    }
+
+    /// Go `TestGetAffinityGroupsBatches`.
+    #[test]
+    fn get_affinity_groups_batches() {
+        for (name, count, suffix, batch_sizes) in [
+            ("ID count and duplicates", 250, String::new(), vec![100, 100, 50]),
+            ("escaped query bytes", 30, "/".repeat(200), vec![6, 6, 6, 6, 6]),
+        ] {
+            let client = Arc::new(MockPdClient::default());
+            let manager = manager_over(&client);
+            let mut ids: Vec<String> = (0..count).map(|i| format!("g{i:03}{suffix}")).collect();
+            let all: Vec<&str> = ids.iter().map(String::as_str).collect();
+            let expected = states(&all);
+            let mut start = 0;
+            for size in &batch_sizes {
+                let batch = &ids[start..start + size];
+                assert!(batch.len() <= MAX_AFFINITY_GROUP_IDS_COUNT, "{name}");
+                assert!(affinity_group_ids_escaped_query_len(batch) <= MAX_AFFINITY_GROUP_IDS_QUERY_LEN, "{name}");
+                let batch: Vec<&str> = batch.iter().map(String::as_str).collect();
+                client.expect_get(&batch, Ok(states(&batch)));
+                start += size;
+            }
+            ids.push(ids[0].clone());
+            ids.push(ids[count - 1].clone());
+            let original = ids.clone();
+            let result = manager.get_affinity_groups(&ids).unwrap();
+            assert_eq!(result, expected, "{name}");
+            assert_eq!(ids, original, "{name}");
+            client.assert_expectations();
+        }
+    }
+
+    /// Go `TestGetAffinityGroupsBatchesCompatibility`.
+    #[test]
+    fn get_affinity_groups_batches_compatibility() {
+        let ids: Vec<String> = (0..250).map(|i| format!("g{i:03}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let mut all_groups = states(&refs);
+        all_groups.insert("unrequested".to_owned(), affinity_group_state("unrequested"));
+        let expected = filter_affinity_groups(&all_groups, &ids);
+
+        // An unsupported query on a later batch.
+        let client = Arc::new(MockPdClient::default());
+        let manager = manager_over(&client);
+        client.expect_get(&refs[..100], Ok(filter_affinity_groups(&all_groups, &ids[..100])));
+        client.expect_get(&refs[100..200], Err(pd_status_err(400, "Bad Request")));
+        client.expect_get_all(Ok(all_groups.clone()));
+        assert_eq!(manager.get_affinity_groups(&ids).unwrap(), expected);
+        client.assert_expectations();
+
+        // PD ignores the query, with or without unrequested groups.
+        for response in [all_groups.clone(), expected.clone()] {
+            let client = Arc::new(MockPdClient::default());
+            let manager = manager_over(&client);
+            client.expect_get(&refs[..100], Ok(response));
+            assert_eq!(manager.get_affinity_groups(&ids).unwrap(), expected);
+            client.assert_expectations();
+        }
+
+        // A non-compatibility error on a later batch.
+        let client = Arc::new(MockPdClient::default());
+        let manager = manager_over(&client);
+        client.expect_get(&refs[..100], Ok(filter_affinity_groups(&all_groups, &ids[..100])));
+        client.expect_get(&refs[100..200], Err(PdHttpError::Message("context canceled".to_owned())));
+        assert_eq!(
+            manager.get_affinity_groups(&ids),
+            Err(PdHttpError::Message("context canceled".to_owned()))
+        );
+        client.assert_expectations();
     }
 
     #[test]
