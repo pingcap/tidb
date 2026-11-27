@@ -333,3 +333,27 @@ SELECT 1 FROM t3
 WHERE t3.k = t2.k AND t3.b = t2.b AND t2.k = 1
 );
 k	b
+drop table if exists l, r;
+create table l (id bigint not null primary key);
+create table r (id bigint not null primary key, c0 datetime null);
+insert into l values (1);
+insert into r values (1, null);
+explain format='brief' select l.id from l join r on l.id = r.id where binary(cast(l.id as decimal)) <= '|';
+id	estRows	task	access object	operator info
+MergeJoin	10000.00	root		inner join, left key:planner__core__rule_constant_propagation.l.id, right key:planner__core__rule_constant_propagation.r.id
+├─TableReader(Build)	8000.00	root		data:Selection
+│ └─Selection	8000.00	cop[tikv]		le(cast(cast(planner__core__rule_constant_propagation.r.id, decimal(10,0) BINARY), binary(1)), "|")
+│   └─TableFullScan	10000.00	cop[tikv]	table:r	keep order:true, stats:pseudo
+└─TableReader(Probe)	8000.00	root		data:Selection
+  └─Selection	8000.00	cop[tikv]		le(cast(cast(planner__core__rule_constant_propagation.l.id, decimal(10,0) BINARY), binary(1)), "|")
+    └─TableFullScan	10000.00	cop[tikv]	table:l	keep order:true, stats:pseudo
+select l.id from l join r on l.id = r.id where binary(cast(l.id as decimal)) <= '|';
+id
+1
+select l.id from l join r on l.id = r.id where '^' >= binary(l.id | '2020-01-18');
+id
+1
+select l.id from l join r on l.id = r.id where binary(l.id > l.id) < '}';
+id
+1
+drop table if exists l, r;
