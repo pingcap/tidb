@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -3048,13 +3050,34 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
-	if x, ok := s.Expr.(*ast.FuncCallExpr); ok {
-		if x.FnName.L == ast.ConnectionID {
-			sm := e.Ctx().GetSessionManager()
-			killBySQLStmt(sm, e.Ctx().GetSessionVars().ConnectionID, s.Query, false)
-			return nil
+	if s.Expr != nil {
+		if x, ok := s.Expr.(*ast.FuncCallExpr); ok {
+			if x.FnName.L == ast.ConnectionID {
+				sm := e.Ctx().GetSessionManager()
+				killBySQLStmt(sm, e.Ctx().GetSessionVars().ConnectionID, s.Query, false)
+				return nil
+			}
+			return errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 		}
-		return errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
+		// Evaluate expression (handles user variables like @id, etc.)
+		val, err := plannerutil.EvalAstExprWithPlanCtx(e.Ctx().GetPlanCtx(), s.Expr)
+		if err != nil {
+			return err
+		}
+		if val.IsNull() {
+			return errors.New("invalid connection ID: NULL")
+		}
+		intVal, err := val.ToInt64(e.Ctx().GetSessionVars().StmtCtx.TypeCtx())
+		if err != nil {
+			return errors.Errorf("non-integer value for connection ID: %v", val.GetValue())
+		}
+		if intVal < 0 {
+			return errors.Errorf("negative value for connection ID: %d", intVal)
+		}
+		s.ConnectionID = uint64(intVal)
+		if err := e.checkKillConnectionPrivilege(ctx, s.ConnectionID); err != nil {
+			return err
+		}
 	}
 	if !config.GetGlobalConfig().EnableGlobalKill {
 		conf := config.GetGlobalConfig()
@@ -3107,6 +3130,41 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		killBySQLStmt(sm, s.ConnectionID, s.Query, false)
 	}
 
+	return nil
+}
+
+func (e *SimpleExec) checkKillConnectionPrivilege(ctx context.Context, connectionID uint64) error {
+	sm := e.Ctx().GetSessionManager()
+	if sm == nil {
+		return nil
+	}
+
+	var requireConnectionAdmin bool
+	var restrictedUser *auth.UserIdentity
+	if pi, ok := sm.GetProcessInfo(connectionID); ok {
+		loginUser := e.Ctx().GetSessionVars().User
+		if loginUser != nil && pi.User == loginUser.Username {
+			return nil
+		}
+		requireConnectionAdmin = true
+		restrictedUser = &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}
+	} else if handleutil.GlobalAutoAnalyzeProcessList.Contains(connectionID) {
+		requireConnectionAdmin = true
+	}
+	if !requireConnectionAdmin {
+		return nil
+	}
+
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	if checker == nil || !checker.RequestDynamicVerification(activeRoles, "CONNECTION_ADMIN", false) {
+		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
+	}
+	if restrictedUser != nil && sem.IsEnabled() &&
+		checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, restrictedUser) &&
+		!checker.RequestDynamicVerification(activeRoles, "RESTRICTED_CONNECTION_ADMIN", false) {
+		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_CONNECTION_ADMIN")
+	}
 	return nil
 }
 
