@@ -688,6 +688,8 @@ func TestMulMyDecimal(t *testing.T) {
 		{"0.5999991229316", "0.918755041726043", "0.5512522192246113614062276588", nil},
 		{"0.5999991229317", "0.918755041726042", "0.5512522192247026369112773314", nil},
 		{"0.000", "-1", "0.000", nil},
+		{"99999999999999999999999999999999.000000", "00000000000000000000000000000001.999999", "199999899999999999999999999999998.000001000000", nil},
+		{"00000000000000000000000000000001.999999", "99999999999999999999999999999999.000000", "199999899999999999999999999999998.000001000000", nil},
 	}
 	for _, tt := range tests {
 		var a, b, product MyDecimal
@@ -700,6 +702,37 @@ func TestMulMyDecimal(t *testing.T) {
 		result := product.String()
 		require.Equal(t, tt.result, result)
 	}
+	t.Run("LeadingZeros", func(t *testing.T) {
+		var large MyDecimal
+		require.NoError(t, large.FromString([]byte("99999999999999999999999999999999.567891")))
+		for _, value := range []string{"1.123456", "-1.123456", "0.123456", "-0.123456", "0.000000", "1", "0"} {
+			var plain, expected MyDecimal
+			require.NoError(t, plain.FromString([]byte(value)))
+			require.NoError(t, DecimalMul(&large, &plain, &expected))
+			for _, width := range []int{1, 9, 10, 31, 32, 36, 63, 72} {
+				var padded MyDecimal
+				text := strings.Repeat("0", width-1) + strings.TrimPrefix(value, "-")
+				if strings.HasPrefix(value, "-") {
+					text = "-" + text
+				}
+				require.NoError(t, padded.FromString([]byte(text)))
+				for _, operands := range [][2]MyDecimal{{large, padded}, {padded, large}} {
+					a, b := operands[0], operands[1]
+					var product MyDecimal
+					require.NoError(t, DecimalMul(&a, &b, &product))
+					require.Equal(t, expected.String(), product.String())
+					require.Equal(t, operands[0], a)
+					require.Equal(t, operands[1], b)
+					// In-place destinations must use the same significant word range.
+					require.NoError(t, DecimalMul(&a, &b, &a))
+					require.Equal(t, expected.String(), a.String())
+					a = operands[0]
+					require.NoError(t, DecimalMul(&a, &b, &b))
+					require.Equal(t, expected.String(), b.String())
+				}
+			}
+		}
+	})
 }
 
 func TestDivModMyDecimal(t *testing.T) {
