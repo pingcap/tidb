@@ -36,6 +36,14 @@ func TestIssue73843(t *testing.T) {
 	tk.MustQuery("select hex(min(x'00002A')), hex(max(x'00002A')) from binary_agg").
 		Check(testkit.Rows("00002A 00002A"))
 
+	streamAggQuery := "select /*+ STREAM_AGG() */ id, hex(min(b'101010')), hex(min(x'00002A')) " +
+		"from (select * from binary_agg order by id limit 3) as t group by id order by id"
+	plan := tk.MustQuery("explain format='brief' " + streamAggQuery)
+	plan.CheckContain("StreamAgg")
+	plan.CheckNotContain("HashAgg")
+	tk.MustQuery(streamAggQuery).
+		Check(testkit.Rows("1 2A 00002A", "2 2A 00002A", "3 2A 00002A"))
+
 	tk.MustQuery("select hex(min(b'101010')) as short_min, hex(min(x'00002A')) as long_min, " +
 		"hex(max(b'101010')) as short_max, hex(max(x'00002A')) as long_max from binary_agg").
 		Check(testkit.Rows("2A 00002A 2A 00002A"))
@@ -46,8 +54,4 @@ func TestIssue73843(t *testing.T) {
 
 	tk.MustQuery("select hex(min(cast(b'101010' as binary))), hex(min(cast(x'00002A' as binary))) from binary_agg").
 		Check(testkit.Rows("2A 00002A"))
-
-	tk.MustQuery("select id, hex(min(b'101010')), hex(min(x'00002A')) " +
-		"from (select * from binary_agg order by id limit 3) as t group by id order by id").
-		Check(testkit.Rows("1 2A 00002A", "2 2A 00002A", "3 2A 00002A"))
 }
