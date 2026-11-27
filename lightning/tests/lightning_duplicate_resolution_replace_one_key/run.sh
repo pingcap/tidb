@@ -16,6 +16,8 @@
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
 run_lightning
@@ -39,3 +41,9 @@ check_contains 'c: 3.csv'
 check_contains 'a: 5'
 check_contains 'b: 4'
 check_contains 'c: 5.csv'
+
+run_sql 'DROP DATABASE dup_resolve'
+run_lightning --config "$CUR/config-no-post-restore.toml"
+run_sql 'admin check table dup_resolve.a'
+run_sql 'select count(*) from dup_resolve.a'
+check_contains 'count(*): 4'
