@@ -3636,6 +3636,7 @@ func (e *SimpleExec) executeSetSessionStates(ctx context.Context, s *ast.SetSess
 	}
 	vars := e.Ctx().GetSessionVars()
 	oldSnapshotTS := vars.SnapshotTS
+	oldSnapshot, _ := vars.GetSystemVar(vardef.TiDBSnapshot)
 	if err := e.Ctx().DecodeStates(ctx, &sessionStates); err != nil {
 		return err
 	}
@@ -3643,8 +3644,15 @@ func (e *SimpleExec) executeSetSessionStates(ctx context.Context, s *ast.SetSess
 	// do the same for a restored tidb_snapshot. Otherwise the session reads
 	// the snapshot's data with the current schema.
 	if err := loadSnapshotInfoSchemaIfNeeded(e.Ctx(), vars.SnapshotTS); err != nil {
-		// Like SET tidb_snapshot, keep the old timestamp, which still matches
-		// the old snapshot schema.
+		// Keep the old snapshot, whose schema is still loaded: restore the
+		// visible tidb_snapshot value, and then its timestamp, which must not
+		// be parsed again in the restored time zone.
+		if oldSnapshotTS == 0 {
+			oldSnapshot = ""
+		}
+		if restoreErr := vars.SetSystemVarWithoutValidation(vardef.TiDBSnapshot, oldSnapshot); restoreErr != nil {
+			logutil.Logger(ctx).Warn("failed to restore tidb_snapshot", zap.Error(restoreErr))
+		}
 		vars.SnapshotTS = oldSnapshotTS
 		return err
 	}

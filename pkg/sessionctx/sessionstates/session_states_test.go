@@ -171,6 +171,7 @@ func TestSessionStatesReadTimestamps(t *testing.T) {
 		// The timestamp and the schema still belong to the same snapshot.
 		require.Equal(t, oldTS, vars.SnapshotTS)
 		require.Same(t, oldSchema, vars.SnapshotInfoschema)
+		tk.MustQuery("select @@tidb_snapshot").Check(testkit.Rows(snap))
 	})
 	store := testkit.CreateMockStore(t)
 	writer := testkit.NewTestKit(t, store)
