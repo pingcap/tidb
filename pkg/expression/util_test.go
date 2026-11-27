@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -260,6 +261,227 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	require.NoError(t, err)
 	ans3 := newFunctionWithMockCtx(ast.Plus, ans1, col1)
 	require.False(t, ret.Equal(ctx, ans3))
+}
+
+func TestColumnSubstituteExplicitCollateDoesNotMutateColumn(t *testing.T) {
+	ctx := mock.NewContext()
+	nameCol := newUTF8MB4BinColumn(1, "name")
+	otherCol := newUTF8MB4BinColumn(2, "other")
+	flagCol := &Column{UniqueID: 3, Index: 2, RetType: types.NewFieldType(mysql.TypeLonglong), OrigName: "flag"}
+
+	ifFn := newExplicitCollateIfFunc(t, ctx, flagCol, nameCol, otherCol)
+	origCoer := nameCol.Coercibility()
+	require.Equal(t, "utf8mb4_bin", nameCol.RetType.GetCollate())
+
+	// IF(1, name, other) COLLATE utf8mb4_general_ci folds to the name column.
+	schema := NewSchema(flagCol)
+	changed, _, result := ColumnSubstituteImpl(ctx, ifFn, schema, []Expression{NewOne()}, false)
+	require.True(t, changed)
+
+	require.Equal(t, "utf8mb4_bin", nameCol.RetType.GetCollate(), "substituting a folded IF must not change the input column collation")
+	require.Equal(t, origCoer, nameCol.Coercibility())
+	require.False(t, nameCol.IsExplicitCharset())
+	require.Equal(t, "utf8mb4_general_ci", result.GetType(ctx.GetEvalCtx()).GetCollate())
+	_, isCol := result.(*Column)
+	require.False(t, isCol, "folded column with COLLATE should be isolated behind a CAST")
+}
+
+func TestSubstituteCorCol2ConstantExplicitCollateDoesNotMutateColumn(t *testing.T) {
+	ctx := mock.NewContext()
+	nameCol := newUTF8MB4BinColumn(1, "name")
+	otherCol := newUTF8MB4BinColumn(2, "other")
+	flagCol := &CorrelatedColumn{Data: &NewOne().Value}
+	flagCol.RetType = types.NewFieldType(mysql.TypeLonglong)
+	flagCol.UniqueID = 3
+
+	ifFn := newExplicitCollateIfFunc(t, ctx, flagCol, nameCol, otherCol)
+	origCoer := nameCol.Coercibility()
+
+	result, err := SubstituteCorCol2Constant(ctx, ifFn)
+	require.NoError(t, err)
+
+	require.Equal(t, "utf8mb4_bin", nameCol.RetType.GetCollate(), "substituting a folded IF must not change the input column collation")
+	require.Equal(t, origCoer, nameCol.Coercibility())
+	require.False(t, nameCol.IsExplicitCharset())
+	require.Equal(t, "utf8mb4_general_ci", result.GetType(ctx.GetEvalCtx()).GetCollate())
+	_, isCol := result.(*Column)
+	require.False(t, isCol, "folded column with COLLATE should be isolated behind a CAST")
+}
+
+func newUTF8MB4BinColumn(id int64, name string) *Column {
+	tp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).
+		SetCharset(charset.CharsetUTF8MB4).SetCollate("utf8mb4_bin").SetFlen(20).BuildP()
+	return &Column{UniqueID: id, Index: int(id - 1), RetType: tp, OrigName: name}
+}
+
+func newExplicitCollateIfFunc(t *testing.T, ctx BuildContext, flag, name, other Expression) *ScalarFunction {
+	t.Helper()
+	retTp := name.GetType(ctx.GetEvalCtx()).Clone()
+	fn, err := NewFunctionBase(ctx, ast.If, retTp, flag, name, other)
+	require.NoError(t, err)
+	sf := fn.(*ScalarFunction)
+	sf.SetCoercibility(CoercibilityExplicit)
+	sf.SetCharsetAndCollation(charset.CharsetUTF8MB4, "utf8mb4_general_ci")
+	sf.SetExplicitCharset(true)
+	sf.GetType(ctx.GetEvalCtx()).SetCollate("utf8mb4_general_ci")
+	if col, ok := name.(*Column); ok {
+		require.Equal(t, "utf8mb4_bin", col.RetType.GetCollate())
+	}
+	return sf
+}
+
+func TestColumnSubstituteExplicitCollateDoesNotChangeFoldedGreatestComparator(t *testing.T) {
+	ctx := mock.NewContext()
+	flagCol := &Column{UniqueID: 4, Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong), OrigName: "flag"}
+	greatest, ifFn, row := setupExplicitCollateIfGreatest(t, ctx, flagCol)
+
+	schema := NewSchema(flagCol)
+	changed, _, result := ColumnSubstituteImpl(ctx, ifFn, schema, []Expression{NewOne()}, false)
+	require.True(t, changed)
+	assertFoldedGreatestKeepsBinComparator(t, ctx, result, greatest, row)
+}
+
+func TestSubstituteCorCol2ConstantExplicitCollateDoesNotChangeFoldedGreatestComparator(t *testing.T) {
+	ctx := mock.NewContext()
+	flagCol := &CorrelatedColumn{Data: &NewOne().Value}
+	flagCol.RetType = types.NewFieldType(mysql.TypeLonglong)
+	flagCol.UniqueID = 4
+	greatest, ifFn, row := setupExplicitCollateIfGreatest(t, ctx, flagCol)
+
+	result, err := SubstituteCorCol2Constant(ctx, ifFn)
+	require.NoError(t, err)
+	assertFoldedGreatestKeepsBinComparator(t, ctx, result, greatest, row)
+}
+
+func setupExplicitCollateIfGreatest(t *testing.T, ctx BuildContext, flag Expression) (*ScalarFunction, *ScalarFunction, chunk.Row) {
+	t.Helper()
+	a := newUTF8MB4BinColumn(1, "a")
+	b := newUTF8MB4BinColumn(2, "b")
+	other := newUTF8MB4BinColumn(3, "other")
+	fn, err := NewFunctionBase(ctx, ast.Greatest, a.RetType.Clone(), a, b)
+	require.NoError(t, err)
+	greatest := fn.(*ScalarFunction)
+	ifFn := newExplicitCollateIfFunc(t, ctx, flag, greatest, other)
+	require.Equal(t, "utf8mb4_bin", greatest.GetType(ctx.GetEvalCtx()).GetCollate())
+	row := chunk.MutRowFromDatums([]types.Datum{
+		types.NewStringDatum("a"),
+		types.NewStringDatum("B"),
+		types.NewStringDatum("z"),
+	}).ToRow()
+	d, err := greatest.Eval(ctx.GetEvalCtx(), row)
+	require.NoError(t, err)
+	require.Equal(t, "a", d.GetString())
+	return greatest, ifFn, row
+}
+
+func assertFoldedGreatestKeepsBinComparator(t *testing.T, ctx BuildContext, result Expression, greatest *ScalarFunction, row chunk.Row) {
+	t.Helper()
+	require.Equal(t, "utf8mb4_general_ci", result.GetType(ctx.GetEvalCtx()).GetCollate())
+	d, err := result.Eval(ctx.GetEvalCtx(), row)
+	require.NoError(t, err)
+	require.Equal(t, "a", d.GetString(), "folded GREATEST('a','B') must keep utf8mb4_bin comparison and return 'a', not 'B'")
+	require.Equal(t, "utf8mb4_bin", greatest.GetType(ctx.GetEvalCtx()).GetCollate())
+	d2, err := greatest.Eval(ctx.GetEvalCtx(), row)
+	require.NoError(t, err)
+	require.Equal(t, "a", d2.GetString())
+	sf, ok := result.(*ScalarFunction)
+	require.True(t, ok)
+	require.Equal(t, ast.Cast, sf.FuncName.L, "outer COLLATE on a folded scalar function should be applied through a CAST")
+}
+
+func TestColumnSubstituteNestedExplicitCollateSurvivesTwoRebuilds(t *testing.T) {
+	ctx := mock.NewContext()
+	a, b, suffix, a2, outer := setupNestedExplicitCollateConcat(t, ctx, newUTF8MB4BinColumn(5, "suffix"))
+
+	schema := NewSchema(suffix)
+	changed, _, result := ColumnSubstituteImpl(ctx, outer, schema, []Expression{newUTF8MB4BinConst("x")}, false)
+	require.True(t, changed)
+	assertNestedGreatestKeepsExplicitCollate(t, ctx, result, 1)
+
+	changed, _, result = ColumnSubstituteImpl(ctx, result, NewSchema(a), []Expression{a2}, false)
+	require.True(t, changed)
+	assertNestedGreatestKeepsExplicitCollate(t, ctx, result, 2)
+	_ = b
+}
+
+func TestSubstituteCorCol2ConstantNestedExplicitCollateSurvivesTwoRebuilds(t *testing.T) {
+	ctx := mock.NewContext()
+	suffix := &CorrelatedColumn{Data: &newUTF8MB4BinConst("x").Value}
+	suffix.RetType = newUTF8MB4BinConst("x").RetType
+	suffix.UniqueID = 5
+	a, b, _, a2, outer := setupNestedExplicitCollateConcat(t, ctx, suffix)
+
+	result, err := SubstituteCorCol2Constant(ctx, outer)
+	require.NoError(t, err)
+	assertNestedGreatestKeepsExplicitCollate(t, ctx, result, 1)
+
+	changed, _, result := ColumnSubstituteImpl(ctx, result, NewSchema(a), []Expression{a2}, false)
+	require.True(t, changed)
+	assertNestedGreatestKeepsExplicitCollate(t, ctx, result, 2)
+	_ = b
+}
+
+func setupNestedExplicitCollateConcat(t *testing.T, ctx BuildContext, suffix Expression) (a, b, suffixCol *Column, a2 *Column, outer *ScalarFunction) {
+	t.Helper()
+	a = newUTF8MB4BinColumn(1, "a")
+	b = newUTF8MB4BinColumn(2, "b")
+	a2 = newUTF8MB4BinColumn(10, "a2")
+	if col, ok := suffix.(*Column); ok {
+		suffixCol = col
+	}
+	inner, err := NewFunctionBase(ctx, ast.Greatest, a.RetType.Clone(), a, b)
+	require.NoError(t, err)
+	innerSF := inner.(*ScalarFunction)
+	markExplicitCollate(innerSF, ctx, "utf8mb4_unicode_ci")
+
+	concatTp := a.RetType.Clone()
+	outerFn, err := NewFunctionBase(ctx, ast.Concat, concatTp, innerSF, suffix)
+	require.NoError(t, err)
+	outer = outerFn.(*ScalarFunction)
+	markExplicitCollate(outer, ctx, "utf8mb4_general_ci")
+	require.True(t, innerSF.IsExplicitCharset())
+	_, coll := innerSF.CharsetAndCollation()
+	require.Equal(t, "utf8mb4_unicode_ci", coll)
+	return a, b, suffixCol, a2, outer
+}
+
+func markExplicitCollate(sf *ScalarFunction, ctx BuildContext, coll string) {
+	sf.SetCoercibility(CoercibilityExplicit)
+	sf.SetCharsetAndCollation(charset.CharsetUTF8MB4, coll)
+	sf.SetExplicitCharset(true)
+	sf.GetType(ctx.GetEvalCtx()).SetCollate(coll)
+}
+
+func newUTF8MB4BinConst(s string) *Constant {
+	tp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).
+		SetCharset(charset.CharsetUTF8MB4).SetCollate("utf8mb4_bin").SetFlen(20).BuildP()
+	return &Constant{Value: types.NewStringDatum(s), RetType: tp}
+}
+
+func findScalarFunc(expr Expression, name string) *ScalarFunction {
+	sf, ok := expr.(*ScalarFunction)
+	if !ok {
+		return nil
+	}
+	if sf.FuncName.L == name {
+		return sf
+	}
+	for _, arg := range sf.GetArgs() {
+		if found := findScalarFunc(arg, name); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func assertNestedGreatestKeepsExplicitCollate(t *testing.T, ctx BuildContext, expr Expression, rebuild int) {
+	t.Helper()
+	inner := findScalarFunc(expr, ast.Greatest)
+	require.NotNil(t, inner, "nested GREATEST missing after rebuild %d", rebuild)
+	require.True(t, inner.IsExplicitCharset(), "nested GREATEST lost explicit COLLATE flag after rebuild %d", rebuild)
+	_, coll := inner.CharsetAndCollation()
+	require.Equal(t, "utf8mb4_unicode_ci", coll, "nested GREATEST collation after rebuild %d", rebuild)
+	require.Equal(t, "utf8mb4_unicode_ci", inner.GetType(ctx.GetEvalCtx()).GetCollate(), "nested GREATEST FieldType collation after rebuild %d", rebuild)
 }
 
 func TestPushDownNot(t *testing.T) {

@@ -106,6 +106,7 @@ func TestScalarFunction(t *testing.T) {
 	require.EqualValues(t, []byte{0x3, 0x4, 0x6c, 0x74, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, sf.HashCode())
 
 	sf = NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
+	sf.SetExplicitCharset(true)
 	newSf, ok := sf.Clone().(*ScalarFunction)
 	require.True(t, ok)
 	require.True(t, sf.Equal(ctx, newSf))
@@ -113,6 +114,7 @@ func TestScalarFunction(t *testing.T) {
 	require.Equal(t, mysql.TypeLonglong, newSf.RetType.GetType())
 	require.Equal(t, sf.Coercibility(), newSf.Coercibility())
 	require.Equal(t, sf.Repertoire(), newSf.Repertoire())
+	require.True(t, newSf.IsExplicitCharset())
 	_, ok = newSf.Function.(*builtinValuesIntSig)
 	require.True(t, ok)
 }

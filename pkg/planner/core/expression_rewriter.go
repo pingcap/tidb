@@ -1893,6 +1893,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) bool {
 		}
 		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
 		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType(er.sctx.GetEvalCtx()).GetCharset(), arg.GetType(er.sctx.GetEvalCtx()).GetCollate())
+		er.ctxStack[len(er.ctxStack)-1].SetExplicitCharset(true)
 	case *ast.MatchAgainst:
 		er.matchAgainstToExpression(v)
 	default:

@@ -364,6 +364,7 @@ func (sf *ScalarFunction) Clone() Expression {
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
 	c.SetRepertoire(sf.Repertoire())
+	c.SetExplicitCharset(sf.IsExplicitCharset())
 	return c
 }
 
