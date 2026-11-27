@@ -1258,3 +1258,66 @@ func TestExpressionIndexMergeSort(t *testing.T) {
 		})
 	}
 }
+
+func TestIssue73346(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table p (id bigint primary key, state varchar(20) not null)")
+	tk.MustExec("create table i (id bigint primary key, p_id bigint not null, e_id bigint not null, excluded tinyint not null, unique key uk(p_id,e_id), key pe(p_id,excluded,e_id), key ep(excluded,p_id,e_id))")
+	tk.MustExec(`insert into p with recursive c(n) as (select 1 union all select n+1 from c where n<1000)
+		select n, if(n%9=0,'pending','paid') from c`)
+	tk.MustExec(`insert into i select p.id*10+k, p.id, p.id*10+k, (p.id*10+k)%6=0
+		from p join (select 0 k union all select 1 union all select 2 union all select 3 union all select 4 union all select 5) d`)
+	h := dom.StatsHandle()
+	analyze := func(table string) {
+		require.NoError(t, h.Usage().DumpStatsDeltaToKV(true))
+		tk.MustExec("analyze table " + table)
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
+	}
+	analyze("p")
+	analyze("i")
+	parents := make([]string, 100)
+	children := make([]string, 50)
+	for i := range parents {
+		id := 100 + i*7
+		parents[i] = fmt.Sprint(id)
+		if i < len(children) {
+			children[i] = fmt.Sprint(id*10 + 1)
+		}
+	}
+	query := func(p, e []string) string {
+		return "select i.id from p join i on p.id=i.p_id where p.state in ('paid','pending') and i.excluded=0 and p.id in (" +
+			strings.Join(p, ",") + ") and i.e_id in (" + strings.Join(e, ",") + ")"
+	}
+	plan := func(sql string) string {
+		return fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + sql).Rows())
+	}
+	large := query(parents, children)
+	// At the threshold, the 5,000 unique keys still use BatchPointGet.
+	// Lowering it by one lets the same query choose the sparse p_id prefix.
+	tk.MustExec("set @@tidb_opt_range_max_count = 5000")
+	require.Contains(t, plan(large), "Batch_Point_Get root table:i")
+	tk.MustExec("set @@tidb_opt_range_max_count = 4999")
+	sparsePlan := plan(large)
+	require.Contains(t, sparsePlan, "index:uk(p_id, e_id) range:[100,100]")
+	require.Contains(t, sparsePlan, "in(test.i.e_id")
+	tk.MustQuery(large).Sort().Check(testkit.Rows(children...))
+	require.Contains(t, plan(query(parents[:2], children[:2])), "Batch_Point_Get root table:i")
+
+	// Disabling the threshold keeps full-key BatchPointGet on i. With threshold 32,
+	// a single IN on p.id (100 values) cannot shorten further and still uses BatchPointGet on p.
+	tk.MustExec("set @@tidb_opt_range_max_count = 0")
+	require.Contains(t, plan(large), "Batch_Point_Get root table:i")
+	tk.MustExec("set @@tidb_opt_range_max_count = 32")
+	require.Contains(t, plan(large), "Batch_Point_Get root table:p")
+	tk.MustExec("set @@tidb_opt_range_max_count = default")
+
+	// Keep the same lookup keys, but populate dense prefixes so prefix scans cost more than BatchPointGet.
+	for _, parent := range parents {
+		tk.MustExec(`insert into i with recursive d(k) as (select 1 union all select k+1 from d where k<500)
+			select 100000+?*500+k, ?, 100000+?*500+k, 0 from d`, parent, parent, parent)
+	}
+	analyze("i")
+	require.Contains(t, plan(large), "Batch_Point_Get root table:i")
+}

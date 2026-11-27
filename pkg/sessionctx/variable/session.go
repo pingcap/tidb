@@ -1707,7 +1707,8 @@ type SessionVars struct {
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
 	// memory limit for ranges.
 	RangeMaxSize int64
-	// RangeMaxCount is the range-count threshold for preferring more equality/IN predicates in skyline pruning.
+	// RangeMaxCount is the range-count threshold above which skyline pruning stops preferring more equality/IN
+	// predicates and full-key unique index lookups may consider shorter prefix-scan alternatives.
 	// It does not limit range construction. 0 disables the threshold.
 	RangeMaxCount int64
 
