@@ -104,6 +104,7 @@ State machine (`job.SchemaState`):
 
 Key behaviors:
 
+<<<<<<< HEAD
 - It replaces old partition IDs with new ones in table metadata:
   - ID replacement helper: `pkg/ddl/partition.go:replaceTruncatePartitions`
 - During intermediate states, it sets flags to filter global index reads/writes correctly:
@@ -112,6 +113,31 @@ Key behaviors:
   - `cleanGlobalIndexEntriesFromDroppedPartitions`
 - Job finishes and delete-range GC cleans old partition data:
   - `pkg/ddl/delete_range.go` (`ActionTruncateTablePartition` cases)
+=======
+- In `StatePublic`, the worker prepares the full set of affinity groups that
+  will be needed after the truncate. It uses replacement IDs only for partitions
+  that still match and backfills missing groups for untouched partitions. It
+  persists `AffinityGroupsPrepared` in the job arguments before publishing new
+  partition IDs. During an upgrade, `StateWriteOnly` prepares any job missing
+  this flag before publishing. Rollback deletes only replacement groups and
+  uses a 10-second timeout derived from the DDL owner's context so cleanup can
+  run after step cancellation.
+- It replaces old partition IDs with new ones in table metadata:
+  - ID replacement helper: `pkg/ddl/partition.go:replaceTruncatePartitions`
+- During intermediate states, it sets flags to filter global index reads/writes correctly:
+  - `pi.NewPartitionIDs` contains only matched replacement IDs.
+  - `pi.DroppingDefinitions` contains the old definitions that were replaced.
+- The job keeps the queued ID pairs for retries and cancellation. If none of the
+  old IDs still match, no partition is replaced and existing rows are preserved.
+- At finalization, `DroppingDefinitions` limits global-index cleanup, the schema
+  diff, and delete-range GC to the partitions this job replaced. Only jobs
+  published by an older owner without `AffinityGroupsPrepared` create groups in
+  this step. For partition affinity they request groups for all current
+  partitions, including untouched ones. They retry creation errors with a delay
+  because the replacement IDs are already visible. The truncate notification
+  pairs each dropped definition with the replacement ID originally assigned to
+  its old ID.
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
 
 ## REORGANIZE PARTITION (`ActionReorganizePartition`)
 

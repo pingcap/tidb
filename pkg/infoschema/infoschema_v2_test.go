@@ -668,6 +668,23 @@ func updateTableSpecialAttribute(t *testing.T, dbInfo *model.DBInfo, tblInfo *mo
 	return nil
 }
 
+func TestSpecialAttributeGroupsByDatabase(t *testing.T) {
+	is := NewInfoSchemaV2(nil, nil, NewData())
+	is.base().schemaMetaVersion = 1
+	for dbIndex, dbName := range []string{"a", "z"} {
+		for i := range int64(3) {
+			info := &model.TableInfo{ID: int64(dbIndex)*10 + i + 1, Affinity: &model.TableAffinityInfo{Level: ast.TableAffinityLevelTable}}
+			btreeSet(&is.Data.tableInfoResident, tableInfoItem{dbName: ast.NewCIStr(dbName), tableID: info.ID, schemaVersion: 1, tableInfo: info})
+		}
+	}
+	results := is.ListTablesWithSpecialAttribute(infoschemacontext.AffinityAttribute)
+	require.Len(t, results, 2)
+	for i, dbName := range []string{"z", "a"} {
+		require.Equal(t, dbName, results[i].DBName.L)
+		require.Len(t, results[i].TableInfos, 3)
+	}
+}
+
 func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	r := internal.CreateAutoIDRequirement(t)
 	defer func() {
@@ -995,4 +1012,25 @@ func TestGCOldFKVersion(t *testing.T) {
 		ChildTable:  ast.NewCIStr("t"),
 		ChildFKName: ast.NewCIStr("fk"),
 	}, got[0])
+}
+
+func TestSpecialAttributeCrossDatabaseRename(t *testing.T) {
+	for _, dbs := range [][2]string{{"z_db", "a_db"}, {"a_db", "z_db"}} {
+		t.Run(dbs[0]+"_to_"+dbs[1], func(t *testing.T) {
+			is := NewInfoSchemaV2(nil, nil, NewData())
+			info := &model.TableInfo{ID: 100, Name: ast.NewCIStr("t1"), Affinity: &model.TableAffinityInfo{Level: ast.TableAffinityLevelTable}}
+			btreeSet(&is.Data.tableInfoResident, tableInfoItem{dbName: ast.NewCIStr(dbs[0]), tableID: info.ID, schemaVersion: 1, tableInfo: info})
+			btreeSet(&is.Data.tableInfoResident, tableInfoItem{dbName: ast.NewCIStr(dbs[0]), tableID: info.ID, schemaVersion: 2, tomb: true})
+			btreeSet(&is.Data.tableInfoResident, tableInfoItem{dbName: ast.NewCIStr(dbs[1]), tableID: info.ID, schemaVersion: 2, tableInfo: info})
+			is.base().schemaMetaVersion = 1
+			before := is.ListTablesWithSpecialAttribute(infoschemacontext.AffinityAttribute)
+			require.Len(t, before, 1)
+			require.Equal(t, dbs[0], before[0].DBName.L)
+			is.base().schemaMetaVersion = 2
+			after := is.ListTablesWithSpecialAttribute(infoschemacontext.AffinityAttribute)
+			require.Len(t, after, 1)
+			require.Equal(t, dbs[1], after[0].DBName.L)
+			require.Equal(t, []*model.TableInfo{info}, after[0].TableInfos)
+		})
+	}
 }

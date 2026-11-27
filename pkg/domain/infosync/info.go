@@ -431,6 +431,9 @@ func pdResponseHandler(resp *http.Response, res any) error {
 	defer func() { terror.Log(resp.Body.Close()) }()
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
+		if resp.StatusCode != http.StatusOK {
+			return &pdHTTPStatusError{error: err, statusCode: resp.StatusCode}
+		}
 		return err
 	}
 	if resp.StatusCode == http.StatusOK {
@@ -445,10 +448,20 @@ func pdResponseHandler(resp *http.Response, res any) error {
 		zap.String("url", resp.Request.URL.RequestURI()),
 		zap.Int("http status", resp.StatusCode),
 	)
-	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusPreconditionFailed {
-		return ErrHTTPServiceError.FastGen("%s", bodyBytes)
+	// Placement and other PD callers rely on the legacy handling of these
+	// statuses. Affinity requests need to distinguish them from success.
+	if !isAffinityGroupAPIPath(resp.Request.URL.Path) &&
+		(resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusPreconditionFailed) {
+		return nil
 	}
-	return nil
+	return &pdHTTPStatusError{
+		error:      ErrHTTPServiceError.FastGen("%s", bodyBytes),
+		statusCode: resp.StatusCode,
+	}
+}
+
+func isAffinityGroupAPIPath(reqPath string) bool {
+	return reqPath == pdhttp.AffinityGroups || strings.HasSuffix(reqPath, pdhttp.AffinityGroups) || strings.Contains(reqPath, pdhttp.AffinityGroups+"/")
 }
 
 // GetAllRuleBundles is used to get all rule bundles from PD It is used to load full rules from PD while fullload infoschema.

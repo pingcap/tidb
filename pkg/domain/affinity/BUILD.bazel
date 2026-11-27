@@ -23,7 +23,11 @@ go_test(
     srcs = ["manager_test.go"],
     embed = [":affinity"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 11,
+=======
+    shard_count = 19,
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
     deps = [
         "//pkg/errno",
         "//pkg/parser/terror",
