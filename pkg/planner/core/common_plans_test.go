@@ -32,6 +32,25 @@ import (
 
 var explainRUForestRowsSink [][]string
 
+func TestGetExplainRowsForPlanPreservesStatementContext(t *testing.T) {
+	for _, tc := range []struct {
+		inExplain bool
+		format    string
+	}{{false, ""}, {true, types.ExplainFormatBrief}, {true, types.ExplainFormatTiDBJSON}} {
+		ctx := mock.NewContext()
+		sc := ctx.GetSessionVars().StmtCtx
+		sc.InExplainStmt, sc.ExplainFormat = tc.inExplain, tc.format
+		plan := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+		require.NotEmpty(t, GetExplainRowsForPlan(plan))
+		require.Equal(t, tc.inExplain, sc.InExplainStmt)
+		require.Equal(t, tc.format, sc.ExplainFormat)
+		// Transaction replay reuses this context without resetting EXPLAIN state.
+		sc.ResetForRetry()
+		require.Equal(t, tc.inExplain, sc.InExplainStmt)
+		require.Equal(t, tc.format, sc.ExplainFormat)
+	}
+}
+
 func TestMViewRefreshMLogIsEmpty(t *testing.T) {
 	ctx := mock.NewContext()
 	stats := &property.StatsInfo{RowCount: 1}

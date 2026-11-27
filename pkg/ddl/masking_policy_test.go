@@ -25,7 +25,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -759,7 +761,8 @@ func TestMaskingPolicyTruncateRollbackIsAtomic(t *testing.T) {
 			store, dom := testkit.CreateMockStoreAndDomain(t)
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			tk.MustExec("create table t_atomic(a varchar(20), b varchar(20))")
+			tk.MustExec("create placement policy p_atomic followers=2")
+			tk.MustExec("create table t_atomic(a varchar(20), b varchar(20)) placement policy p_atomic")
 			tk.MustExec("insert into t_atomic values ('secret','secret')")
 			tk.MustExec("create masking policy p1 on t_atomic(a) as mask_full(a)")
 			tk.MustExec("create masking policy p2 on t_atomic(b) as mask_full(b)")
@@ -767,9 +770,15 @@ func TestMaskingPolicyTruncateRollbackIsAtomic(t *testing.T) {
 			require.NoError(t, err)
 			oldID := tbl.Meta().ID
 			var observed atomic.Bool
+			var leakedBundle atomic.Bool
 			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMaskingPolicyUpdateError", tc.expr)
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(job *model.JobW) {
 				if job.Job.Type == model.ActionTruncateTable && job.Job.ErrorCount > 0 && !observed.Swap(true) {
+					args, err := model.GetTruncateTableArgs(job.Job)
+					require.NoError(t, err)
+					bundle, err := infosync.GetRuleBundle(context.Background(), placement.GroupID(args.NewTableID))
+					require.NoError(t, err)
+					leakedBundle.Store(len(bundle.Rules) > 0)
 					txn, err := store.Begin()
 					require.NoError(t, err)
 					metaTable, err := meta.NewReader(txn).GetTable(job.Job.SchemaID, oldID)
@@ -788,6 +797,7 @@ func TestMaskingPolicyTruncateRollbackIsAtomic(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.True(t, observed.Load())
+			require.False(t, leakedBundle.Load(), "policy rebind failure must not publish replacement placement rules")
 			if tc.cancelled {
 				tk.MustQuery("select count(*) from mysql.tidb_masking_policy where table_id=" + fmt.Sprint(oldID)).Check(testkit.Rows("2"))
 				tk.MustQuery("select a,b from t_atomic").Check(testkit.Rows("XXXXXX XXXXXX"))
@@ -801,20 +811,73 @@ func TestMaskingPolicyTruncateRollbackIsAtomic(t *testing.T) {
 }
 
 func TestMaskingPolicyRenameRollbackIsAtomic(t *testing.T) {
+	for _, sql := range []string{
+		"rename table test.t_rename to rename_target.t_renamed",
+		"rename table test.t_rename to rename_target.tmp, rename_target.tmp to rename_target.t_renamed",
+	} {
+		t.Run(sql, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create database rename_target")
+			tk.MustExec("create table t_rename(a varchar(20), b varchar(20))")
+			tk.MustExec("insert into t_rename values ('secret','secret')")
+			tk.MustExec("create masking policy p1 on t_rename(a) as mask_full(a)")
+			tk.MustExec("create masking policy p2 on t_rename(b) as mask_full(b)")
+			var retried atomic.Bool
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMaskingPolicyUpdateError", "1*off->1*return(true)->off")
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(job *model.JobW) {
+				if job.Job.Query == sql && job.Job.ErrorCount > 0 && !retried.Swap(true) {
+					check := testkit.NewTestKit(t, store)
+					check.MustQuery("select db_name,table_name from mysql.tidb_masking_policy where table_name='t_rename' order by policy_id").Check(testkit.Rows("test t_rename", "test t_rename"))
+					check.MustQuery("select a,b from test.t_rename").Check(testkit.Rows("XXXXXX XXXXXX"))
+				}
+			})
+			tk.MustExec(sql)
+			require.True(t, retried.Load())
+			tk.MustQuery("select db_name,table_name from mysql.tidb_masking_policy where table_name='t_renamed' order by policy_id").Check(testkit.Rows("rename_target t_renamed", "rename_target t_renamed"))
+			tk.MustQuery("select a,b from rename_target.t_renamed").Check(testkit.Rows("XXXXXX XXXXXX"))
+		})
+	}
+}
+
+func TestMaskingPolicyChainedCaseOnlyRename(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create database rename_target")
-	tk.MustExec("create table t_rename(a varchar(20), b varchar(20))")
-	tk.MustExec("insert into t_rename values ('secret','secret')")
-	tk.MustExec("create masking policy p1 on t_rename(a) as mask_full(a)")
-	tk.MustExec("create masking policy p2 on t_rename(b) as mask_full(b)")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMaskingPolicyUpdateError", "1*off->1*return(true)->off")
-	require.Error(t, tk.ExecToErr("rename table test.t_rename to rename_target.t_renamed"))
-	tk.MustQuery("select db_name,table_name from mysql.tidb_masking_policy where table_name like 't_rename%' order by policy_id").Check(testkit.Rows("test t_rename", "test t_rename"))
-	tk.MustQuery("select a,b from t_rename").Check(testkit.Rows("XXXXXX XXXXXX"))
-	tk.MustExec("rename table test.t_rename to rename_target.t_renamed")
-	tk.MustQuery("select a,b from rename_target.t_renamed").Check(testkit.Rows("XXXXXX XXXXXX"))
+	tk.MustExec("create table a(c varchar(20))")
+	tk.MustExec("insert into a values ('secret')")
+	tk.MustExec("create masking policy p on a(c) as mask_full(c)")
+	tk.MustExec("rename table a to tmp, tmp to A")
+	tk.MustQuery("select table_name from mysql.tidb_masking_policy where policy_name='p'").Check(testkit.Rows("A"))
+	tk.MustQuery("select c from A").Check(testkit.Rows("XXXXXX"))
+}
+
+func TestMaskingPolicyAddColumnRollbackWithoutSysTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_rollback(a int)")
+	var rolledBack, readMissingTable atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionAddColumn && job.SchemaState == model.StateWriteOnly && !rolledBack.Swap(true) {
+			job.State = model.JobStateRollingback
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMissingMaskingPolicySysTable", "return(true)")
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionAddColumn && job.IsRollingback() && job.Error != nil {
+			readMissingTable.Store(true)
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockMissingMaskingPolicySysTable"))
+		}
+	})
+	_ = tk.ExecToErr("alter table t_rollback add column b int")
+	require.True(t, rolledBack.Load())
+	require.False(t, readMissingTable.Load(), "ADD COLUMN rollback must not query the missing policy table")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_rollback"))
+	require.NoError(t, err)
+	require.Len(t, tbl.Meta().Columns, 1)
+	require.Equal(t, "a", tbl.Meta().Columns[0].Name.L)
 }
 
 func TestMaskingPolicyModifyColumnPublication(t *testing.T) {

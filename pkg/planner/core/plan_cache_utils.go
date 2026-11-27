@@ -744,6 +744,7 @@ func NewPlanCacheValue(
 		ParamTypes:               userParamTypes,
 		StmtHints:                stmtHints.Clone(),
 		exactDecimalParamOffsets: slices.Clone(stmt.exactDecimalParamOffsets),
+		maskingPolicyChecks:      slices.Clone(sctx.GetSessionVars().StmtCtx.MaskingPolicyChecks),
 	}
 	if lockTableIDs := sctx.GetSessionVars().StmtCtx.LockTableIDs; len(lockTableIDs) > 0 {
 		pcv.lockTableIDs = maps.Clone(lockTableIDs)

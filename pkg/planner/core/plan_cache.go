@@ -17,7 +17,6 @@ package core
 import (
 	"context"
 	"math"
-	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -487,7 +486,6 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if stmtCtx.UseCache() && !stmtCtx.IgnoreCalcFoundRows {
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
-		cached.maskingPolicyChecks = slices.Clone(stmtCtx.MaskingPolicyChecks)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 		if instancePlanCacheEnabled(ctx) {

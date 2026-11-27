@@ -205,8 +205,11 @@ func (w *worker) onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
-		if err = w.dropMaskingPoliciesOnColumn(jobCtx, tblInfo.ID, colInfo.ID); err != nil {
-			return ver, errors.Trace(err)
+		// ADD COLUMN rollback must also work before the policy table is created.
+		if !job.IsRollingback() {
+			if err = w.dropMaskingPoliciesOnColumn(jobCtx, tblInfo.ID, colInfo.ID); err != nil {
+				return ver, errors.Trace(err)
+			}
 		}
 		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]

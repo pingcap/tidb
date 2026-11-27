@@ -20,11 +20,15 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 )
@@ -154,6 +158,21 @@ func TestMaskingPolicyPointGetMemoryUsage(t *testing.T) {
 	base = batchPointGet.MemoryUsage()
 	batchPointGet.MaskingExprs = exprs
 	require.Equal(t, base+expected, batchPointGet.MemoryUsage())
+}
+
+func TestMaskingPolicyPlanCacheMemoryUsage(t *testing.T) {
+	ctx := mock.NewContext()
+	_, digest := parser.NormalizeDigest("select 1")
+	stmt := &PlanCacheStmt{PreparedAst: &ast.Prepared{}, SQLDigest: digest, PlanDigest: digest}
+	plan := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+	sc := ctx.GetSessionVars().StmtCtx
+	plain := NewPlanCacheValue(ctx, stmt, "key", "", plan, nil, nil, &sc.StmtHints)
+	sc.MaskingPolicyChecks = []stmtctx.MaskingPolicyCheck{{PolicyID: 1, TableID: 2, ColumnID: 3}}
+	masked := NewPlanCacheValue(ctx, stmt, "key", "", plan, nil, nil, &sc.StmtHints)
+	require.Equal(t, plain.MemoryUsage()+size.SizeOfInt64*4, masked.MemoryUsage())
+	require.Equal(t, sc.MaskingPolicyChecks, masked.maskingPolicyChecks)
+	sc.MaskingPolicyChecks[0].PolicyID = 4
+	require.Equal(t, int64(1), masked.maskingPolicyChecks[0].PolicyID)
 }
 
 func TestHasNewColumnID(t *testing.T) {

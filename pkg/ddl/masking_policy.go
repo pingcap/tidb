@@ -758,7 +758,7 @@ func (w *worker) updateMaskingPolicyNamesAfterRename(
 		return errors.Trace(err)
 	}
 	for _, policy := range policies {
-		if policy.DBName.L == newDBName.L && policy.TableName.L == newTableName.L {
+		if policy.DBName.O == newDBName.O && policy.TableName.O == newTableName.O {
 			continue
 		}
 

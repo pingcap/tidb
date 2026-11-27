@@ -1984,6 +1984,13 @@ func GetExplainRowsForPlan(plan base.Plan) (rows [][]string) {
 	}
 	if plan != nil {
 		explain.SetSCtx(plan.SCtx())
+		if sctx := plan.SCtx(); sctx != nil {
+			stmtCtx := sctx.GetSessionVars().StmtCtx
+			inExplain, format := stmtCtx.InExplainStmt, stmtCtx.ExplainFormat
+			defer func() {
+				stmtCtx.InExplainStmt, stmtCtx.ExplainFormat = inExplain, format
+			}()
+		}
 	}
 	if err := explain.RenderResult(); err != nil {
 		return rows

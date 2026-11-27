@@ -888,6 +888,11 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 
 	tblInfo.ID = args.NewTableID
 
+	// Rebind policies before publishing replacement placement rules to PD.
+	if err := w.updateMaskingPolicyTableID(jobCtx, oldTblInfo.ID, tblInfo.ID); err != nil {
+		return ver, err
+	}
+
 	// build table & partition bundles if any.
 	bundles, err := placement.NewFullTableBundles(metaMut, tblInfo)
 	if err != nil {
@@ -935,9 +940,6 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-	if err := w.updateMaskingPolicyTableID(jobCtx, oldTblInfo.ID, tblInfo.ID); err != nil {
-		return ver, err
 	}
 	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
 	err = asyncNotifyEvent(jobCtx, truncateTableEvent, job, noSubJob, w.sess)
@@ -1206,7 +1208,6 @@ func (w *worker) onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	}
 	if err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tblInfo.ID,
 		oldSchemaName, newDB.Name, oldTableName, tableName); err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 	}
 	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)
@@ -1268,7 +1269,6 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 		err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tableID,
 			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName)
 		if err != nil {
-			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 		}
 	}
