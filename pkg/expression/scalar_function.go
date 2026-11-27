@@ -857,7 +857,17 @@ func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
 //
 // The constant operand of ast.Plus and ast.Minus must be immutable and not NULL, since
 // `col + NULL` / `NULL - col` is NULL for every row and doesn't follow col's order.
+//
+// ast.Plus and ast.Minus returning a floating-point value are not handled. Rounding can
+// map different values to the same one, e.g. `x + 1e20` is 1e20 for both x = 1 and x = 2,
+// so the ties must be broken by the following sort keys instead of x's order.
 func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
+	switch sf.FuncName.String() {
+	case ast.Plus, ast.Minus:
+		if sf.RetType.EvalType() == types.ETReal {
+			return nil, false
+		}
+	}
 	switch sf.FuncName.String() {
 	case ast.Plus:
 		args := sf.GetArgs()
@@ -920,6 +930,37 @@ func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 		return nil, false
 	}
 	return nil, false
+}
+
+// IsNullForAllRows returns true when sf is a +, - or unary - expression that is
+// NULL for every row because one of its operands is an immutable NULL constant,
+// e.g. `NULL - col` or `-(col + NULL)`. Such a sort key never changes the order,
+// so it can be skipped when deriving the required sort property.
+//
+// Only ConstStrict constants count. Parameter markers and deferred expressions can
+// change value between executions of a cached plan.
+func (sf *ScalarFunction) IsNullForAllRows() bool {
+	switch sf.FuncName.L {
+	case ast.Plus, ast.Minus:
+		for _, arg := range sf.GetArgs() {
+			if isNullForAllRows(arg) {
+				return true
+			}
+		}
+	case ast.UnaryMinus:
+		return isNullForAllRows(sf.GetArgs()[0])
+	}
+	return false
+}
+
+func isNullForAllRows(expr Expression) bool {
+	switch x := expr.(type) {
+	case *Constant:
+		return x.ConstLevel() == ConstStrict && x.Value.IsNull()
+	case *ScalarFunction:
+		return x.IsNullForAllRows()
+	}
+	return false
 }
 
 // isNonNullConstant returns true if expr is an immutable constant whose value is non-NULL.
