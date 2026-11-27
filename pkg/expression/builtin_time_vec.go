@@ -2633,11 +2633,22 @@ func (b *builtinConvertTzSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, r
 		return err
 	}
 
-	result.MergeNulls(fromTzBuf, toTzBuf)
 	ts := result.Times()
 	var isNull bool
 	for i := range n {
 		if result.IsNull(i) {
+			continue
+		}
+		// Match scalar evaluation: validate the date before NULL timezone inputs.
+		if ts[i].InvalidZero() {
+			if err := handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ts[i].String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		if fromTzBuf.IsNull(i) || toTzBuf.IsNull(i) {
+			result.SetNull(i, true)
 			continue
 		}
 
