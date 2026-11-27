@@ -389,12 +389,7 @@ type topNRows struct {
 	currSize  uint64
 	limitSize uint64
 	sepSize   uint64
-	// If sep is truncated, we need to append part of sep to result.
-	// In the following example, session.group_concat_max_len is 10 and sep is '---'.
-	// ('---', 'ccc') should be poped from heap, so '-' should be appended to result.
-	// eg: 'aaa---bbb---ccc' -> 'aaa---bbb-'
-	isSepTruncated bool
-	collators      []collate.Collator
+	collators []collate.Collator
 }
 
 func (h topNRows) Len() int {
@@ -460,20 +455,25 @@ func (h *topNRows) tryToAdd(row sortRow) (truncated bool, memDelta int64) {
 		return false, memDelta
 	}
 
+	// Keep the heap as the ordered prefix that fits plus one boundary row: the
+	// largest row is only evicted when the remainder still exceeds the limit, so
+	// the row that concat will cut mid-value (or mid-separator) stays available.
+	// Truncating a row in place and re-inserting it would let the fragment be cut
+	// again or sort ahead of complete rows, corrupting the result.
 	for h.currSize > h.limitSize {
-		debt := h.currSize - h.limitSize
-		heapPopRow := heap.Pop(h).(sortRow)
-		if uint64(heapPopRow.buffer.Len()) > debt {
-			h.currSize -= debt
-			heapPopRow.buffer.Truncate(heapPopRow.buffer.Len() - int(debt))
-			heap.Push(h, heapPopRow)
-		} else {
-			h.currSize -= uint64(heapPopRow.buffer.Len()) + h.sepSize
-			memDelta -= int64(heapPopRow.buffer.Cap())
-			for _, dt := range heapPopRow.byItems {
-				memDelta -= GetDatumMemSize(dt)
-			}
-			h.isSepTruncated = true
+		top := h.rows[0]
+		sepCharged := uint64(0)
+		if len(h.rows) > 1 {
+			sepCharged = h.sepSize
+		}
+		if h.currSize-uint64(top.buffer.Len())-sepCharged <= h.limitSize {
+			break
+		}
+		heap.Pop(h)
+		h.currSize -= uint64(top.buffer.Len()) + sepCharged
+		memDelta -= int64(top.buffer.Cap())
+		for _, dt := range top.byItems {
+			memDelta -= GetDatumMemSize(dt)
 		}
 	}
 	return true, memDelta
@@ -488,17 +488,23 @@ func (h *topNRows) reset() {
 func (h *topNRows) concat(sep string, _ bool) string {
 	buffer := new(bytes.Buffer)
 	sort.Sort(sort.Reverse(h))
+	// The boundary row can be much larger than the limit; only copy what fits.
 	for i, row := range h.rows {
+		remaining := h.limitSize - uint64(buffer.Len())
 		if i != 0 {
+			if uint64(len(sep)) >= remaining {
+				buffer.WriteString(sep[:remaining])
+				break
+			}
 			buffer.WriteString(sep)
+			remaining -= uint64(len(sep))
 		}
-		buffer.Write(row.buffer.Bytes())
-	}
-	if h.isSepTruncated {
-		buffer.WriteString(sep)
-		if uint64(buffer.Len()) > h.limitSize {
-			buffer.Truncate(int(h.limitSize))
+		val := row.buffer.Bytes()
+		if uint64(len(val)) > remaining {
+			buffer.Write(val[:remaining])
+			break
 		}
+		buffer.Write(val)
 	}
 	return buffer.String()
 }
@@ -526,12 +532,11 @@ func (e *groupConcatOrder) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr Pa
 func (e *groupConcatOrder) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := &partialResult4GroupConcatOrder{
 		topN: &topNRows{
-			desc:           e.desc,
-			currSize:       0,
-			limitSize:      e.maxLen,
-			sepSize:        uint64(len(e.sep)),
-			isSepTruncated: false,
-			collators:      e.ctors,
+			desc:      e.desc,
+			currSize:  0,
+			limitSize: e.maxLen,
+			sepSize:   uint64(len(e.sep)),
+			collators: e.ctors,
 		},
 	}
 	return PartialResult(p), DefPartialResult4GroupConcatOrderSize + DefTopNRowsSize
@@ -628,12 +633,11 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 	valSet, setSize := set.NewStringSetWithMemoryUsage()
 	p := &partialResult4GroupConcatOrderDistinct{
 		topN: &topNRows{
-			desc:           e.desc,
-			currSize:       0,
-			limitSize:      e.maxLen,
-			sepSize:        uint64(len(e.sep)),
-			isSepTruncated: false,
-			collators:      e.ctors,
+			desc:      e.desc,
+			currSize:  0,
+			limitSize: e.maxLen,
+			sepSize:   uint64(len(e.sep)),
+			collators: e.ctors,
 		},
 		valSet: valSet,
 	}
