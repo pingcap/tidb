@@ -823,15 +823,13 @@ fn slow_query_in_memory_original_query() {
         [["1", "select ? + ?;", ""], ["1", "select ? - ?;", ""]]
     );
     // A slow-log line that was never cached stays empty in
-    // in_memory_original_query.
-    let _ = tidb_logutil::sync();
-    {
-        use std::io::Write;
-        let mut extra = std::fs::OpenOptions::new().append(true).open(&slow).unwrap();
-        extra
-            .write_all(b"\n# Time: 2020-01-01T00:00:00.000000+08:00\nselect disk_only_999;\n")
-            .unwrap();
-    }
+    // in_memory_original_query. Go appends it through a second file handle;
+    // here it goes through the slow-query logger: the logger created the
+    // file without O_APPEND (as lumberjack's `openNew` does), so with the
+    // instance-wide threshold at 0 a background statement's entry written
+    // right after a foreign append lands at the logger's own offset and
+    // overwrote it (9 of 96 parallel runs).
+    tidb_logutil::slow_query_logger().warn("select disk_only_999;", &[]);
     assert_eq!(
         row_text(tk.run(
             "select query, in_memory_original_query from information_schema.slow_query \
