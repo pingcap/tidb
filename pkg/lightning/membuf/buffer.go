@@ -278,8 +278,8 @@ func (b *Buffer) TryAllocBytes(n int) ([]byte, error) {
 // Buffer. The advantage is that it's smaller than a slice, and it doesn't
 // contain a pointer thus more GC-friendly.
 type SliceLocation struct {
-	bufIdx int32
-	offset int32
+	BufIdx int32
+	Offset int32
 	Length int32
 }
 
@@ -298,7 +298,7 @@ func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	}
 	blockIdx := int32(b.curBlockIdx)
 	offset := int32(b.curIdx)
-	loc := SliceLocation{bufIdx: blockIdx, offset: offset, Length: int32(n)}
+	loc := SliceLocation{BufIdx: blockIdx, Offset: offset, Length: int32(n)}
 
 	idx := b.curIdx
 	b.curIdx += n
@@ -389,7 +389,12 @@ func (b *Buffer) appendBlock(block []byte) {
 
 // GetSlice returns the byte slice for the slice location.
 func (b *Buffer) GetSlice(loc *SliceLocation) []byte {
-	return b.blocks[loc.bufIdx][loc.offset : loc.offset+loc.Length]
+	return b.blocks[loc.BufIdx][loc.Offset : loc.Offset+loc.Length]
+}
+
+// GetUnboundedSlice returns the byte slice from offset to the end.
+func (b *Buffer) GetUnboundedSlice(bufIdx, offset int32) []byte {
+	return b.blocks[bufIdx][offset:]
 }
 
 // AddBytes adds the bytes into this Buffer's managed memory and return it.

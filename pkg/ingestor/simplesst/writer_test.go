@@ -17,6 +17,7 @@ package simplesst
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	goerrors "errors"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -219,6 +222,526 @@ func TestWriter(t *testing.T) {
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
 	require.NoError(t, statReader.Close())
+}
+
+func TestWriterKeyHints(t *testing.T) {
+	require.Equal(t, uintptr(16), unsafe.Sizeof(condenseLocation{}))
+	require.Equal(t, uintptr(8), unsafe.Alignof(condenseLocation{}))
+
+	const autoRandomPrefix = "x\x00\x00\x01t\x80\x00\x00\x00\x00\x00\x00\x17_r"
+	makeAutoRandomKey := func(handle uint64) string {
+		var buf [len(autoRandomPrefix) + 8]byte
+		copy(buf[:], autoRandomPrefix)
+		binary.BigEndian.PutUint64(buf[len(autoRandomPrefix):], handle)
+		return string(buf[:])
+	}
+
+	for _, tc := range []struct {
+		name       string
+		keys       []string
+		prefix     string
+		exactHints bool
+		onDup      engineapi.OnDuplicateKey
+	}{
+		{
+			name:       "no-common-prefix",
+			keys:       []string{"z", "a", "m"},
+			exactHints: true,
+			onDup:      engineapi.OnDuplicateKeyError,
+		},
+		{
+			name:       "empty-key",
+			keys:       []string{"b", "", "a"},
+			exactHints: false,
+			onDup:      engineapi.OnDuplicateKeyError,
+		},
+		{
+			name: "short-suffixes-trailing-zero",
+			keys: []string{
+				"prefix/x\x00",
+				"prefix/x",
+				"prefix/x\x00\x00",
+				"prefix/x\x00\x00\x00\x00\x00\x00\x00\x00a",
+			},
+			prefix:     "prefix/x",
+			exactHints: false,
+			// Zero-padded hints for "x", "x\x00", and "x\x00\x00" collide at 0,
+			// so OnDuplicateKeyError verifies they still fall back to full key comparison.
+			onDup: engineapi.OnDuplicateKeyError,
+		},
+		{
+			name: "eight-byte-hint-collisions",
+			keys: []string{
+				"prefix/01234567z",
+				"prefix/01234567a",
+				"prefix/z",
+				"prefix/01234567m",
+			},
+			prefix:     "prefix/",
+			exactHints: false,
+			onDup:      engineapi.OnDuplicateKeyError,
+		},
+		{
+			name: "auto-random-int-handles",
+			keys: []string{
+				makeAutoRandomKey(0x80400000_05f5e0e4),
+				makeAutoRandomKey(0xffc00000_00000001),
+				makeAutoRandomKey(0x80400000_00000002),
+				makeAutoRandomKey(0xc0000000_00000010),
+				makeAutoRandomKey(0x80400000_000001d5),
+			},
+			prefix:     autoRandomPrefix,
+			exactHints: true,
+			onDup:      engineapi.OnDuplicateKeyError,
+		},
+		{
+			name: "exact-hint-duplicates-ignore",
+			keys: []string{
+				makeAutoRandomKey(0x80400000_00000003),
+				makeAutoRandomKey(0x80400000_00000001),
+				makeAutoRandomKey(0x80400000_00000001),
+				makeAutoRandomKey(0xffc00000_00000002),
+			},
+			prefix:     autoRandomPrefix,
+			exactHints: true,
+			onDup:      engineapi.OnDuplicateKeyIgnore,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := objstore.NewMemStorage()
+			var summary *WriterSummary
+			writer := NewWriterBuilder().
+				SetBlockSize(4096).
+				SetMemorySizeLimit(4096).
+				SetOnDup(tc.onDup).
+				SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+				Build(store, "/key-hints", "0")
+			var expectedSize uint64
+			for range 2 {
+				for _, key := range tc.keys {
+					require.NoError(t, writer.WriteRow(ctx, []byte(key), []byte("value:"+key), nil))
+					expectedSize += uint64(len(key)*2 + len("value:"))
+				}
+				require.Equal(t, tc.prefix, string(writer.commonPrefix))
+				require.Equal(t, tc.exactHints, writer.updateKeyHints())
+				require.NoError(t, writer.flushKVs(ctx, false))
+				require.Empty(t, writer.commonPrefix)
+			}
+			require.NoError(t, writer.Close(ctx))
+			require.Equal(t, expectedSize, summary.TotalSize)
+			require.EqualValues(t, expectedSize, writer.WrittenBytes())
+			expectedKeys := slices.Clone(tc.keys)
+			slices.Sort(expectedKeys)
+			for _, files := range summary.MultipleFilesStats[0].Filenames {
+				reader, err := NewKVReader(ctx, files[0], store, 0, 1024)
+				require.NoError(t, err)
+				for _, expected := range expectedKeys {
+					key, value, err := reader.NextKV()
+					require.NoError(t, err)
+					require.Equal(t, expected, string(key))
+					require.Equal(t, "value:"+expected, string(value))
+				}
+				_, _, err = reader.NextKV()
+				require.ErrorIs(t, err, io.EOF)
+				require.NoError(t, reader.Close())
+			}
+		})
+	}
+
+	t.Run("exact-hint-duplicate-modes", func(t *testing.T) {
+		ctx := context.Background()
+		dupKeys := []string{
+			makeAutoRandomKey(0xffc00000_00000009),
+			makeAutoRandomKey(0x80400000_00000005),
+			makeAutoRandomKey(0x80400000_00000005),
+		}
+
+		errWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyError).
+			Build(objstore.NewMemStorage(), "/dup-err", "0")
+		defer errWriter.kvBuffer.Destroy()
+		for _, key := range dupKeys {
+			require.NoError(t, errWriter.WriteRow(ctx, []byte(key), []byte("v"), nil))
+		}
+		err := errWriter.flushKVs(ctx, false)
+		require.ErrorIs(t, err, common.ErrFoundDuplicateKeys)
+
+		var summary *WriterSummary
+		rmWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyRemove).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(objstore.NewMemStorage(), "/dup-rm", "0")
+		for _, key := range dupKeys {
+			require.NoError(t, rmWriter.WriteRow(ctx, []byte(key), []byte("v"), nil))
+		}
+		require.NoError(t, rmWriter.Close(ctx))
+		require.EqualValues(t, 1, summary.TotalCnt)
+		require.EqualValues(t, []byte(dupKeys[0]), summary.Min)
+		require.EqualValues(t, []byte(dupKeys[0]), summary.Max)
+
+		recStore := objstore.NewMemStorage()
+		recWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyRecord).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(recStore, "/dup-rec", "0")
+		for _, key := range append(slices.Clone(dupKeys), makeAutoRandomKey(0x80400000_00000005)) {
+			require.NoError(t, recWriter.WriteRow(ctx, []byte(key), []byte("v"), nil))
+		}
+		require.NoError(t, recWriter.Close(ctx))
+		require.EqualValues(t, 3, summary.TotalCnt)
+		require.EqualValues(t, 1, summary.ConflictInfo.Count)
+	})
+
+	t.Run("fallback-hint-collision-duplicate-modes", func(t *testing.T) {
+		ctx := context.Background()
+		// Keys share the 8-byte hint "01234567" beyond "prefix/" (exactHints == false)
+		// while also containing a true duplicate ("prefix/01234567a").
+		dupKeys := []string{
+			"prefix/01234567z",
+			"prefix/01234567a",
+			"prefix/z",
+			"prefix/01234567a",
+		}
+
+		// OnDuplicateKeyError: fallback comparison must detect the true duplicate
+		// and return its key/value (and survive a cleanup Close re-entering flushKVs).
+		errWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyError).
+			Build(objstore.NewMemStorage(), "/fallback-dup-err", "0")
+		for _, key := range dupKeys {
+			require.NoError(t, errWriter.WriteRow(ctx, []byte(key), []byte("v:"+key), nil))
+		}
+		require.False(t, errWriter.updateKeyHints())
+		err := errWriter.flushKVs(ctx, false)
+		require.ErrorIs(t, err, common.ErrFoundDuplicateKeys)
+		require.Contains(t, err.Error(), fmt.Sprintf("%x", "prefix/01234567a"))
+		require.Contains(t, err.Error(), fmt.Sprintf("%x", "v:prefix/01234567a"))
+		require.ErrorIs(t, errWriter.Close(ctx), common.ErrFoundDuplicateKeys)
+
+		// OnDuplicateKeyRemove: removes all occurrences of the duplicate key while
+		// keeping colliding distinct keys sorted.
+		var summary *WriterSummary
+		rmStore := objstore.NewMemStorage()
+		rmWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyRemove).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(rmStore, "/fallback-dup-rm", "0")
+		for _, key := range dupKeys {
+			require.NoError(t, rmWriter.WriteRow(ctx, []byte(key), []byte("v:"+key), nil))
+		}
+		require.False(t, rmWriter.updateKeyHints())
+		require.NoError(t, rmWriter.Close(ctx))
+		require.EqualValues(t, 2, summary.TotalCnt)
+		require.Equal(t, []KVPair{
+			{Key: []byte("prefix/01234567z"), Value: []byte("v:prefix/01234567z")},
+			{Key: []byte("prefix/z"), Value: []byte("v:prefix/z")},
+		}, readKVFile(t, rmStore, summary.MultipleFilesStats[0].Filenames[0][0]))
+
+		// OnDuplicateKeyRecord: keeps 2 copies of the 3x duplicate in the main file
+		// and writes the 3rd copy into the conflict file.
+		recStore := objstore.NewMemStorage()
+		recWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyRecord).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(recStore, "/fallback-dup-rec", "0")
+		for _, key := range append(slices.Clone(dupKeys), "prefix/01234567a") {
+			require.NoError(t, recWriter.WriteRow(ctx, []byte(key), []byte("v:"+key), nil))
+		}
+		require.False(t, recWriter.updateKeyHints())
+		require.NoError(t, recWriter.Close(ctx))
+		require.EqualValues(t, 4, summary.TotalCnt)
+		require.EqualValues(t, 1, summary.ConflictInfo.Count)
+		require.Len(t, summary.ConflictInfo.Files, 1)
+		require.Equal(t, []KVPair{
+			{Key: []byte("prefix/01234567a"), Value: []byte("v:prefix/01234567a")},
+			{Key: []byte("prefix/01234567a"), Value: []byte("v:prefix/01234567a")},
+			{Key: []byte("prefix/01234567z"), Value: []byte("v:prefix/01234567z")},
+			{Key: []byte("prefix/z"), Value: []byte("v:prefix/z")},
+		}, readKVFile(t, recStore, summary.MultipleFilesStats[0].Filenames[0][0]))
+		require.Equal(t, []KVPair{
+			{Key: []byte("prefix/01234567a"), Value: []byte("v:prefix/01234567a")},
+		}, readKVFile(t, recStore, summary.ConflictInfo.Files[0]))
+
+		// OnDuplicateKeyIgnore: preserves all keys in sorted order.
+		ignStore := objstore.NewMemStorage()
+		ignWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyIgnore).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(ignStore, "/fallback-dup-ign", "0")
+		for _, key := range dupKeys {
+			require.NoError(t, ignWriter.WriteRow(ctx, []byte(key), []byte("v:"+key), nil))
+		}
+		require.False(t, ignWriter.updateKeyHints())
+		require.NoError(t, ignWriter.Close(ctx))
+		require.EqualValues(t, 4, summary.TotalCnt)
+		require.Equal(t, []KVPair{
+			{Key: []byte("prefix/01234567a"), Value: []byte("v:prefix/01234567a")},
+			{Key: []byte("prefix/01234567a"), Value: []byte("v:prefix/01234567a")},
+			{Key: []byte("prefix/01234567z"), Value: []byte("v:prefix/01234567z")},
+			{Key: []byte("prefix/z"), Value: []byte("v:prefix/z")},
+		}, readKVFile(t, ignStore, summary.MultipleFilesStats[0].Filenames[0][0]))
+	})
+
+	t.Run("reenter-flush-after-flush-error", func(t *testing.T) {
+		ctx := context.Background()
+		store := &writerFailNCloseStorage{
+			Storage:       objstore.NewMemStorage(),
+			failRemaining: flushKVsRetryTimes,
+		}
+		var summary *WriterSummary
+		writer := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyError).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(store, "/reenter-flush", "0")
+
+		keys := []string{
+			"prefix/01234567z",
+			"prefix/01234567a",
+			"prefix/z",
+			"prefix/01234567m",
+		}
+		for _, key := range keys {
+			require.NoError(t, writer.WriteRow(ctx, []byte(key), []byte("v:"+key), nil))
+		}
+
+		// Exhaust all internal retries so flushKVs returns an error with buffered KVs intact.
+		require.ErrorContains(t, writer.flushKVs(ctx, false), "injected close fail")
+		require.Zero(t, store.failRemaining)
+		require.Len(t, writer.kvLocations, len(keys))
+
+		// Subsequent Close re-enters flushKVs -> sortKVs -> updateKeyHints and succeeds.
+		require.NoError(t, writer.Close(ctx))
+		require.EqualValues(t, len(keys), summary.TotalCnt)
+		require.Equal(t, []KVPair{
+			{Key: []byte("prefix/01234567a"), Value: []byte("v:prefix/01234567a")},
+			{Key: []byte("prefix/01234567m"), Value: []byte("v:prefix/01234567m")},
+			{Key: []byte("prefix/01234567z"), Value: []byte("v:prefix/01234567z")},
+			{Key: []byte("prefix/z"), Value: []byte("v:prefix/z")},
+		}, readKVFile(t, store.Storage, summary.MultipleFilesStats[0].Filenames[0][0]))
+	})
+}
+
+func BenchmarkWriterSort(b *testing.B) {
+	// 2,000,000 KVs * 128 encoded bytes/KV = ~244 MiB kvBuffer per batch,
+	// matching DefaultMemSizeLimit (256 MB) and exceeding CPU L2/L3 caches.
+	const (
+		rowCount      = 2_000_000
+		encodedKVSize = 128
+		recordPrefix  = "x\x00\x00\x01t\x80\x00\x00\x00\x00\x00\x00\x17_r"
+		indexPrefix   = "x\x00\x00\x01t\x80\x00\x00\x00\x00\x00\x00\x17_i"
+		shardCount    = 32 // AUTO_RANDOM(5)
+	)
+
+	lowCardValues := [16][16]byte{
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'P', 'E', 'N', 'D', 'I', 'N', 'G', '_', '0'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'P', 'E', 'N', 'D', 'I', 'N', 'G', '_', '1'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'R', 'U', 'N', 'N', 'I', 'N', 'G', '_', '0'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'R', 'U', 'N', 'N', 'I', 'N', 'G', '_', '1'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'S', 'U', 'C', 'C', 'E', 'S', 'S', '_', '0'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'S', 'U', 'C', 'C', 'E', 'S', 'S', '_', '1'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'A', 'B', 'O', 'R', 'T', 'E', 'D', '_', '0'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'A', 'B', 'O', 'R', 'T', 'E', 'D', '_', '1'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'C', 'R', 'E', 'A', 'T', 'E', 'D', '_', '_', '0'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'C', 'R', 'E', 'A', 'T', 'E', 'D', '_', '_', '1'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'S', 'H', 'I', 'P', 'P', 'E', 'D', '_', '_', '0'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'S', 'H', 'I', 'P', 'P', 'E', 'D', '_', '_', '1'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'S', 'E', 'T', 'T', 'L', 'E', 'D', '_', '_', '0'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'S', 'E', 'T', 'T', 'L', 'E', 'D', '_', '_', '1'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'C', 'L', 'O', 'S', 'E', 'D', '_', '_', '_', '0'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'C', 'L', 'O', 'S', 'E', 'D', '_', '_', '_', '1'},
+	}
+
+	workloads := []struct {
+		name           string
+		wantExactHints bool
+		fillKey        func(rng *rand.Rand, rowIdx int, buf []byte) int
+	}{
+		{
+			name:           "AutoRandomPK_2M",
+			wantExactHints: true,
+			fillKey: func(rng *rand.Rand, rowIdx int, buf []byte) int {
+				shard := uint64(rng.Intn(shardCount))
+				handle := uint64(0x80000000_00000000) | (shard << 58) | uint64(rowIdx+1)
+				copy(buf, recordPrefix)
+				binary.BigEndian.PutUint64(buf[len(recordPrefix):], handle)
+				return len(recordPrefix) + 8
+			},
+		},
+		{
+			name:           "SecondaryIndexHighCard_2M",
+			wantExactHints: false,
+			fillKey: func(rng *rand.Rand, rowIdx int, buf []byte) int {
+				copy(buf, indexPrefix)
+				binary.BigEndian.PutUint64(buf[len(indexPrefix):], rng.Uint64())
+				binary.BigEndian.PutUint64(buf[len(indexPrefix)+8:], rng.Uint64())
+				handle := uint64(0x80000000_00000000) | uint64(rowIdx+1)
+				binary.BigEndian.PutUint64(buf[len(indexPrefix)+16:], handle)
+				return len(indexPrefix) + 24
+			},
+		},
+		{
+			name:           "SecondaryIndexLowCard_2M",
+			wantExactHints: false,
+			fillKey: func(rng *rand.Rand, rowIdx int, buf []byte) int {
+				copy(buf, indexPrefix)
+				col := lowCardValues[rng.Intn(len(lowCardValues))]
+				copy(buf[len(indexPrefix):], col[:])
+				shard := uint64(rng.Intn(shardCount))
+				handle := uint64(0x80000000_00000000) | (shard << 58) | uint64(rowIdx+1)
+				binary.BigEndian.PutUint64(buf[len(indexPrefix)+16:], handle)
+				return len(indexPrefix) + 24
+			},
+		},
+	}
+
+	for _, wl := range workloads {
+		b.Run(wl.name, func(b *testing.B) {
+			ctx := context.Background()
+			writer := NewWriterBuilder().
+				SetBlockSize(DefaultBlockSize).
+				SetMemorySizeLimit(280*units.MiB).
+				Build(objstore.NewMemStorage(), "/bench", "0")
+			defer writer.kvBuffer.Destroy()
+
+			rng := rand.New(rand.NewSource(42))
+			var (
+				keyBuf [64]byte
+				valBuf [encodedKVSize]byte
+			)
+			for i := range valBuf {
+				valBuf[i] = 'v'
+			}
+			origSliceLocs := make([]membuf.SliceLocation, rowCount)
+			for i := range rowCount {
+				keyLen := wl.fillKey(rng, i, keyBuf[:])
+				valLen := encodedKVSize - 2*LengthBytes - keyLen
+				if err := writer.WriteRow(ctx, keyBuf[:keyLen], valBuf[:valLen], nil); err != nil {
+					b.Fatal(err)
+				}
+				loc := writer.kvLocations[i]
+				origSliceLocs[i] = membuf.SliceLocation{
+					BufIdx: loc.bufIndex,
+					Offset: loc.offset,
+					Length: int32(encodedKVSize),
+				}
+			}
+			if writer.currentSeq != 0 || len(writer.kvLocations) != rowCount {
+				b.Fatalf("unexpected mid-setup flush: seq=%d buffered=%d", writer.currentSeq, len(writer.kvLocations))
+			}
+			// Capture un-populated condenseLocations (keyHint == 0) so every
+			// timed iteration must execute updateKeyHints() from scratch.
+			origCondenseLocs := slices.Clone(writer.kvLocations)
+			if gotExact := writer.updateKeyHints(); gotExact != wl.wantExactHints {
+				b.Fatalf("exactHints = %v, want %v", gotExact, wl.wantExactHints)
+			}
+
+			b.Run("BaselineBytesCompare", func(b *testing.B) {
+				workSliceLocs := make([]membuf.SliceLocation, rowCount)
+				getBaselineKey := func(loc *membuf.SliceLocation) []byte {
+					s := writer.kvBuffer.GetSlice(loc)
+					keyLen := binary.BigEndian.Uint64(s)
+					return s[2*LengthBytes : 2*LengthBytes+keyLen]
+				}
+				b.SetBytes(int64(writer.batchSize))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					b.StopTimer()
+					copy(workSliceLocs, origSliceLocs)
+					b.StartTimer()
+
+					var (
+						dupFound bool
+						dupLoc   membuf.SliceLocation
+					)
+					slices.SortFunc(workSliceLocs, func(i, j membuf.SliceLocation) int {
+						res := bytes.Compare(getBaselineKey(&i), getBaselineKey(&j))
+						if res == 0 && !dupFound {
+							dupFound = true
+							dupLoc = i
+						}
+						return res
+					})
+					if dupFound {
+						b.Fatalf("unexpected duplicate at %+v", dupLoc)
+					}
+				}
+			})
+
+			b.Run("Uint32KeyHint", func(b *testing.B) {
+				prefixLen := len(writer.commonPrefix)
+				b.SetBytes(int64(writer.batchSize))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					b.StopTimer()
+					copy(writer.kvLocations, origCondenseLocs)
+					b.StartTimer()
+
+					var (
+						dupFound bool
+						dupLoc   condenseLocation
+					)
+					for idx, loc := range writer.kvLocations {
+						key := writer.getKeyByLoc(&loc)
+						writer.kvLocations[idx].keyHint = uint64(binary.BigEndian.Uint32(key[prefixLen:]))
+					}
+					slices.SortFunc(writer.kvLocations, func(i, j condenseLocation) int {
+						if i.keyHint != j.keyHint {
+							if i.keyHint < j.keyHint {
+								return -1
+							}
+							return 1
+						}
+						res := bytes.Compare(writer.getKeyByLoc(&i)[prefixLen:], writer.getKeyByLoc(&j)[prefixLen:])
+						if res == 0 && !dupFound {
+							dupFound = true
+							dupLoc = i
+						}
+						return res
+					})
+					if dupFound {
+						b.Fatalf("unexpected duplicate at %+v", dupLoc)
+					}
+				}
+			})
+
+			b.Run("Uint64KeyHint_sortKVs", func(b *testing.B) {
+				b.SetBytes(int64(writer.batchSize))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					b.StopTimer()
+					copy(writer.kvLocations, origCondenseLocs)
+					b.StartTimer()
+
+					// Calls the production Writer.sortKVs() path directly,
+					// including Writer.updateKeyHints() + slices.SortFunc().
+					dupFound, dupLoc := writer.sortKVs()
+					if dupFound {
+						b.Fatalf("unexpected duplicate at %+v", dupLoc)
+					}
+				}
+			})
+		})
+	}
 }
 
 func TestWriterFlushMultiFileNames(t *testing.T) {
@@ -562,6 +1085,39 @@ func (w *firstCloseFailWriter) Close(ctx context.Context) error {
 	if *w.shouldFail {
 		*w.shouldFail = false
 		return fmt.Errorf("first close fail")
+	}
+	return w.Writer.Close(ctx)
+}
+
+type writerFailNCloseStorage struct {
+	storeapi.Storage
+	failRemaining int
+}
+
+func (s *writerFailNCloseStorage) Create(
+	ctx context.Context,
+	path string,
+	option *storeapi.WriterOption,
+) (objectio.Writer, error) {
+	w, err := s.Storage.Create(ctx, path, option)
+	if err != nil {
+		return nil, err
+	}
+	if strings.Contains(path, statSuffix) {
+		return &failNCloseWriter{Writer: w, failRemaining: &s.failRemaining}, nil
+	}
+	return w, nil
+}
+
+type failNCloseWriter struct {
+	objectio.Writer
+	failRemaining *int
+}
+
+func (w *failNCloseWriter) Close(ctx context.Context) error {
+	if *w.failRemaining > 0 {
+		*w.failRemaining--
+		return fmt.Errorf("injected close fail")
 	}
 	return w.Writer.Close(ctx)
 }
