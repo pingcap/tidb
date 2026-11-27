@@ -1,0 +1,26 @@
+drop table if exists decimal_roots, decimal_edges, decimal_result;
+create table decimal_roots(node_id int, amount decimal(10,2) unsigned);
+create table decimal_edges(node_id int, parent_id int, raw_amount varchar(20));
+create table decimal_result(amount decimal(10,2) unsigned primary key, node_id int, marker varchar(20));
+insert into decimal_roots values (1, 1.00);
+insert into decimal_edges values (2, 1, '-');
+insert into decimal_result values (0, 999, 'protected');
+set @old_sql_mode = @@sql_mode;
+set @old_vectorized = @@tidb_enable_vectorized_expression;
+set sql_mode = 'STRICT_TRANS_TABLES';
+set tidb_enable_vectorized_expression = off;
+-- error 1292
+replace into decimal_result with recursive amounts as (select node_id, amount from decimal_roots union all select e.node_id, e.raw_amount from decimal_edges e join amounts a on e.parent_id = a.node_id) select amount, node_id, 'generated' from amounts;
+select * from decimal_result order by amount;
+set tidb_enable_vectorized_expression = on;
+-- error 1292
+replace into decimal_result with recursive amounts as (select node_id, amount from decimal_roots union all select e.node_id, e.raw_amount from decimal_edges e join amounts a on e.parent_id = a.node_id) select amount, node_id, 'generated' from amounts;
+select * from decimal_result order by amount;
+admin check table decimal_result;
+update decimal_edges set raw_amount = '2.50';
+replace into decimal_result with recursive amounts as (select node_id, amount from decimal_roots union all select e.node_id, e.raw_amount from decimal_edges e join amounts a on e.parent_id = a.node_id) select amount, node_id, 'generated' from amounts;
+select * from decimal_result order by amount;
+admin check table decimal_result;
+set sql_mode = @old_sql_mode;
+set tidb_enable_vectorized_expression = @old_vectorized;
+drop table decimal_roots, decimal_edges, decimal_result;
