@@ -1233,6 +1233,9 @@ type SessionVars struct {
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
 
+	// EnableOnDuplicateExprReuse enables reusing common expressions in ON DUPLICATE KEY UPDATE assignments.
+	EnableOnDuplicateExprReuse bool
+
 	// EnableTiKVShortCircuitExpression enables short-circuit expression evaluation in TiKV.
 	EnableTiKVShortCircuitExpression bool
 
@@ -2440,6 +2443,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		SelectivityFactor:                vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
+		EnableOnDuplicateExprReuse:       vardef.DefTiDBEnableOnDuplicateExpressionReuse,
 		EnableTiKVShortCircuitExpression: vardef.DefTiDBEnableTiKVShortCircuitExpression,
 		CommandValue:                     uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:      vardef.DefTiDBOptJoinReorderThreshold,

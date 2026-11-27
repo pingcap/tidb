@@ -729,6 +729,9 @@ const (
 	// TiDBEnableVectorizedExpression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
 
+	// TiDBEnableOnDuplicateExpressionReuse enables reusing common expressions in ON DUPLICATE KEY UPDATE assignments.
+	TiDBEnableOnDuplicateExpressionReuse = "tidb_enable_on_duplicate_expression_reuse"
+
 	// TiDBEnableTiKVShortCircuitExpression controls whether to enable short-circuit expression evaluation in TiKV.
 	TiDBEnableTiKVShortCircuitExpression = "tidb_enable_tikv_short_circuit_expression"
 
@@ -1706,6 +1709,7 @@ const (
 	DefTiDBEnableStrictNotNullCheck         = true
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
+	DefTiDBEnableOnDuplicateExpressionReuse = false
 	DefTiDBEnableTiKVShortCircuitExpression = false
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBOptEnableAdvancedJoinReorder     = true

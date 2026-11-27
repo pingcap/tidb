@@ -2995,6 +2995,9 @@ func TestCIWeightString(t *testing.T) {
 			require.NoError(t, err)
 			result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			require.NoError(t, err)
+			clonedResult, err := evalBuiltinFunc(f.CloneWithArgs(f.getArgs()), ctx, chunk.Row{})
+			require.NoError(t, err)
+			require.Equal(t, result, clonedResult)
 			if result.IsNull() {
 				require.Nil(t, test.expect)
 				continue

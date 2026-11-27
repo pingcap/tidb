@@ -81,6 +81,12 @@ func (re *regexpBaseFuncSig) clone() *regexpBaseFuncSig {
 	return newSig
 }
 
+func (re *regexpBaseFuncSig) cloneWithArgs(args []Expression) *regexpBaseFuncSig {
+	newSig := &regexpBaseFuncSig{}
+	newSig.cloneFromWithArgs(&re.baseBuiltinFunc, args)
+	return newSig
+}
+
 // we can memorize the regexp when:
 //  1. pattern and match type are constant
 //  2. pattern is const and there is no match type argument
