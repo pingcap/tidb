@@ -27,6 +27,7 @@ mod log_create;
 mod log_drop;
 mod log_output;
 mod log_purge;
+mod mdl;
 mod mlog_write;
 mod refresh;
 mod refresh_entry;

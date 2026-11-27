@@ -1174,8 +1174,9 @@ impl Session {
                 }
             }
             self.record_mdl_named_tables(&names)?;
-            if !read_only {
-                self.record_mdl_implicit_mlogs(&names);
+            // Go `!StmtCtx.IsReadOnly` (`plannercore.IsReadOnly`).
+            if !stmt.is_read_only(true) {
+                self.record_mdl_implicit_mlogs(&names)?;
             }
         }
         Ok(())
@@ -1287,38 +1288,67 @@ impl Session {
         Ok(updated)
     }
 
-    /// Go master `tryLockMDLAndUpdateSchemaIfNecessary`'s second half: "Writes
-    /// also depend on the implicit MLog schema" -- a public base table's log
-    /// joins the map too.
-    fn record_mdl_implicit_mlogs(&mut self, names: &[(String, String)]) {
-        let (Some(sink), Some(latest)) = (self.mdl_related_tables.clone(), self.latest_info_schema.clone()) else {
-            return;
+    /// Go master `tryLockMDLAndUpdateSchemaIfNecessary`'s second half
+    /// (7aa6d52f16d): "Writes also depend on the implicit MLog schema. Pin it
+    /// in the same transaction InfoSchema so execution and cached plans use
+    /// the schema protected by MDL until the transaction ends." A public
+    /// base table's log, the transaction schema's or else the latest one's,
+    /// goes through the same lock and schema update as a named table.
+    fn record_mdl_implicit_mlogs(&mut self, names: &[(String, String)]) -> Result<(), DriverError> {
+        let (Some(_), Some(latest)) = (self.mdl_related_tables.as_ref(), self.latest_info_schema.clone()) else {
+            return Ok(());
         };
         if !tidb_vardef::is_mdl_enabled(false) || self.snapshot_schema.is_some() || self.is_staleness_txn() {
-            return;
+            return Ok(());
         }
-        let version = self.cluster_schema_version_now();
+        let latest = latest.latest();
         let current_db = self.current_database().to_owned();
-        for (db, table) in names {
-            let db = if db.is_empty() { &current_db } else { db };
-            let Some((_, info)) = latest.latest().table_info_by_name(db, table) else {
-                continue;
+        let mut mlogs = Vec::new();
+        {
+            let Ok(mut catalog) = self.lock_catalog() else {
+                return Ok(());
             };
-            let mlog_id = {
-                let info = info.read();
-                if info.state != tidb_model::SchemaState::PUBLIC {
+            for (db, table) in names {
+                let db = if db.is_empty() { &current_db } else { db };
+                let Some((_, info)) = latest.table_info_by_name(db, table) else {
+                    continue;
+                };
+                let (mlog_id, base_name, base_id) = {
+                    let info = info.read();
+                    if info.state != tidb_model::SchemaState::PUBLIC {
+                        continue;
+                    }
+                    let mlog_id = info.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id);
+                    (mlog_id, info.name.original().to_owned(), info.id)
+                };
+                if mlog_id == 0 {
                     continue;
                 }
-                info.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id)
-            };
-            if mlog_id == 0 || !self.mdl_statement_tables.lock().is_ok_and(|mut locked| locked.insert(mlog_id)) {
-                continue;
-            }
-            sink.record_table(mlog_id, version);
-            if let Some(process) = &self.process {
-                process.registry().transaction_related_table(process.id(), mlog_id);
+                let name_of = |table: &tidb_table::tables::TableCommon| table.meta().read().name.lowercase().to_owned();
+                let mlog_name = match catalog.table_by_id(mlog_id) {
+                    Some((_, mlog)) => name_of(mlog),
+                    None => {
+                        // "The base table may have been upgraded to include a
+                        // MLog that was created after this transaction's
+                        // original InfoSchema."
+                        let Some((mlog_db, mlog)) = latest.table_by_id(mlog_id) else {
+                            return Err(DriverError::unsupported(format!(
+                                "cannot get materialized view log table id={mlog_id} (base={base_name} id={base_id})"
+                            )));
+                        };
+                        let mlog_name = name_of(mlog);
+                        if let Some(entry) =
+                            latest.table_handle_by_key(&tidb_infoschema::CatalogTableKey::new(mlog_db, &mlog_name))
+                        {
+                            catalog.update_table_info(mlog_db, &mlog_name, entry);
+                        }
+                        mlog_name
+                    }
+                };
+                mlogs.push((db.to_owned(), mlog_name));
             }
         }
+        self.record_mdl_named_tables(&mlogs).map(drop)
     }
 
     /// Runs a statement whose table refs carry `AS OF TIMESTAMP`, against

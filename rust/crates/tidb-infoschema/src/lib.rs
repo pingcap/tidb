@@ -2196,7 +2196,17 @@ impl SessionExtendedInfoSchema {
         });
         local.or_else(|| {
             if let Some(v2) = self.v2() {
-                let item = v2.table_item_by_partition_id(physical_id).or_else(|| v2.table_item_by_id(physical_id))?;
+                let Some(item) = v2.table_item_by_partition_id(physical_id).or_else(|| v2.table_item_by_id(physical_id)) else {
+                    // Go `SessionExtendedInfoSchema.TableByID` reads `MdlTables`
+                    // first: a table the transaction pinned that its snapshot
+                    // lacks (an MLog created since it began) is only there.
+                    return self.schema.databases.iter().find_map(|(database_name, database)| {
+                        database.tables.values().find_map(|entry| match entry.as_ref() {
+                            TableEntry::Kv(table) if table.table_id() == physical_id => Some((database_name.as_str(), table)),
+                            _ => None,
+                        })
+                    });
+                };
                 let key = CatalogTableKey::new(item.db_name.lowercase(), item.table_name.lowercase());
                 if let Some((database_name, database)) = self.schema.databases.get_key_value(&key.database) {
                     if let Some(entry) = database.tables.get(&key.table) {
