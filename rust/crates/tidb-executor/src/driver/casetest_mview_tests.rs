@@ -134,7 +134,7 @@ fn test_explain_refresh_mv_fast_plan_tree_min_max() {
             ["│ │       └─TableFullScan", "10000.00", "cop[tikv]", "table:$mlog$t", "keep order:false, stats:pseudo"],
             ["│ └─TableReader(Probe)", "10000.00", "root", "", "data:TableFullScan"],
             ["│   └─TableFullScan", "10000.00", "cop[tikv]", "table:mv", "keep order:false, stats:pseudo"],
-            ["└─StreamAgg", "1.00", "root", "", "group by:test.t.a, funcs:max(test.t.b)->Column#40, funcs:min(test.t.b)->Column#41, funcs:firstrow(test.t.a)->test.t.a"],
+            ["└─HashAgg", "1.00", "root", "", "group by:test.t.a, funcs:max(test.t.b)->Column#40, funcs:min(test.t.b)->Column#41, funcs:firstrow(test.t.a)->test.t.a"],
             ["  └─IndexLookUp", "1.00", "root", "", ""],
             ["    ├─IndexRangeScan(Build)", "1.00", "cop[tikv]", "table:t, index:idx_a(a)", "range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo"],
             ["    └─TableRowIDScan(Probe)", "1.00", "cop[tikv]", "table:t", "keep order:false, stats:pseudo"],
