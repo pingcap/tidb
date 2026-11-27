@@ -305,6 +305,14 @@ func TestInFunc(t *testing.T) {
 		{[]any{uint64(math.MaxUint64), uint64(math.MaxUint64), 2, 3}, int64(1)},
 		{[]any{-1, uint64(math.MaxUint64), 2, 3}, int64(0)},
 		{[]any{uint64(math.MaxUint64), -1, 2, 3}, int64(0)},
+		// Regression test for https://github.com/pingcap/tidb/issues/70723:
+		// an unsigned value and its negative signed counterpart share the
+		// same int64 bit pattern but are different values, so the IN list
+		// dedup must not collapse them into one entry.
+		{[]any{-1, uint64(math.MaxUint64), -1}, int64(1)},
+		{[]any{-1, -1, uint64(math.MaxUint64)}, int64(1)},
+		{[]any{uint64(math.MaxUint64), uint64(math.MaxUint64), -1}, int64(1)},
+		{[]any{int64(math.MinInt64), uint64(math.MaxInt64) + 1, int64(math.MinInt64)}, int64(1)},
 		{[]any{1, 0, 2, 3}, int64(0)},
 		{[]any{1.1, 1.2, 1.3}, int64(0)},
 		{[]any{1.1, 1.1, 1.2, 1.3}, int64(1)},
