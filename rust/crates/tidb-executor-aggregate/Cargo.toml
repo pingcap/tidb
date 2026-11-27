@@ -33,3 +33,5 @@ tidb-set = { path = "../tidb-set" }
 tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-tracing = { path = "../tidb-tracing" }
 
+[dev-dependencies]
+tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }

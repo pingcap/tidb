@@ -7031,6 +7031,7 @@ dependencies = [
  "tidb-executor-internal-vecgroupchecker",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-expression-aggregation",
  "tidb-goruntime",
  "tidb-memory",
  "tidb-model",

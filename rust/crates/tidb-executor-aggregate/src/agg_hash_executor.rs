@@ -852,3 +852,146 @@ impl<C: Columns + Send + Sync + 'static> Executor for HashAggExec<C> {
         self.meta.new_chunk()
     }
 }
+
+#[cfg(test)]
+mod finalization_error_tests {
+    use super::{HashAggExec, HashAggExecBuild};
+    use tidb_chunk::chunk::Chunk;
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_driver_error::ExecError;
+    use tidb_executor_aggfuncs::agg_func::{AggFunc, AggFuncUpdateContext, PartialResult};
+    use tidb_executor_internal_exec::{Executor, ExecutorMeta};
+    use tidb_expr::expression::Expression;
+    use tidb_expr::schema::Schema;
+    use tidb_exprctx::NoColumns;
+
+    /// Go `finalizationErrorAggFunc`: the wrapped function, failing in
+    /// `AppendFinalResult2Chunk`.
+    struct FinalizationErrorAggFunc(Box<dyn AggFunc>);
+
+    impl AggFunc for FinalizationErrorAggFunc {
+        fn alloc_partial_result(&self) -> (PartialResult, i64) {
+            self.0.alloc_partial_result()
+        }
+        fn reset_partial_result(&self, pr: &mut PartialResult) {
+            self.0.reset_partial_result(pr);
+        }
+        fn update_partial_result(
+            &self,
+            sctx: &AggFuncUpdateContext,
+            rows_in_group: &[tidb_chunk::row::Row<'_>],
+            pr: &mut PartialResult,
+        ) -> Result<i64, ExecError> {
+            self.0.update_partial_result(sctx, rows_in_group, pr)
+        }
+        fn merge_partial_result(
+            &self,
+            sctx: &AggFuncUpdateContext,
+            src: &mut PartialResult,
+            dst: &mut PartialResult,
+        ) -> Result<i64, ExecError> {
+            self.0.merge_partial_result(sctx, src, dst)
+        }
+        fn append_final_result_2_chunk(
+            &self,
+            _sctx: &AggFuncUpdateContext,
+            _pr: &mut PartialResult,
+            _chk: &mut Chunk,
+        ) -> Result<(), ExecError> {
+            Err(ExecError::internal("finalization failed"))
+        }
+    }
+
+    /// One chunk of `key` values, then the end.
+    struct Rows {
+        meta: ExecutorMeta,
+        rows: Option<Vec<i64>>,
+    }
+
+    impl Executor for Rows {
+        fn open(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            for key in self.rows.take().unwrap_or_default() {
+                req.append_datum(0, &Datum::Int(key));
+            }
+            Ok(())
+        }
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+    }
+
+    fn meta(fields: &[FieldType]) -> ExecutorMeta {
+        let schema = Schema::new(
+            fields
+                .iter()
+                .enumerate()
+                .map(|(index, field)| tidb_expr::column::Column::new(index as i64, field.clone()))
+                .collect(),
+        );
+        ExecutorMeta::new(schema, 0, 32, 32)
+    }
+
+    /// Go master `TestHashAggFinalizationErrorPropagation` (65cf2f0a62d,
+    /// the unspilled case): a parallel HashAgg whose second final function
+    /// fails after the first appended its column answers that error with
+    /// no rows, rather than logging it and returning a short row.
+    #[test]
+    fn test_hash_agg_finalization_error_propagation() {
+        let key_type = FieldType::new(FieldTypeCode::LongLong);
+        let key = Expression::Column(tidb_expr::column::Column::new(0, key_type.clone()));
+        let mut partial_agg_funcs = Vec::new();
+        let mut final_agg_funcs: Vec<Box<dyn AggFunc>> = Vec::new();
+        for (i, name) in ["count", "count"].iter().enumerate() {
+            let desc = tidb_expression_aggregation::AggFuncDesc::new(&NoColumns, name, vec![key.clone()], false).unwrap();
+            let (partial_desc, final_desc) = desc.split(&[i]);
+            partial_agg_funcs.push(tidb_executor_aggfuncs::agg_builder::build(&NoColumns, &partial_desc, i).unwrap());
+            let final_func = tidb_executor_aggfuncs::agg_builder::build(&NoColumns, &final_desc, i).unwrap();
+            final_agg_funcs.push(if i == 1 { Box::new(FinalizationErrorAggFunc(final_func)) } else { final_func });
+        }
+        let child = Rows { meta: meta(&[key_type.clone()]), rows: Some((0..100).map(|row| row % 10).collect()) };
+        let out_type = FieldType::new(FieldTypeCode::LongLong);
+        let mut exec = HashAggExec::new(
+            meta(&[out_type.clone(), out_type]),
+            Box::new(child),
+            NoColumns,
+            tidb_variable::mem_quota::StatementMemory::default(),
+            HashAggExecBuild {
+                partial_agg_funcs,
+                final_agg_funcs,
+                group_by_items: vec![key],
+                default_val: None,
+                is_unparallel_exec: false,
+                has_distinct: false,
+                partial_concurrency: 2,
+                final_concurrency: 2,
+                track_aggregate_memory_usage: true,
+                enable_parallel_hashagg_spill: true,
+            },
+        );
+        exec.open().unwrap();
+        let mut chunk = exec.new_chunk();
+        let error = exec.next(&mut chunk).expect_err("the finalization error reaches Next");
+        assert!(matches!(&error, ExecError::Internal(message) if message == "finalization failed"), "{error:?}");
+        assert_eq!(chunk.num_rows(), 0);
+        exec.close().unwrap();
+    }
+}

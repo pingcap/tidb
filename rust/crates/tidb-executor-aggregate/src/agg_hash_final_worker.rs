@@ -96,24 +96,26 @@ impl<C: Columns + Send + Sync + 'static> HashAggFinalWorker<C> {
     }
 
     /// Go `generateResultAndSend`.
-    fn generate_result_and_send(&mut self, mut result: Chunk) -> Option<Chunk> {
+    /// `Ok(None)` is Go's `finished`; an `AppendFinalResult2Chunk` error is
+    /// returned (Go master 65cf2f0a62d) for the caller to send.
+    fn generate_result_and_send(&mut self, mut result: Chunk) -> Result<Option<Chunk>, ExecError> {
         let map = std::mem::replace(&mut self.partial_result_map, new_agg_partial_result_mapper());
         for (_, mut results) in map.into_iter() {
             for (j, af) in self.base.agg_funcs.iter().enumerate() {
-                // Go logs the error and carries on.
-                if let Err(error) = af.append_final_result_2_chunk(&*self.ctx, &mut results[j], &mut result) {
-                    tracing::error!(?error, "HashAggFinalWorker failed to append final result to Chunk");
-                }
+                af.append_final_result_2_chunk(&*self.ctx, &mut results[j], &mut result)?;
             }
             if self.base.agg_funcs.is_empty() {
                 result.set_num_virtual_rows(result.num_rows() + 1);
             }
             if result.is_full() {
                 let _ = self.output_ch.send(AfFinalResult { chk: Some(result), err: None, give_back_ch: Some(self.final_result_holder_sender.clone()) });
-                result = self.receive_final_result_holder()?;
+                let Some(next) = self.receive_final_result_holder() else {
+                    return Ok(None);
+                };
+                result = next;
             }
         }
-        Some(result)
+        Ok(Some(result))
     }
 
     /// Go `sendFinalResult`.
@@ -128,10 +130,14 @@ impl<C: Columns + Send + Sync + 'static> HashAggFinalWorker<C> {
         self.base.update_exec_time(exec_start);
         let mut result = result;
         if self.spill_helper.is_spilled_chunks_io_empty() {
-            let Some(next) = self.generate_result_and_send(result) else {
-                return;
-            };
-            result = next;
+            match self.generate_result_and_send(result) {
+                Ok(Some(next)) => result = next,
+                Ok(None) => return,
+                Err(error) => {
+                    let _ = self.output_ch.send(AfFinalResult { chk: None, err: Some(error), give_back_ch: None });
+                    return;
+                }
+            }
         } else {
             loop {
                 if self.base.check_finish_ch_closed() {
@@ -144,10 +150,14 @@ impl<C: Columns + Send + Sync + 'static> HashAggFinalWorker<C> {
                 if eof {
                     break;
                 }
-                let Some(next) = self.generate_result_and_send(result) else {
-                    return;
-                };
-                result = next;
+                match self.generate_result_and_send(result) {
+                    Ok(Some(next)) => result = next,
+                    Ok(None) => return,
+                    Err(error) => {
+                        let _ = self.output_ch.send(AfFinalResult { chk: None, err: Some(error), give_back_ch: None });
+                        return;
+                    }
+                }
             }
         }
         let _ = self.output_ch.send(AfFinalResult { chk: Some(result), err: None, give_back_ch: Some(self.final_result_holder_sender.clone()) });
