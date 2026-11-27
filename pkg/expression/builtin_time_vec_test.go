@@ -627,3 +627,44 @@ func TestVecMonth(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithTruncateAsWarning(false))
 	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
 }
+
+func TestTimeDiffInvalidString(t *testing.T) {
+	for _, validType := range []byte{mysql.TypeVarString, mysql.TypeDuration, mysql.TypeDatetime} {
+		for _, invalidIndex := range []int{0, 1} {
+			ctx := createContext(t)
+			fts := []*types.FieldType{types.NewFieldType(validType), types.NewFieldType(validType)}
+			fts[invalidIndex] = types.NewFieldType(mysql.TypeVarString)
+			f, err := funcs[ast.TimeDiff].getFunction(ctx, []Expression{
+				&Column{Index: 0, RetType: fts[0]}, &Column{Index: 1, RetType: fts[1]},
+			})
+			require.NoError(t, err)
+			input := chunk.NewChunkWithCapacity(fts, 1)
+			for i, ft := range fts {
+				if i == invalidIndex {
+					input.AppendString(i, "str25")
+					continue
+				}
+				switch ft.GetType() {
+				case mysql.TypeVarString:
+					input.AppendString(i, "00:00:00")
+				case mysql.TypeDuration:
+					input.AppendDuration(i, types.ZeroDuration)
+				case mysql.TypeDatetime:
+					input.AppendTime(i, types.NewTime(types.FromDate(2024, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0))
+				}
+			}
+			sc := ctx.GetSessionVars().StmtCtx
+			sc.SetWarnings(nil)
+			_, isNull, err := f.evalDuration(ctx, input.GetRow(0))
+			require.NoError(t, err)
+			require.True(t, isNull, "type=%d invalidIndex=%d", validType, invalidIndex)
+			require.Equal(t, uint16(1), sc.WarningCount())
+			sc.SetWarnings(nil)
+			require.True(t, f.vectorized() && f.isChildrenVectorized())
+			result := chunk.NewColumn(types.NewFieldType(mysql.TypeDuration), 1)
+			require.NoError(t, f.vecEvalDuration(ctx, input, result))
+			require.True(t, result.IsNull(0), "type=%d invalidIndex=%d", validType, invalidIndex)
+			require.Equal(t, uint16(1), sc.WarningCount())
+		}
+	}
+}
