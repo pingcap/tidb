@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -1431,7 +1433,7 @@ func TestAffinityTruncatePartitionPreparation(t *testing.T) {
 				if scenario == "legacy finalization" {
 					errorLimit := vardef.GetDDLErrorCountLimit()
 					t.Cleanup(func() { vardef.SetDDLErrorCountLimit(errorLimit) })
-					s.tk.MustExec("set global tidb_ddl_error_count_limit = 1")
+					s.tk.MustExec("set global tidb_ddl_error_count_limit = 3")
 					ddl.SetWaitTimeWhenErrorOccurred(retryWait)
 				}
 				var finalAttemptsMu sync.Mutex
@@ -1505,11 +1507,14 @@ func TestAffinityTruncatePartitionPreparation(t *testing.T) {
 						}
 					}
 					if scenario == "legacy finalization" {
-						s.cli.notFoundCreates.Store(3)
+						s.cli.notFoundCreates.Store(5)
 					} else {
 						s.cli.notFoundCreates.Store(1)
 					}
 				})
+				// The label matches the error injected by notFoundCreates.
+				retryableErrors := metrics.RetryableErrorCount.WithLabelValues("request pd http api failed with status: '404 Not Found', body: 'unsupported affinity POST'")
+				retryableBefore := promtestutil.ToFloat64(retryableErrors)
 				err := s.tk.ExecToErr("alter table p truncate partition p0")
 				require.True(t, injected.Load())
 				after := s.persisted(t, before.ID)
@@ -1534,7 +1539,9 @@ func TestAffinityTruncatePartitionPreparation(t *testing.T) {
 						finalAttemptsMu.Lock()
 						times := slices.Clone(finalAttempts)
 						finalAttemptsMu.Unlock()
-						require.Len(t, times, 4)
+						require.Len(t, times, 6)
+						// Only failures that isRetryableJobError still accepts are counted, which is the first one with this limit.
+						require.EqualValues(t, 1, promtestutil.ToFloat64(retryableErrors)-retryableBefore)
 						for i := 1; i < len(times); i++ {
 							require.GreaterOrEqual(t, times[i].Sub(times[i-1]), retryWait,
 								"legacy finalization keeps backing off beyond the DDL error limit")
