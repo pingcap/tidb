@@ -492,9 +492,10 @@ mod tests {
         assert!(FUNCTION_CLASSES
             .windows(2)
             .all(|pair| pair[0].0 < pair[1].0));
-        // Go's `funcs` map literal (`builtin.go`), `default_func` included:
-        // its class answers 1305 FUNCTION DEFAULT does not exist when built.
-        assert_eq!(FUNCTION_CLASSES.len(), 309, "Go funcs map has 309 entries");
+        // Go master's `funcs` map literal (`builtin.go`), `default_func`
+        // included: its class answers 1305 FUNCTION DEFAULT does not exist
+        // when built. SOUNDEX (7844a33138d) is the 310th.
+        assert_eq!(FUNCTION_CLASSES.len(), 310, "Go funcs map has 310 entries");
     }
 
     /// Spot-checks arities transcribed from Go's `funcs` map literal,

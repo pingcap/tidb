@@ -515,10 +515,6 @@ fn replay_topics() {
     }
 }
 
-/// Statements whose recording is older than the Go on this branch, each
-/// confirmed by running it through that Go: Go now prints `USE_INDEX(`t`)`
-/// where the recording has `USE_INDEX(`t` )`. Exact: a statement that stops
-/// diverging leaves the list.
 /// Statements whose recorded answer depends on when a background loop ticked
 /// relative to the statements, in TiDB and in this replay alike, so either
 /// answer is TiDB's: the estimate of `t`'s global (dynamic-prune) statistics
@@ -533,10 +529,16 @@ const TIMING_DEPENDENT_RECORDINGS: &[&str] = &[
     "[planner/core/casetest/partition/partition_pruner] explain format = 'brief' select * from t where b in (1,2) and a like '%a%';",
 ];
 
+/// Statements whose recording is older than the Go this rewrite follows,
+/// each confirmed against that Go: Go now prints `USE_INDEX(`t`)` where the
+/// recording has `USE_INDEX(`t` )`, and Go master's `executor/show` result
+/// lists SOUNDEX (7844a33138d) in `SHOW BUILTINS`. Exact: a statement that
+/// stops diverging leaves the list.
 const STALE_RECORDINGS: &[&str] = &[
     "batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t;",
     "batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t on duplicate key update t1.b=t.b;",
     "batch on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t;",
+    "show builtins;",
 ];
 
 /// The gate: every enrolled topic replays to its end and matches TiDB's
