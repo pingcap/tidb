@@ -58,11 +58,25 @@ func TestInetAton(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		// The vectorized evaluation gives the same result or error.
+		require.True(t, f.vectorized() && f.isChildrenVectorized())
+		input := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1, 1)
+		input.AppendInt64(0, 0)
+		result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1)
+		vecErr := f.vecEvalInt(ctx, input, result)
 		if tt["Expected"][0].IsNull() && !tt["Input"][0].IsNull() {
 			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
+			require.True(t, terror.ErrorEqual(vecErr, errWrongValueForType), "input %v", tt["Input"][0].GetValue())
 		} else {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, tt["Expected"][0], d)
+			require.NoError(t, vecErr)
+			if d.IsNull() {
+				require.True(t, result.IsNull(0))
+			} else {
+				require.False(t, result.IsNull(0))
+				require.Equal(t, d.GetInt64(), result.GetInt64(0))
+			}
 		}
 	}
 }

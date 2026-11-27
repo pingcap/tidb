@@ -675,8 +675,7 @@ func (b *builtinInetAtonSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		ipAddr := buf.GetString(i)
 		if len(ipAddr) == 0 || ipAddr[len(ipAddr)-1] == '.' {
 			// ip address should not end with '.'.
-			result.SetNull(i, true)
-			continue
+			return errWrongValueForType.GenWithStackByArgs("string", ipAddr, "inet_aton")
 		}
 		// reset
 		byteResult = 0
@@ -687,35 +686,30 @@ func (b *builtinInetAtonSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 				digit := uint64(c - '0')
 				byteResult = byteResult*10 + digit
 				if byteResult > 255 {
-					result.SetNull(i, true)
-					break
+					return errWrongValueForType.GenWithStackByArgs("string", ipAddr, "inet_aton")
 				}
 			} else if c == '.' {
 				dotCount++
 				if dotCount > 3 {
-					result.SetNull(i, true)
-					break
+					return errWrongValueForType.GenWithStackByArgs("string", ipAddr, "inet_aton")
 				}
 				res = (res << 8) + byteResult
 				byteResult = 0
 			} else {
-				result.SetNull(i, true)
-				break // illegal char (not number or .)
+				// illegal char (not number or .)
+				return errWrongValueForType.GenWithStackByArgs("string", ipAddr, "inet_aton")
 			}
 		}
 		// 127 		-> 0.0.0.127
 		// 127.255 	-> 127.0.0.255
-		// 127.256	-> NULL
 		// 127.2.1	-> 127.2.0.1
-		if !result.IsNull(i) {
-			if dotCount == 1 {
-				res <<= 16
-			}
-			if dotCount == 2 {
-				res <<= 8
-			}
-			i64s[i] = int64((res << 8) + byteResult)
+		if dotCount == 1 {
+			res <<= 16
 		}
+		if dotCount == 2 {
+			res <<= 8
+		}
+		i64s[i] = int64((res << 8) + byteResult)
 	}
 	return nil
 }
