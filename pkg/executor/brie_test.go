@@ -372,4 +372,34 @@ func TestBRIEBuilderOptions(t *testing.T) {
 		require.ErrorContains(t, builder.err, "parse storage URL query failed")
 		require.NotContains(t, builder.err.Error(), "private-context")
 	}
+
+	for _, scheme := range []string{"s3", "ks3", "oss"} {
+		for _, tc := range []struct{ kind, direction string }{
+			{"BACKUP", "TO"},
+			{"RESTORE", "FROM"},
+		} {
+			t.Run(tc.kind+"/"+scheme, func(t *testing.T) {
+				rawURL := scheme + "://bucket/prefix?access-key=FAKE_AK&secret-access-key=FAKE_SK&region=us-east-1"
+				stmt, err := p.ParseOneStmt(fmt.Sprintf("%s DATABASE * %s '%s'", tc.kind, tc.direction, rawURL), "", "")
+				require.NoError(t, err)
+				builder.err = nil
+				built := builder.buildBRIE(stmt.(*ast.BRIEStmt), schema)
+				require.NoError(t, builder.err)
+				e, ok := built.(*BRIEExec)
+				require.True(t, ok)
+				require.Equal(t, scheme+"://bucket/prefix", e.info.storage)
+				require.NotContains(t, e.info.query, "FAKE_AK")
+				require.NotContains(t, e.info.query, "FAKE_SK")
+				if tc.kind == "BACKUP" {
+					require.Equal(t, "FAKE_AK", e.backupCfg.S3.AccessKey)
+					require.Equal(t, "FAKE_SK", e.backupCfg.S3.SecretAccessKey)
+					require.Equal(t, "us-east-1", e.backupCfg.S3.Region)
+				} else {
+					require.Equal(t, "FAKE_AK", e.restoreCfg.S3.AccessKey)
+					require.Equal(t, "FAKE_SK", e.restoreCfg.S3.SecretAccessKey)
+					require.Equal(t, "us-east-1", e.restoreCfg.S3.Region)
+				}
+			})
+		}
+	}
 }

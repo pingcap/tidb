@@ -293,7 +293,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	switch storageURL.Scheme {
-	case "s3":
+	case "s3", "ks3", "oss":
 		if err := objstore.ExtractQueryParameters(storageURL, &cfg.S3); err != nil {
 			b.err = errors.Annotate(err, "invalid destination URL")
 			return nil
