@@ -16,17 +16,26 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )
@@ -131,4 +140,73 @@ func TestEnsureUniquePitrIDMapOwner(t *testing.T) {
 			require.ErrorContains(t, err, "upstream cluster 3")
 		})
 	}
+}
+
+type pitrIDMapTestGlue struct {
+	glue.Glue
+	se *pitrIDMapTestSession
+}
+
+func (g *pitrIDMapTestGlue) CreateSession(kv.Storage) (glue.Session, error) {
+	return g.se, nil
+}
+
+type pitrIDMapTestSession struct {
+	glue.Session
+	ctx    sessionctx.Context
+	closed bool
+}
+
+func (s *pitrIDMapTestSession) GetSessionCtx() sessionctx.Context { return s.ctx }
+func (s *pitrIDMapTestSession) Close()                            { s.closed = true }
+
+type pitrIDMapTestContext struct {
+	sessionctx.Context
+	sqlExec sqlexec.RestrictedSQLExecutor
+}
+
+func (c *pitrIDMapTestContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return c.sqlExec
+}
+
+type pitrIDMapTestSQLExecutor struct {
+	sqlexec.RestrictedSQLExecutor
+	failCall int
+	calls    int
+}
+
+func (e *pitrIDMapTestSQLExecutor) ExecRestrictedSQL(context.Context, []sqlexec.OptionFuncAlias, string, ...any) ([]chunk.Row, []*resolve.ResultField, error) {
+	e.calls++
+	if e.calls == e.failCall {
+		return nil, nil, errors.New("Not Supported")
+	}
+	return nil, nil, nil
+}
+
+func TestLoadPitrIDMapQueryError(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	c := &checksumTableCtx{dom: dom, mgr: &conn.Mgr{}}
+
+	// Fail on the 1st query (SELECT DISTINCT restore_id ...).
+	se := &pitrIDMapTestSession{ctx: &pitrIDMapTestContext{
+		Context: mock.NewContext(),
+		sqlExec: &pitrIDMapTestSQLExecutor{failCall: 1},
+	}}
+	maps, err := c.loadPitrIdMap(context.Background(), &pitrIDMapTestGlue{se: se}, 123, 456)
+	require.True(t, se.closed)
+	require.Nil(t, maps)
+	require.ErrorContains(t, err, "failed to find the PiTR ID map owner")
+	require.ErrorContains(t, err, "Not Supported")
+
+	// Succeed on the owner query and fail on the 2nd query (getPitrIDMapSQL) so
+	// execution reaches the errSQL check directly without dropping mysql system tables.
+	se = &pitrIDMapTestSession{ctx: &pitrIDMapTestContext{
+		Context: mock.NewContext(),
+		sqlExec: &pitrIDMapTestSQLExecutor{failCall: 2},
+	}}
+	maps, err = c.loadPitrIdMap(context.Background(), &pitrIDMapTestGlue{se: se}, 123, 456)
+	require.True(t, se.closed)
+	require.Nil(t, maps)
+	require.ErrorContains(t, err, "failed to get pitr id map from mysql.tidb_pitr_id_map")
+	require.ErrorContains(t, err, "Not Supported")
 }
