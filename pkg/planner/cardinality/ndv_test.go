@@ -21,9 +21,13 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -238,4 +242,75 @@ func TestEstimateColsNDVWithExponentialBackoff(t *testing.T) {
 	ndv, matchedLen = cardinality.EstimateColsNDVWithMatchedLen(mockCtxEnabled, singleTargetCol, schema, statsInfoNoGroup)
 	require.Equal(t, 1000.0, ndv) // Should be exactly colA's NDV
 	require.Equal(t, 1, matchedLen)
+}
+
+func TestEstimateColumnNDVWithEvictedColumnIsDeterministic(t *testing.T) {
+	// The NDV of a column whose stats are not fully loaded is scaled by RealtimeCount divided by
+	// the row count from another fully loaded index or column of the same ANALYZE. Those row counts
+	// come from the row sample and differ slightly, so the choice must not depend on map order.
+	const (
+		evictedColID = 2
+		ndv          = 50536
+		realtimeCnt  = 300000
+	)
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	newHist := func(id, ndv, rowCount int64, version uint64) statistics.Histogram {
+		hist := statistics.NewHistogram(id, ndv, 0, version, tp, 1, 0)
+		lower, upper := types.NewIntDatum(1), types.NewIntDatum(rowCount)
+		hist.AppendBucket(&lower, &upper, rowCount, 1)
+		return *hist
+	}
+	newCol := func(id, rowCount int64, version uint64) *statistics.Column {
+		return &statistics.Column{
+			Histogram:         newHist(id, 100, rowCount, version),
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		}
+	}
+	newIdx := func(id, rowCount int64, version uint64) *statistics.Index {
+		return &statistics.Index{
+			Histogram:         newHist(id, 100, rowCount, version),
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		}
+	}
+	newTable := func() *statistics.Table {
+		tbl := &statistics.Table{HistColl: *statistics.NewHistColl(1, realtimeCnt, 0, 6, 3)}
+		// Fully loaded, but from an older ANALYZE, so it must be skipped.
+		tbl.SetCol(1, newCol(1, 100, 1))
+		tbl.SetCol(evictedColID, &statistics.Column{
+			Histogram:         newHist(evictedColID, ndv, realtimeCnt, 2),
+			StatsLoadedStatus: statistics.NewStatsAllEvictedStatus(),
+		})
+		tbl.SetCol(3, newCol(3, 300000, 2))
+		tbl.SetCol(4, newCol(4, 299997, 2))
+		tbl.SetCol(5, newCol(5, 299980, 2))
+		tbl.SetCol(6, newCol(6, 299990, 2))
+		return tbl
+	}
+	check := func(tbl *statistics.Table, expected float64) {
+		for range 100 {
+			require.Equal(t, expected, cardinality.EstimateColumnNDV(tbl, evictedColID))
+		}
+	}
+
+	// Only columns are fully loaded: the one with the smallest ID (3) is used.
+	tbl := newTable()
+	check(tbl, ndv*float64(realtimeCnt)/300000)
+
+	// Indexes are still preferred over columns, and again the smallest ID (1) wins.
+	tbl = newTable()
+	tbl.SetIdx(1, newIdx(1, 299997, 2))
+	tbl.SetIdx(2, newIdx(2, 299980, 2))
+	tbl.SetIdx(3, newIdx(3, 299990, 2))
+	check(tbl, ndv*float64(realtimeCnt)/299997)
+
+	// MV indexes and partial indexes don't hold one entry per row, so they are skipped.
+	mvIdx := newIdx(1, 900000, 2)
+	mvIdx.Info = &model.IndexInfo{ID: 1, MVIndex: true}
+	partialIdx := newIdx(2, 1000, 2)
+	partialIdx.Info = &model.IndexInfo{ID: 2, ConditionExprString: "`b` > 10"}
+	tbl = newTable()
+	tbl.SetIdx(1, mvIdx)
+	tbl.SetIdx(2, partialIdx)
+	tbl.SetIdx(3, newIdx(3, 299990, 2))
+	check(tbl, ndv*float64(realtimeCnt)/299990)
 }
