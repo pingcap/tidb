@@ -108,6 +108,18 @@ func (r *QuarantineRecord) getRecordKey() string {
 	return r.ResourceGroupName + "/" + r.WatchText
 }
 
+func (r *QuarantineRecord) expired(now time.Time) bool {
+	return !r.EndTime.Equal(NullTime) && !r.EndTime.After(now)
+}
+
+// mergeQuarantineRecord keeps the first pending record of a watch, unless it has expired before it was flushed, for
+// example because its flush failed, then the renewed record replaces it.
+func mergeQuarantineRecord(m map[string]*QuarantineRecord, k string, v *QuarantineRecord) {
+	if existing, ok := m[k]; !ok || existing.expired(time.Now()) {
+		m[k] = v
+	}
+}
+
 func (r *QuarantineRecord) getSwitchGroupName() string {
 	if r.Action == rmpb.RunawayAction_SwitchGroup {
 		return r.SwitchGroupName
