@@ -94,6 +94,13 @@ func getJSONValue(secondArg types.Datum, valueType *types.FieldType) any {
 	if valueType.GetType() == mysql.TypeFloat {
 		return float64(secondArg.GetFloat32())
 	}
+	// ENUM and SET are written by their label, not by their index or bitset.
+	switch v := secondArg.GetValue().(type) {
+	case types.Enum:
+		return v.Name
+	case types.Set:
+		return v.Name
+	}
 	return secondArg.GetValue()
 }
 
@@ -204,6 +211,26 @@ func TestJsonObjectagg(t *testing.T) {
 		aggTest := buildMultiArgsAggTesterWithFieldType(ast.AggFuncJsonObjectAgg, argTypes, types.NewFieldType(mysql.TypeJSON), numRows, nil, types.CreateBinaryJSON(entries))
 
 		tests = append(tests, aggTest)
+	}
+
+	// ENUM and SET values are written by their label instead of their index or
+	// bitset, the same way MySQL does it, see issue #73588.
+	intFt := types.NewFieldType(mysql.TypeLonglong)
+	for _, valFt := range []*types.FieldType{
+		types.NewFieldTypeBuilder().SetType(mysql.TypeEnum).SetElems([]string{"e", "d", "c", "b", "a"}).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeSet).SetElems([]string{"e", "d", "c", "b", "a"}).BuildP(),
+	} {
+		entries := make(map[string]any)
+		sGenFunc := getDataGenFunc(valFt)
+
+		for m := range numRows {
+			keyDatum := types.NewIntDatum(int64(m))
+			keyString, _ := keyDatum.ToString()
+			entries[keyString] = getJSONValue(sGenFunc(m), valFt)
+		}
+
+		tests = append(tests, buildMultiArgsAggTesterWithFieldType(ast.AggFuncJsonObjectAgg,
+			[]*types.FieldType{intFt, valFt}, types.NewFieldType(mysql.TypeJSON), numRows, nil, types.CreateBinaryJSON(entries)))
 	}
 
 	ctx := mock.NewContext()

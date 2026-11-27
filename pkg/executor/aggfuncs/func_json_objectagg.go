@@ -176,6 +176,13 @@ func getRealJSONValue(value types.Datum, ft *types.FieldType) (any, error) {
 			return nil, errors.Trace(err)
 		}
 		realVal = strVal
+	case types.Enum:
+		// ENUM is written as its label, the same way MySQL does it, e.g.
+		// JSON_ARRAYAGG(en) returns ["b", null, "c"] instead of ["2", null, "3"].
+		realVal = x.Name
+	case types.Set:
+		// SET is written as its (comma separated) label, e.g. "x,z".
+		realVal = x.Name
 	}
 
 	return realVal, nil

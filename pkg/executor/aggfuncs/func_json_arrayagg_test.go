@@ -63,7 +63,7 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 }
 
 func TestJsonArrayagg(t *testing.T) {
-	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeString, mysql.TypeJSON, mysql.TypeDate, mysql.TypeDuration}
+	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeString, mysql.TypeJSON, mysql.TypeDate, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeSet}
 
 	tests := make([]aggTest, 0, len(typeList))
 	numRows := 5
