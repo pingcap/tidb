@@ -27,6 +27,9 @@ listener entirely. Normal-mode HTTP API availability is unchanged.
 
 ## HTTP endpoints
 
+The normal status listener routes HTTP/1.1 requests, including PATCH, to the HTTP
+API handlers. Each endpoint determines which methods and parameters it accepts.
+
 1. Get the current status of TiDB, including the connections, version, and `git_hash`.
 
     ```shell
@@ -1407,9 +1410,7 @@ keyspaces are preserved. Results follow the input order after deduplication.
 The JSON request body can be up to 256 KiB, including whitespace. Split larger
 bodies or lists longer than 1,000 entries across requests. Oversized or
 malformed requests return HTTP 400 before any keyspace is checked. Methods
-other than POST that reach the HTTP status router return HTTP 405. The status-port
-multiplexer does not route every HTTP method to that router; for example, PATCH
-on a new connection is routed to the gRPC listener.
+other than POST that reach the HTTP status router return HTTP 405.
 
 Only one active-jobs request can check keyspaces at a time in a TiDB process.
 An overlapping valid request returns HTTP 429 before checking any keyspaces.

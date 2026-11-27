@@ -1014,6 +1014,72 @@ func TestNewIndexWithLowNDVColumnStats(t *testing.T) {
 	require.Greater(t, estRows, 10.0)
 }
 
+func TestMissingStatsIndexRangeMaxIncludesTopN(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().RiskRangeSkewRatio = 0
+	field := types.NewFieldType(mysql.TypeLonglong)
+	coll := statistics.NewHistColl(1, 1000, 0, 2, 0)
+	coll.CanNotTriggerLoad = true
+	topNEntry := func(value int64, count uint64) statistics.TopNMeta {
+		encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(value))
+		require.NoError(t, err)
+		return statistics.TopNMeta{Encoded: encoded, Count: count}
+	}
+	setColumnStats := func(id, ndv, lower, upper, bucketCount, repeat int64, topN ...statistics.TopNMeta) {
+		hist := statistics.NewHistogram(id, ndv, 0, 0, field, 1, 0)
+		lo, hi := types.NewIntDatum(lower), types.NewIntDatum(upper)
+		hist.AppendBucket(&lo, &hi, bucketCount, repeat)
+		coll.SetCol(id, &statistics.Column{
+			Histogram:         *hist,
+			Info:              &model.ColumnInfo{ID: id},
+			TopN:              &statistics.TopN{TopN: topN},
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          statistics.Version2,
+		})
+	}
+	setColumnStats(1, 2, 2, 2, 100, 100, topNEntry(1, 900))
+	setColumnStats(2, 101, 0, 100, 700, 10, topNEntry(15, 300))
+
+	// Estimate a = 1 AND 10 <= b AND b < 20 on an unanalyzed index (a, b).
+	// The range excludes the last histogram value but includes the TopN value 15.
+	one, ten, twenty := types.NewIntDatum(1), types.NewIntDatum(10), types.NewIntDatum(20)
+	binary := collate.GetBinaryCollator()
+	columnRange := &ranger.Range{
+		LowVal: []types.Datum{ten}, HighVal: []types.Datum{twenty},
+		HighExclude: true, Collators: []collate.Collator{binary},
+	}
+	indexRange := &ranger.Range{
+		LowVal: []types.Datum{one, ten}, HighVal: []types.Datum{one, twenty},
+		HighExclude: true, Collators: []collate.Collator{binary, binary},
+	}
+
+	columnEstimate, err := cardinality.GetRowCountByColumnRanges(ctx, coll, 2, []*ranger.Range{columnRange}, false)
+	require.NoError(t, err)
+	require.InDelta(t, 369, columnEstimate.Est, 1e-9)
+	require.InDelta(t, 69, columnEstimate.MinEst, 1e-9)
+	indexCols := []*expression.Column{{ID: 1, UniqueID: 1, RetType: field}, {ID: 2, UniqueID: 2, RetType: field}}
+	indexEstimate, err := cardinality.GetRowCountByIndexRanges(ctx, coll, 3, []*ranger.Range{indexRange}, indexCols)
+	require.NoError(t, err)
+	require.InDelta(t, 369*math.Sqrt(0.9), indexEstimate.Est, 1e-9)
+
+	// b's worst case is 690 histogram rows plus 300 TopN rows, capped by
+	// the 900 rows matching a when estimating the compound index range.
+	require.Equal(t, 900.0, indexEstimate.MaxEst)
+	require.Equal(t, 990.0, columnEstimate.MaxEst)
+
+	// Two disjoint ranges in the same histogram bucket can each use the bucket's
+	// skew bound. Their combined maximum still cannot exceed the table row count.
+	setColumnStats(2, 103, 0, 100, 400, 10, topNEntry(15, 300), topNEntry(35, 300))
+	otherRange := &ranger.Range{
+		LowVal: []types.Datum{one, types.NewIntDatum(30)}, HighVal: []types.Datum{one, types.NewIntDatum(40)},
+		HighExclude: true, Collators: []collate.Collator{binary, binary},
+	}
+	indexEstimate, err = cardinality.GetRowCountByIndexRanges(ctx, coll, 3, []*ranger.Range{indexRange, otherRange}, indexCols)
+	require.NoError(t, err)
+	require.InDelta(t, 2*339*math.Sqrt(0.9), indexEstimate.Est, 1e-9)
+	require.Equal(t, 1000.0, indexEstimate.MaxEst)
+}
+
 func TestMissingStatsIndexWithVirtualColumn(t *testing.T) {
 	// An index without statistics on a virtual column (which has no column statistics) and a column with
 	// statistics must still account for the virtual column, and report its statistics as missing.
@@ -3304,4 +3370,65 @@ func TestOutOfRangeNullOnlyRange(t *testing.T) {
 	require.Len(t, tk.MustQuery("select pad from t where k is not null limit 10").Rows(), 10)
 	// An inner join adds `not(isnull(t.k))` to t, which takes the same path.
 	require.Len(t, tk.MustQuery("select s.pad, t.pad from s join t on s.id = t.k limit 10").Rows(), 10)
+}
+
+// prepareAntiJoinLimitTables builds the shape from issue #73342: the outer
+// filter on t keeps only the newest ids, while every s.t_id is below them, so a
+// merge anti-semi join must read all of s before the first t row survives.
+func prepareAntiJoinLimitTables(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("create table t (id bigint primary key, state varchar(20) not null, key idx_state (state))")
+	tk.MustExec("create table s (id bigint auto_increment primary key, t_id bigint not null, unique key uk_t_id (t_id))")
+	tk.MustExec("set @@session.cte_max_recursion_depth = 20000")
+	tk.MustExec(`insert into t with recursive c(x) as (select 1 union all select x + 1 from c where x < 20000)
+		select x, case when x > 19800 then 'pending' when x % 5 = 0 then 'cancelled' else 'done' end from c`)
+	tk.MustExec("insert into s (t_id) select id from t where state = 'cancelled'")
+	tk.MustExec("analyze table t, s")
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
+}
+
+func TestOrderingIdxSelectivityRatioForSemiMergeJoin(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	prepareAntiJoinLimitTables(t, tk, dom)
+
+	planCost := func(query, ratio string) float64 {
+		tk.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = " + ratio)
+		rows := tk.MustQuery(query).Rows()
+		hasMergeJoin := false
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "MergeJoin") {
+				hasMergeJoin = true
+			}
+		}
+		require.True(t, hasMergeJoin, "expected MergeJoin with ratio=%s for %s", ratio, query)
+		cost, err := strconv.ParseFloat(rows[0][2].(string), 64)
+		require.NoError(t, err)
+		return cost
+	}
+	requireRatioRaisesCost := func(query string) {
+		costDisabled := planCost(query, "-1")
+		require.Equal(t, costDisabled, planCost(query, "0"))
+		costHalf := planCost(query, "0.5")
+		require.Less(t, costDisabled, costHalf)
+		require.Less(t, costHalf, planCost(query, "1"))
+	}
+
+	// No ORDER BY: the parent LIMIT requires no order, but the merge join
+	// itself reads both children in order, so the ratio must still apply.
+	// Anti semi join: no pending t row has a match in s.
+	requireRatioRaisesCost("explain format=verbose select /*+ merge_join(t, s@sel_2) */ 1 from t where t.state = 'pending' and not exists (select 1 from s where s.t_id = t.id) limit 1")
+	// Semi join: every cancelled t row has a match in s.
+	semiQuery := "select /*+ merge_join(t, s@sel_2) */ t.id from t where t.state = 'cancelled' and exists (select 1 from s where s.t_id = t.id) order by t.id limit 1"
+	requireRatioRaisesCost("explain format=verbose select /*+ merge_join(t, s@sel_2) */ 1 from t where t.state = 'cancelled' and exists (select 1 from s where s.t_id = t.id) limit 1")
+	tk.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0.5")
+	tk.MustQuery(semiQuery).Check(testkit.Rows("5"))
+
+	// Once the ratio is large enough for this table size, the anti-semi merge
+	// join is no longer the cheapest plan; the index join probing uk_t_id wins.
+	// The penalty grows with the size of s, so with the issue's data
+	// (198K rows in s) the default ratio is already enough.
+	tk.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0.1")
+	tk.MustHavePlan("select 1 from t where t.state = 'pending' and not exists (select 1 from s where s.t_id = t.id) limit 1", "IndexJoin")
 }

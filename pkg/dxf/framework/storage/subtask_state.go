@@ -34,14 +34,24 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 			se.GetSQLExecutor(),
 			`update mysql.tidb_background_subtask
 			 set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
-			 where id = %? and exec_id = %?`,
+			 where id = %? and exec_id = %? and state = %?`,
 			proto.SubtaskStateRunning,
 			subtaskID,
-			execID)
+			execID,
+			proto.SubtaskStatePending)
 		if err != nil {
 			return err
 		}
 		if vars.StmtCtx.AffectedRows() == 0 {
+			rows, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+				`select state from mysql.tidb_background_subtask where id = %? and exec_id = %?`,
+				subtaskID, execID)
+			if err != nil {
+				return err
+			}
+			if len(rows) > 0 && rows[0].GetString(0) == string(proto.SubtaskStateRunning) {
+				return nil
+			}
 			return ErrSubtaskNotFound
 		}
 		return nil
@@ -108,13 +118,34 @@ func (mgr *TaskManager) CancelSubtask(ctx context.Context, execID string, taskID
 	return err1
 }
 
-// PauseSubtasks update all running/pending subtasks to pasued state.
+// PauseSubtasks update all running/pending subtasks to paused state.
 func (mgr *TaskManager) PauseSubtasks(ctx context.Context, execID string, taskID int64) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask set state = "paused" where task_key = %? and state in ("running", "pending") and exec_id = %?`, TaskIDToKey(taskID), execID)
+		`update mysql.tidb_background_subtask
+		 set state = %?, state_update_time = unix_timestamp()
+		 where task_key = %? and state in (%?, %?) and exec_id = %?`,
+		proto.SubtaskStatePaused, TaskIDToKey(taskID),
+		proto.SubtaskStateRunning, proto.SubtaskStatePending, execID,
+	)
+	return err
+}
+
+// CancelPausedSubtasks cancels all paused subtasks of taskID across all steps.
+func (mgr *TaskManager) CancelPausedSubtasks(ctx context.Context, taskID int64) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
+	_, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
+		 set state = %?,
+			 state_update_time = unix_timestamp(),
+			 end_time = CURRENT_TIMESTAMP()
+		 where task_key = %? and state = %?`,
+		proto.SubtaskStateCanceled, TaskIDToKey(taskID), proto.SubtaskStatePaused,
+	)
 	return err
 }
 

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
@@ -1243,7 +1244,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 
 	if req.MaxExecutionTime > 0 {
 		// If MaxExecutionTime is set, we need to set the deadline for the whole batch coprocessor request context.
-		ctxWithTimeout, cancel := context.WithTimeout(bo.GetCtx(), time.Duration(req.MaxExecutionTime)*time.Millisecond)
+		ctxWithTimeout, cancel := context.WithTimeoutCause(bo.GetCtx(), time.Duration(req.MaxExecutionTime)*time.Millisecond, exeerrors.ErrMaxExecTimeExceeded)
 		defer cancel()
 		bo.TiKVBackoffer().SetCtx(ctxWithTimeout)
 	}
@@ -1266,6 +1267,11 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	}
 
 	if err != nil {
+		// Region lookup may format cancellation errors as text, losing the error chain.
+		// Check the context cause to recover the statement timeout.
+		if context.Cause(bo.GetCtx()) == exeerrors.ErrMaxExecTimeExceeded {
+			return copErrorResponse{exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()}
+		}
 		return copErrorResponse{err}
 	}
 	it := &batchCopIterator{

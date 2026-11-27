@@ -91,5 +91,9 @@ func TestErrorRedact(t *testing.T) {
 		checkErrMsg(t, isMarker, err, errno.MySQLErrName[errno.ErrRowNotFound].Raw, questionMark)
 		err = class.NewStd(errno.ErrWriteConflict).GenWithStackByArgs(noSensitiveValue, noSensitiveValue, noSensitiveValue, sensitiveData)
 		checkErrMsg(t, isMarker, err, errno.MySQLErrName[errno.ErrWriteConflict].Raw, noSensitiveValue, noSensitiveValue, noSensitiveValue, questionMark)
+
+		// The JSON path position is not user data, it must keep rendering as an integer.
+		err = class.NewStd(errno.ErrInvalidJSONPath).GenWithStackByArgs(1)
+		require.Contains(t, err.Error(), "The error is around character position 1.")
 	}
 }

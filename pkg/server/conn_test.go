@@ -1151,6 +1151,52 @@ func TestConnExecutionTimeout(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestConnCopRPCExecutionTimeout(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.cop_rpc_timeout (v int)")
+	tk.MustExec("insert into test.cop_rpc_timeout values (1)")
+	srv := CreateMockServer(t, store)
+	defer srv.Close()
+
+	// The inline Cop worker delivers the error returned by SendRequest.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/distsql/TryCopLiteWorker", "return(0)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientSendHook", "return(true)")
+	query := append([]byte{mysql.ComQuery}, "select /*+ MAX_EXECUTION_TIME(100000) */ v from test.cop_rpc_timeout"...)
+
+	for _, timedOut := range []bool{false, true} {
+		t.Run(fmt.Sprintf("sql timeout=%t", timedOut), func(t *testing.T) {
+			conn := CreateMockConn(t, srv)
+			defer conn.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			var sent atomic.Bool
+			hook := func(req *tikvrpc.Request) {
+				if req.Type != tikvrpc.CmdCop || req.Cop().GetConnectionId() != conn.ID() || !sent.CompareAndSwap(false, true) {
+					return
+				}
+				if timedOut {
+					srv.Kill(conn.ID(), true, true, false)
+				} else {
+					cancel()
+				}
+			}
+			previousHook := unistore.UnistoreRPCClientSendHook.Swap(&hook)
+			t.Cleanup(func() { unistore.UnistoreRPCClientSendHook.Store(previousHook) })
+
+			err := conn.Dispatch(ctx, query)
+			require.True(t, sent.Load(), "Cop RPC did not reach SendRequest")
+			if timedOut {
+				require.ErrorIs(t, err, exeerrors.ErrMaxExecTimeExceeded)
+			} else {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+			require.NoError(t, conn.Dispatch(context.Background(), query))
+		})
+	}
+}
+
 func TestConnDMLExecutionTimeout(t *testing.T) {
 	const dmlTimeout = 500
 

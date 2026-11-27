@@ -10,6 +10,7 @@ go_library(
         "job.go",
         "kv_encode.go",
         "precheck.go",
+        "query_import.go",
         "query_source.go",
         "sampler.go",
         "table_import.go",

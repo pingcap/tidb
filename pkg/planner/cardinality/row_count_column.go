@@ -251,8 +251,9 @@ func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, 
 		return histBetweenCnt
 	}
 	topNCnt := float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded))
-	// Only add TopN count to the main estimate, keep min/max estimates from histogram
+	// The histogram excludes TopN values, which also contribute to the upper bound.
 	histBetweenCnt.Est += topNCnt
+	histBetweenCnt.MaxEst += topNCnt
 	return histBetweenCnt
 }
 
@@ -343,5 +344,6 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 		maxCount += corrSelectivity * tableRowCount
 	}
 	totalCount = mathutil.Clamp(totalCount, 1, tableRowCount)
-	return totalCount, maxCount, nil
+	// Disjoint ranges can share a histogram bucket's skew allowance.
+	return totalCount, min(maxCount, tableRowCount), nil
 }

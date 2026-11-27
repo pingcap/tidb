@@ -482,6 +482,145 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	err = tm.SwitchTaskStepInBatch(ctx, task3, proto.TaskStateRunning, proto.StepOne, subtasks3[:1])
 	require.ErrorIs(t, err, storage.ErrUnstableSubtasks)
 	require.ErrorContains(t, err, "expected 1, got 2")
+
+	// Reconcile conflicting pending exec_id from a concurrent/previous scheduler
+	// before making the step runnable, and ignore stale schedulers after switch.
+	task4, subtasks4 := prepare("key4")
+	_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
+		insert into mysql.tidb_background_subtask(
+			step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
+		values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
+		subtasks4[0].Step, subtasks4[0].TaskID, ":4001", subtasks4[0].Meta,
+		proto.SubtaskStatePending, proto.Type2Int(subtasks4[0].Type), subtasks4[0].Concurrency, subtasks4[0].Ordinal)
+	require.NoError(t, err)
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task4, proto.TaskStateRunning, proto.StepOne, subtasks4))
+	task4After, err := tm.GetTaskByID(ctx, task4.ID)
+	require.NoError(t, err)
+	checkAfterSwitchStep(t, startTime, task4After, subtasks4, proto.StepOne)
+
+	// A stale scheduler retrying SwitchTaskStepInBatch with old task state/step
+	// must not overwrite the winning scheduler's subtask assignments.
+	staleSubtasks := make([]*proto.Subtask, len(subtasks4))
+	for i, st := range subtasks4 {
+		cp := *st
+		cp.ExecID = ":4001"
+		staleSubtasks[i] = &cp
+	}
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task4, proto.TaskStateRunning, proto.StepOne, staleSubtasks))
+	checkAfterSwitchStep(t, startTime, task4After, subtasks4, proto.StepOne)
+
+	// Reconciling large-metadata pending subtasks across transactions must stay
+	// within TxnTotalSizeLimit when all individually valid rows move to a new node.
+	task6, _ := prepare("key6")
+	largeSubtasks := make([]*proto.Subtask, 3)
+	for i := range largeSubtasks {
+		meta := make([]byte, 70*1024)
+		meta[0] = byte(i + 1)
+		largeSubtasks[i] = proto.NewSubtask(proto.StepOne, task6.ID, proto.TaskTypeExample,
+			":4000", 11, meta, i+1)
+		_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
+			insert into mysql.tidb_background_subtask(
+				step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
+			values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
+			largeSubtasks[i].Step, largeSubtasks[i].TaskID, ":4001", largeSubtasks[i].Meta,
+			proto.SubtaskStatePending, proto.Type2Int(largeSubtasks[i].Type), largeSubtasks[i].Concurrency, largeSubtasks[i].Ordinal)
+		require.NoError(t, err)
+	}
+	oldTxnLimit := kv.TxnTotalSizeLimit.Swap(128 * 1024)
+	t.Cleanup(func() { kv.TxnTotalSizeLimit.Store(oldTxnLimit) })
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task6, proto.TaskStateRunning, proto.StepOne, largeSubtasks))
+	kv.TxnTotalSizeLimit.Store(oldTxnLimit)
+	task6After, err := tm.GetTaskByID(ctx, task6.ID)
+	require.NoError(t, err)
+	checkTaskStateStep(t, task6After, proto.TaskStateRunning, proto.StepOne)
+	gotLargeSubtasks, err := tm.GetAllSubtasksByStepAndState(ctx, task6.ID, proto.StepOne, proto.SubtaskStatePending)
+	require.NoError(t, err)
+	require.Len(t, gotLargeSubtasks, len(largeSubtasks))
+	for _, st := range gotLargeSubtasks {
+		require.Equal(t, ":4000", st.ExecID)
+		require.Len(t, st.Meta, 70*1024)
+	}
+
+	// Under REPEATABLE READ, a replacement scheduler that begins its txn before
+	// another scheduler commits an intermediate reconciliation batch must still
+	// see that committed reassignment after acquiring the task-row lock.
+	t.Run("snapshot_overlap_between_batches", func(t *testing.T) {
+		task7, subtasks7 := prepare("key7")
+		for _, st := range subtasks7 {
+			_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
+				insert into mysql.tidb_background_subtask(
+					step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
+				values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
+				st.Step, st.TaskID, ":4000", st.Meta,
+				proto.SubtaskStatePending, proto.Type2Int(st.Type), st.Concurrency, st.Ordinal)
+			require.NoError(t, err)
+		}
+		injected := false
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeLockTaskForSwitchStep", func() {
+			if injected {
+				return
+			}
+			injected = true
+			// Commit an intermediate reassignment after SwitchTaskStepInBatch has
+			// already started its txn (BEGIN), leaving tidb_global_task unchanged.
+			tkOther := testkit.NewTestKit(t, store)
+			_, err := sqlexec.ExecSQL(ctx, tkOther.Session(), `
+				update mysql.tidb_background_subtask
+				set exec_id = %?
+				where task_key = %? and step = %? and ordinal = %? and state = %?`,
+				":4001", storage.TaskIDToKey(task7.ID), proto.StepOne, 1, proto.SubtaskStatePending)
+			require.NoError(t, err)
+		})
+		require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task7, proto.TaskStateRunning, proto.StepOne, subtasks7))
+		task7After, err := tm.GetTaskByID(ctx, task7.ID)
+		require.NoError(t, err)
+		checkAfterSwitchStep(t, startTime, task7After, subtasks7, proto.StepOne)
+	})
+
+	// Two overlapping SwitchTaskStepInBatch calls before the step switch must
+	// serialize on the task row so the losing scheduler cannot sneak a partial
+	// exec_id reassignment in before the winner commits.
+	task5, subtasks5 := prepare("key5")
+	for i, st := range subtasks5 {
+		execID := ":4000"
+		if i == 0 {
+			execID = ":4001"
+		}
+		_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
+			insert into mysql.tidb_background_subtask(
+				step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
+			values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
+			st.Step, st.TaskID, execID, st.Meta,
+			proto.SubtaskStatePending, proto.Type2Int(st.Type), st.Concurrency, st.Ordinal)
+		require.NoError(t, err)
+	}
+	altSubtasks5 := make([]*proto.Subtask, len(subtasks5))
+	for i, st := range subtasks5 {
+		cp := *st
+		cp.ExecID = ":4001"
+		altSubtasks5[i] = &cp
+	}
+	started := make(chan struct{})
+	loserErrCh := make(chan error, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeReconcilePendingSubtasks", func() {
+		close(started)
+		// Give the concurrent scheduler time to reach the task row lock and
+		// verify it cannot complete or mutate pending rows before we commit.
+		select {
+		case err := <-loserErrCh:
+			t.Errorf("concurrent SwitchTaskStepInBatch finished before winner committed: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+	go func() {
+		<-started
+		loserErrCh <- tm.SwitchTaskStepInBatch(ctx, task5, proto.TaskStateRunning, proto.StepOne, altSubtasks5)
+	}()
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task5, proto.TaskStateRunning, proto.StepOne, subtasks5))
+	require.NoError(t, <-loserErrCh)
+	task5After, err := tm.GetTaskByID(ctx, task5.ID)
+	require.NoError(t, err)
+	checkAfterSwitchStep(t, startTime, task5After, subtasks5, proto.StepOne)
 }
 
 func TestGetTopUnfinishedTasks(t *testing.T) {

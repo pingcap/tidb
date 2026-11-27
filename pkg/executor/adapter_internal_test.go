@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -156,6 +157,37 @@ func TestRecordSetNextAfterFinish(t *testing.T) {
 	err := rs.Next(context.Background(), chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1))
 	require.Error(t, err)
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
+}
+
+type recordSetNextHookExecutor struct {
+	exec.BaseExecutor
+	next func() error
+}
+
+func (e *recordSetNextHookExecutor) Next(context.Context, *chunk.Chunk) error {
+	return e.next()
+}
+
+func TestRecordSetNextTimeoutDuringFetch(t *testing.T) {
+	sctx := mock.NewContext()
+	vars := sctx.GetSessionVars()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rs := &recordSet{
+		stmt: &ExecStmt{Ctx: sctx},
+		executor: &recordSetNextHookExecutor{
+			BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
+			next: func() error {
+				// Cancellation can wake a blocked fetch after the initial SQLKiller checks.
+				vars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+				cancel()
+				return ctx.Err()
+			},
+		},
+	}
+	err := rs.Next(ctx, rs.NewChunk(nil))
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
 }
 
 func TestCheckMaxExecutionTimeExceededPreservesPendingKillReason(t *testing.T) {

@@ -324,6 +324,18 @@ func TestImportQueryStep(t *testing.T) {
 		tk.MustQuery("select count(*) from query_dst").Check(testkit.Rows("0"))
 	})
 
+	t.Run("explicit input fields", func(t *testing.T) {
+		// Two input fields map to a three-column table.
+		sql := "import into query_dst(g, s) from (select g, sum(v) from query_src group by g) with thread=2"
+		step, sortStore := newQueryStepExecutor(t, tk, sql)
+		subtask := newQuerySubtask(t, sortStore, 6)
+		require.NoError(t, step.RunSubtask(ctx, subtask))
+		var output importinto.ImportStepMeta
+		require.NoError(t, json.Unmarshal(subtask.Meta, &output))
+		require.NoError(t, output.ReadJSONFromExternalStorage(ctx, sortStore, &output))
+		require.EqualValues(t, 2, output.SortedDataMeta.TotalKVCnt)
+	})
+
 	t.Run("query failure", func(t *testing.T) {
 		// The SELECT fails only when the worker runs it, after the capture.
 		tk.MustExec("create table query_bad(g bigint not null, j varchar(16))")

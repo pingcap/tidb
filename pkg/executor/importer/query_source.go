@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
@@ -153,27 +153,30 @@ func newQueryParser(sctx sessionctx.Context) *parser.Parser {
 	return p
 }
 
-// ParseImportQuery parses an IMPORT INTO ... FROM SELECT statement, and returns
-// the statement and its SELECT.
-func ParseImportQuery(sctx sessionctx.Context, sql string) (*ast.ImportIntoStmt, ast.StmtNode, error) {
+// ParseImportQuery parses and checks an IMPORT INTO ... FROM SELECT statement.
+func ParseImportQuery(sctx sessionctx.Context, sql string) (*ast.ImportIntoStmt, error) {
 	p := newQueryParser(sctx)
 	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
 	node, err := p.ParseOneStmt(sql, charset, collation)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	stmt, ok := node.(*ast.ImportIntoStmt)
 	if !ok {
-		return nil, nil, errors.New("import query requires a SELECT")
+		return nil, errors.New("import query requires a SELECT")
 	}
 
 	selectNode, ok := stmt.Select.(ast.StmtNode)
 	if !ok {
-		return nil, nil, errors.New("import query requires a SELECT")
+		return nil, errors.New("import query requires a SELECT")
 	}
-	return stmt, selectNode, nil
+	// Sequence functions are not captured as source tables by the planner.
+	if hasSequenceFunc(selectNode) {
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("sequences in IMPORT INTO FROM SELECT")
+	}
+	return stmt, nil
 }
 
 // CaptureQuerySource captures the SELECT of the IMPORT INTO statement sql that
@@ -181,47 +184,96 @@ func ParseImportQuery(sctx sessionctx.Context, sql string) (*ast.ImportIntoStmt,
 // runs another statement, since it takes the source tables that the planner
 // records in the statement context.
 func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, error) {
-	_, node, err := ParseImportQuery(sctx, sql)
-	if err != nil {
+	if _, err := ParseImportQuery(sctx, sql); err != nil {
 		return nil, err
 	}
 	vars := sctx.GetSessionVars()
 	if vars.StmtCtx.IsStaleness {
 		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("stale reads in IMPORT INTO FROM SELECT")
 	}
-	// The planner does not resolve the sequences of sequence functions.
-	if hasSequenceFunc(node) {
-		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("sequences in IMPORT INTO FROM SELECT")
-	}
 
-	sessionStates, err := storeQueryStates(sctx)
-	if err != nil {
-		return nil, err
-	}
 	txnManager := sessiontxn.GetTxnManager(sctx)
 	is := txnManager.GetTxnInfoSchema()
-	q := &QuerySource{
-		EncodeTimestamp:    time.Now().Unix(),
-		SessionStates:      sessionStates,
-		SchemaVersion:      is.SchemaMetaVersion(),
-		InMViewMaintenance: sctx.GetSessionVars().InMViewMaintenance,
-	}
 	// Like the plan cache, take the tables that the planner resolved for the
 	// statement, including those in the views it expands.
 	ids := slices.Sorted(maps.Keys(vars.StmtCtx.RelatedTableIDs))
+	tables := make([]SourceTable, 0, len(ids))
 	for _, id := range ids {
+		if autoid.IsMemSchemaID(id) {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("virtual source tables in IMPORT INTO FROM SELECT")
+		}
 		tbl, ok := is.TableByID(context.Background(), id)
 		if !ok {
 			return nil, errors.Errorf("source table %d not found in the info schema", id)
 		}
-		if err := checkQuerySourceTable(tbl); err != nil {
+		if err := checkSourceTable(tbl.Meta()); err != nil {
 			return nil, err
 		}
 		tblInfo := tbl.Meta()
-		q.Tables = append(q.Tables, SourceTable{DBID: tblInfo.DBID, ID: tblInfo.ID, Revision: tblInfo.Revision})
+		tables = append(tables, SourceTable{DBID: tblInfo.DBID, ID: tblInfo.ID, Revision: tblInfo.Revision})
 	}
-	q.ReadTS, err = txnManager.GetStmtReadTS()
-	return q, err
+	readTS, err := txnManager.GetStmtReadTS()
+	if err != nil {
+		return nil, err
+	}
+	q, err := newQuerySource(sctx, readTS, is.SchemaMetaVersion(), tables)
+	if err != nil {
+		return nil, err
+	}
+	// The planned statement may select another group through a hint.
+	q.SessionStates.ResourceGroupName = vars.StmtCtx.ResourceGroupName
+	return q, nil
+}
+
+// newQuerySourceAtSnapshot captures a query source without planning it. The
+// source table definitions are read at readTS. Reading them from the same
+// snapshot as the data means a lagging info schema cannot make a worker reject
+// the source as changed.
+func newQuerySourceAtSnapshot(
+	ctx context.Context, sctx sessionctx.Context, readTS uint64, dbID int64, tableIDs []int64,
+) (*QuerySource, error) {
+	for _, id := range tableIDs {
+		if autoid.IsMemSchemaID(id) {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("virtual source tables in IMPORT INTO FROM SELECT")
+		}
+	}
+	snapshot := sctx.GetStore().GetSnapshot(tidbkv.NewVersion(readTS))
+	m := meta.NewReader(snapshot)
+	schemaVersion, err := m.GetSchemaVersion()
+	if err != nil {
+		return nil, err
+	}
+	tableInfos, err := m.GetTables(ctx, dbID, tableIDs)
+	if err != nil {
+		return nil, err
+	}
+	tables := make([]SourceTable, 0, len(tableIDs))
+	for i, tblInfo := range tableInfos {
+		id := tableIDs[i]
+		if tblInfo == nil {
+			return nil, errors.Errorf("source table %d not found at the import query snapshot", id)
+		}
+		if err := checkSourceTable(tblInfo); err != nil {
+			return nil, err
+		}
+		tables = append(tables, SourceTable{DBID: dbID, ID: id, Revision: tblInfo.Revision})
+	}
+	return newQuerySource(sctx, readTS, schemaVersion, tables)
+}
+
+func newQuerySource(sctx sessionctx.Context, readTS uint64, schemaVersion int64, tables []SourceTable) (*QuerySource, error) {
+	sessionStates, err := storeQueryStates(sctx)
+	if err != nil {
+		return nil, err
+	}
+	return &QuerySource{
+		ReadTS:             readTS,
+		SchemaVersion:      schemaVersion,
+		EncodeTimestamp:    time.Now().Unix(),
+		Tables:             tables,
+		SessionStates:      sessionStates,
+		InMViewMaintenance: sctx.GetSessionVars().InMViewMaintenance,
+	}, nil
 }
 
 // hasSequenceFunc returns whether node calls a sequence function.
@@ -261,21 +313,15 @@ func storeQueryStates(sctx sessionctx.Context) (*sessionstates.SessionStates, er
 		return nil, err
 	}
 	states.SystemVars[vardef.Timestamp] = timestamp
-	states.ResourceGroupName = vars.StmtCtx.ResourceGroupName
 
 	return states, nil
 }
 
-// checkQuerySourceTable rejects a source table that a worker cannot read the
-// same way as the submitter, including temporary tables, sequences, and virtual tables.
-func checkQuerySourceTable(tbl table.Table) error {
-	tblInfo := tbl.Meta()
+func checkSourceTable(tblInfo *model.TableInfo) error {
 	var kind string
 	switch {
 	case tblInfo.TempTableType != model.TempTableNone:
 		kind = "temporary source tables"
-	case tbl.Type().IsVirtualTable():
-		kind = "virtual source tables"
 	case tblInfo.IsSequence():
 		kind = "sequences"
 	default:

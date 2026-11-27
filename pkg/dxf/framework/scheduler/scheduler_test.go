@@ -70,7 +70,7 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ int, _ proto.Step) (metas [][]byte, err error) {
 			switch task.Step {
 			case proto.StepInit:
 				for range subtaskCnt {
@@ -539,4 +539,67 @@ func TestManagerScheduleLoop(t *testing.T) {
 			return len(taskKeys) == 0
 		}, time.Second*10, time.Millisecond*100)
 	})
+}
+
+func TestOnRevertingDrainsNextStepPausedSubtasks(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	store := testkit.CreateMockStore(t)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return testkit.NewTestKit(t, store).Session(), nil
+	}, 4, 4, time.Second)
+	defer pool.Close()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
+
+	var mgr *storage.TaskManager
+	onDoneVerified := make(chan struct{})
+	mockExt := mockscheduler.NewMockExtension(ctrl)
+	mockExt.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
+	mockExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ storage.TaskHandle, gotTask *proto.Task) error {
+			subtasks, err := mgr.GetSubtasksWithHistory(ctx, gotTask.ID, proto.StepTwo)
+			require.NoError(t, err)
+			require.Len(t, subtasks, 1)
+			require.Equal(t, proto.SubtaskStateCanceled, subtasks[0].State)
+			close(onDoneVerified)
+			return nil
+		},
+	)
+
+	var schManager *scheduler.Manager
+	schManager, mgr = MockSchedulerManager(store, pool, mockExt, nil)
+	scope := handle.GetTargetScope()
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", scope))
+
+	taskID, err := mgr.CreateTask(ctx, "next-step-paused-revert", proto.TaskTypeExample, store.GetKeyspace(), 1, scope, 0, proto.ExtraParams{}, []byte("{}"))
+	require.NoError(t, err)
+	task, err := mgr.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	require.NoError(t, mgr.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+	pausedID := testutil.InsertSubtask(t, mgr, taskID, proto.StepTwo, ":4000", []byte(""), proto.SubtaskStatePaused, proto.TaskTypeExample, 1)
+	require.NoError(t, mgr.RevertTask(ctx, taskID, proto.TaskStateRunning, errors.New("revert err")))
+
+	schManager.Start()
+	defer schManager.Stop()
+
+	select {
+	case <-onDoneVerified:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "timed out waiting for OnDone after draining next-step paused subtask")
+	}
+
+	require.Eventually(t, func() bool {
+		gotTask, err := mgr.GetTaskByIDWithHistory(ctx, taskID)
+		require.NoError(t, err)
+		return gotTask.State == proto.TaskStateReverted
+	}, 10*time.Second, 100*time.Millisecond)
+
+	subtasks, err := mgr.GetSubtasksWithHistory(ctx, taskID, proto.StepTwo)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 1)
+	require.Equal(t, pausedID, subtasks[0].ID)
+	require.Equal(t, proto.SubtaskStateCanceled, subtasks[0].State)
+	require.True(t, ctrl.Satisfied())
 }

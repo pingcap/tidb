@@ -185,6 +185,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if a.stmt != nil {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			a.stmt.abortStatementRU()
+			a.lastErrs = append(a.lastErrs, err)
 			return err
 		}
 	}
@@ -208,6 +209,8 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	err = a.stmt.next(ctx, e, req)
 	if err != nil {
+		// A kill can cancel an in-flight fetch after the SQLKiller check above.
+		err = NormalizeStmtCancellationError(a.stmt.Ctx.GetSessionVars(), err)
 		if errors.Cause(err) == context.DeadlineExceeded {
 			if maxExecErr := checkMaxExecutionTimeExceeded(a.stmt.Ctx); maxExecErr != nil {
 				err = maxExecErr

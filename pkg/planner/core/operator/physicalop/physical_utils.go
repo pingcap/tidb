@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -326,21 +325,21 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 // ordered join given the parent's ExpectedCnt. It accounts for the
 // OptOrderingIdxSelRatio to model extra rows that may need to be scanned
 // before enough matching rows are produced. The ordering penalty
-// (rowsToMeetFirst) is only applied when the property requires ordered output.
-func CalcChildExpectedCnt(sctx base.PlanContext, prop *property.PhysicalProperty, childRowCount, estimatedRowCount float64) float64 {
-	hasOrder := !prop.IsSortItemEmpty()
+// (rowsToMeetFirst) is only applied when applyOrderingPenalty is true.
+func CalcChildExpectedCnt(sctx base.PlanContext, expectedCnt float64, applyOrderingPenalty bool, childRowCount, estimatedRowCount float64) float64 {
+	hasOrder := applyOrderingPenalty
 	var orderRatio float64
 	if hasOrder {
 		orderRatio = sctx.GetSessionVars().OptOrderingIdxSelRatio
 		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
 	}
-	if (prop.ExpectedCnt < estimatedRowCount) ||
-		(hasOrder && orderRatio > 0 && childRowCount > estimatedRowCount && prop.ExpectedCnt < childRowCount && estimatedRowCount > 0) {
+	if (expectedCnt < estimatedRowCount) ||
+		(hasOrder && orderRatio > 0 && childRowCount > estimatedRowCount && expectedCnt < childRowCount && estimatedRowCount > 0) {
 		var rowsToMeetFirst float64
 		if hasOrder && orderRatio > 0 {
 			rowsToMeetFirst = max(0.0, (childRowCount-estimatedRowCount)*orderRatio)
 		}
-		expCntScale := prop.ExpectedCnt / estimatedRowCount
+		expCntScale := expectedCnt / estimatedRowCount
 		return (childRowCount * expCntScale) + rowsToMeetFirst
 	}
 	return math.MaxFloat64

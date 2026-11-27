@@ -1933,6 +1933,11 @@ type bypassDataSourceExecutor interface {
 func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourceExecutor, vars *variable.SessionVars, startTS uint64) {
 	tbl := x.Table()
 	if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+		if err := validateCachedTableSchema(us.Schema()); err != nil {
+			b.err = err
+			return
+		}
+
 		cachedTable := tbl.(table.CachedTable)
 		// Determine whether the cache can be used.
 		leaseDuration := time.Duration(vardef.TableCacheLease.Load()) * time.Second
@@ -1948,6 +1953,15 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 			cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
 		}
 	}
+}
+
+func validateCachedTableSchema(schema *expression.Schema) error {
+	for _, col := range schema.Columns {
+		if col.ID == model.ExtraCommitTSID {
+			return table.ErrOptOnCacheTable.GenWithStackByArgs(model.ExtraCommitTSName.O)
+		}
+	}
+	return nil
 }
 
 // buildMergeJoin builds MergeJoinExec executor.
@@ -6292,6 +6306,10 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		return nil
 	}
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		if err := validateCachedTableSchema(plan.Schema()); err != nil {
+			b.err = err
+			return nil
+		}
 		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTS); cacheTable != nil {
 			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
 		}

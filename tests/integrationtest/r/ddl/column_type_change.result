@@ -420,17 +420,17 @@ s set('123', '2020-07-15 18:32:17.888', 'str', '{"k1": "value"}')
 );
 insert into t values ('1', '1', '1', '1', '1', '1', '123', '123');
 alter table t modify c bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type char(8) to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type char(8) to bit(1) is currently unsupported yet
 alter table t modify vc bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type varchar(8) to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type varchar(8) to bit(1) is currently unsupported yet
 alter table t modify bny bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type binary(8) to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type binary(8) to bit(1) is currently unsupported yet
 alter table t modify vbny bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type varbinary(8) to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type varbinary(8) to bit(1) is currently unsupported yet
 alter table t modify bb bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type blob to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type blob to bit(1) is currently unsupported yet
 alter table t modify txt bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type text to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type text to bit(1) is currently unsupported yet
 alter table t modify e bit;
 alter table t modify s bit;
 select hex(c),hex(vc),hex(bny),hex(vbny),hex(bb),hex(txt),hex(e),hex(s) from t;
@@ -503,9 +503,9 @@ alter table t modify bb date;
 alter table t modify txt date;
 Error 1292 (22007): Incorrect date value: '08-26 19:35:41'
 alter table t modify e date;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type enum('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to date is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type enum('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to date is currently unsupported yet
 alter table t modify s date;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type set('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to date is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type set('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to date is currently unsupported yet
 select * from t;
 c	vc	bny	vbny	bb	txt	e	s
 2020-08-26	2020-08-26	2020-08-26	2020-08-26	2020-08-26	08-26 19:35:41	2020-07-15 18:32:17.888	2020-07-15 18:32:17.888
@@ -528,9 +528,9 @@ alter table t modify vbny time;
 alter table t modify bb time;
 alter table t modify txt time;
 alter table t modify e time;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type enum('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to time is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type enum('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to time is currently unsupported yet
 alter table t modify s time;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type set('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to time is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type set('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to time is currently unsupported yet
 select * from t;
 c	vc	bny	vbny	bb	txt	e	s
 19:35:41	19:35:41	19:35:41	19:35:41	19:35:41	19:35:41	2020-07-15 18:32:17.888	2020-07-15 18:32:17.888
@@ -557,9 +557,9 @@ alter table t modify vbny datetime;
 alter table t modify bb datetime;
 alter table t modify txt datetime;
 alter table t modify e datetime;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type enum('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to datetime is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type enum('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to datetime is currently unsupported yet
 alter table t modify s datetime;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type set('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to datetime is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type set('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to datetime is currently unsupported yet
 select * from t;
 c	vc	bny	vbny	bb	txt	e	s
 2020-07-15 18:32:18	2020-07-15 18:32:18	2020-07-15 18:32:18	2020-07-15 18:32:18	2020-07-15 18:32:18	2020-07-15 18:32:18	2020-07-15 18:32:17.888	2020-07-15 18:32:17.888
@@ -586,9 +586,9 @@ alter table t modify vbny timestamp;
 alter table t modify bb timestamp;
 alter table t modify txt timestamp;
 alter table t modify e timestamp;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type enum('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to timestamp is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type enum('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to timestamp is currently unsupported yet
 alter table t modify s timestamp;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type set('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to timestamp is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type set('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to timestamp is currently unsupported yet
 select * from t;
 c	vc	bny	vbny	bb	txt	e	s
 2020-07-15 18:32:18	2020-07-15 18:32:18	2020-07-15 18:32:18	2020-07-15 18:32:18	2020-07-15 18:32:18	2020-07-15 18:32:18	2020-07-15 18:32:17.888	2020-07-15 18:32:17.888
@@ -946,19 +946,19 @@ b bit(5)
 );
 insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.111, -222222222222.222222222222222, b'10101');
 alter table t modify d enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type decimal(13,7) to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type decimal(13,7) to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 alter table t modify n enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type decimal(5,2) to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type decimal(5,2) to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 alter table t modify r enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double(20,12) to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double(20,12) to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 alter table t modify db enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double(32,11) to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double(32,11) to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 alter table t modify f32 enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type float to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type float to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 alter table t modify f64 enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 alter table t modify b enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type bit(5) to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type bit(5) to enum('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 select * from t;
 d	n	r	db	f32	f64	b
 -258.1234500	333.33	2000000.20000002	323232323.32323235	-111.111	-222222222222.22223	
@@ -974,19 +974,19 @@ b bit(5)
 );
 insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.111, -222222222222.222222222222222, b'10101');
 alter table t modify d set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type decimal(13,7) to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type decimal(13,7) to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 alter table t modify n set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type decimal(5,2) to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type decimal(5,2) to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 alter table t modify r set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double(20,12) to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double(20,12) to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 alter table t modify db set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double(32,11) to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double(32,11) to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 alter table t modify f32 set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type float to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type float to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 alter table t modify f64 set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 alter table t modify b set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type bit(5) to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type bit(5) to set('-258.12345','333.33','2000000.20000002','323232323.3232323232','-111.111','-222222222222.222222222222222','') is currently unsupported yet
 select * from t;
 d	n	r	db	f32	f64	b
 -258.1234500	333.33	2000000.20000002	323232323.32323235	-111.111	-222222222222.22223	
@@ -1002,19 +1002,19 @@ b bit(5)
 );
 insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101');
 alter table t modify d datetime;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type decimal(13,7) to datetime is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type decimal(13,7) to datetime is currently unsupported yet
 alter table t modify n datetime;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type decimal(5,2) to datetime is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type decimal(5,2) to datetime is currently unsupported yet
 alter table t modify r datetime;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double(20,12) to datetime is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double(20,12) to datetime is currently unsupported yet
 alter table t modify db datetime;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double(32,11) to datetime is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double(32,11) to datetime is currently unsupported yet
 alter table t modify f32 datetime;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type float to datetime is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type float to datetime is currently unsupported yet
 alter table t modify f64 datetime;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double to datetime is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double to datetime is currently unsupported yet
 alter table t modify b datetime;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type bit(5) to datetime is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type bit(5) to datetime is currently unsupported yet
 select hex(d),hex(n),hex(r),hex(db),hex(f32),hex(f64),hex(b) from t;
 hex(d)	hex(n)	hex(r)	hex(db)	hex(f32)	hex(f64)	hex(b)
 31065	133	1343D65	125F5DD0160B	2EC0EAC000	125F5DD0160B	15
@@ -1037,7 +1037,7 @@ alter table t modify db time;
 alter table t modify f32 time;
 alter table t modify f64 time;
 alter table t modify b time;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type bit(5) to time is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type bit(5) to time is currently unsupported yet
 select hex(d),hex(n),hex(r),hex(db),hex(f32),hex(f64),hex(b) from t;
 hex(d)	hex(n)	hex(r)	hex(db)	hex(f32)	hex(f64)	hex(b)
 32303A30383A3035	30303A30333A3037	1343D65	31313A31333A3037	31303A30303A3030	31313A31333A3037	15
@@ -1053,19 +1053,19 @@ b bit(5)
 );
 insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101');
 alter table t modify d date;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type decimal(13,7) to date is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type decimal(13,7) to date is currently unsupported yet
 alter table t modify n date;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type decimal(5,2) to date is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type decimal(5,2) to date is currently unsupported yet
 alter table t modify r date;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double(20,12) to date is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double(20,12) to date is currently unsupported yet
 alter table t modify db date;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double(32,11) to date is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double(32,11) to date is currently unsupported yet
 alter table t modify f32 date;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type float to date is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type float to date is currently unsupported yet
 alter table t modify f64 date;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double to date is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double to date is currently unsupported yet
 alter table t modify b date;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type bit(5) to date is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type bit(5) to date is currently unsupported yet
 select hex(d),hex(n),hex(r),hex(db),hex(f32),hex(f64),hex(b) from t;
 hex(d)	hex(n)	hex(r)	hex(db)	hex(f32)	hex(f64)	hex(b)
 31065	133	1343D65	125F5DD0160B	2EC0EAC000	125F5DD0160B	15
@@ -1081,19 +1081,19 @@ b bit(5)
 );
 insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101');
 alter table t modify d timestamp;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type decimal(13,7) to timestamp is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type decimal(13,7) to timestamp is currently unsupported yet
 alter table t modify n timestamp;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type decimal(5,2) to timestamp is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type decimal(5,2) to timestamp is currently unsupported yet
 alter table t modify r timestamp;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double(20,12) to timestamp is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double(20,12) to timestamp is currently unsupported yet
 alter table t modify db timestamp;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double(32,11) to timestamp is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double(32,11) to timestamp is currently unsupported yet
 alter table t modify f32 timestamp;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type float to timestamp is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type float to timestamp is currently unsupported yet
 alter table t modify f64 timestamp;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type double to timestamp is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type double to timestamp is currently unsupported yet
 alter table t modify b timestamp;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type bit(5) to timestamp is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type bit(5) to timestamp is currently unsupported yet
 select hex(d),hex(n),hex(r),hex(db),hex(f32),hex(f64),hex(b) from t;
 hex(d)	hex(n)	hex(r)	hex(db)	hex(f32)	hex(f64)	hex(b)
 31065	133	1343D65	125F5DD0160B	2EC0EAC000	125F5DD0160B	15
@@ -1212,15 +1212,15 @@ y year
 );
 insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020);
 alter table t modify d bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type date to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type date to bit(1) is currently unsupported yet
 alter table t modify t bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type time(3) to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type time(3) to bit(1) is currently unsupported yet
 alter table t modify dt bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type datetime(6) to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type datetime(6) to bit(1) is currently unsupported yet
 alter table t modify tmp bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type timestamp(6) to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type timestamp(6) to bit(1) is currently unsupported yet
 alter table t modify y bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type year(4) to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type year(4) to bit(1) is currently unsupported yet
 select * from t;
 d	t	dt	tmp	y
 2020-10-30	19:38:25.001	2020-10-30 08:21:33.455555	2020-10-30 08:21:33.455555	2020
@@ -1370,15 +1370,15 @@ y year
 );
 insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020);
 alter table t modify d enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type date to enum('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type date to enum('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
 alter table t modify t enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type time(3) to enum('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type time(3) to enum('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
 alter table t modify dt enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type datetime(6) to enum('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type datetime(6) to enum('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
 alter table t modify tmp enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type timestamp(6) to enum('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type timestamp(6) to enum('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
 alter table t modify y enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type year(4) to enum('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type year(4) to enum('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
 select * from t;
 d	t	dt	tmp	y
 2020-10-30	19:38:25.001	2020-10-30 08:21:33.455555	2020-10-30 08:21:33.455555	2020
@@ -1392,15 +1392,15 @@ y year
 );
 insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020);
 alter table t modify d set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type date to set('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type date to set('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
 alter table t modify t set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type time(3) to set('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type time(3) to set('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
 alter table t modify dt set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type datetime(6) to set('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type datetime(6) to set('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
 alter table t modify tmp set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type timestamp(6) to set('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type timestamp(6) to set('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
 alter table t modify y set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type year(4) to set('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type year(4) to set('2020-10-30','19:38:25.001','20201030082133.455555','2020') is currently unsupported yet
 select * from t;
 d	t	dt	tmp	y
 2020-10-30	19:38:25.001	2020-10-30 08:21:33.455555	2020-10-30 08:21:33.455555	2020
@@ -1564,25 +1564,25 @@ nul json
 );
 insert into t values ('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"', null);
 alter table t modify obj bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
 alter table t modify arr bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
 alter table t modify nil bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
 alter table t modify t bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
 alter table t modify f bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
 alter table t modify i bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
 alter table t modify ui bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
 alter table t modify f64 bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
 alter table t modify str bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
 alter table t modify nul bit;
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to bit(1) is currently unsupported yet
 select * from t;
 obj	arr	nil	t	f	i	ui	f64	str	nul
 {"obj": 100}	[-1, 0, 1]	null	true	false	-22	22	323232323.32323235	"json string"	NULL
@@ -1825,25 +1825,25 @@ nul json
 );
 insert into t values ('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"', null);
 alter table t modify obj enum('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify arr enum('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify nil enum('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify t enum('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify f enum('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify i enum('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify ui enum('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify f64 enum('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify str enum('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify nul enum('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to enum('{"obj": 100}','[-1, 0, 1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 select * from t;
 obj	arr	nil	t	f	i	ui	f64	str	nul
 {"obj": 100}	[-1, 0, 1]	null	true	false	-22	22	323232323.32323235	"json string"	NULL
@@ -1862,25 +1862,25 @@ nul json
 );
 insert into t values ('{"obj": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"', null);
 alter table t modify obj set('{"obj": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify arr set('{"obj": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify nil set('{"obj": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify t set('{"obj": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify f set('{"obj": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify i set('{"obj": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify ui set('{"obj": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify f64 set('{"obj": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify str set('{"obj": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 alter table t modify nul set('{"obj": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '"json string"');
-Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
+Error 8200 (HY000): Unsupported modify column: change from original type json to set('{"obj": 100}','[-1]','null','true','false','-22','22','323232323.3232323232','"json string"') is currently unsupported yet
 select * from t;
 obj	arr	nil	t	f	i	ui	f64	str	nul
 {"obj": 100}	[-1]	null	true	false	-22	22	323232323.32323235	"json string"	NULL

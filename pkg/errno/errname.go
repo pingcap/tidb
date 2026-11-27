@@ -852,7 +852,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidJSONData:                                       mysql.Message("Invalid JSON data provided to function %s: %s", nil),
 	ErrInvalidJSONText:                                       mysql.Message("Invalid JSON text: %-.192s", []int{0}),
 	ErrInvalidJSONTextInParam:                                mysql.Message("Invalid JSON text in argument %d to function %s: \"%s\" at position %d.", nil),
-	ErrInvalidJSONPath:                                       mysql.Message("Invalid JSON path expression. The error is around character position %d.", []int{0}),
+	ErrInvalidJSONPath:                                       mysql.Message("Invalid JSON path expression. The error is around character position %d.", nil),
 	ErrInvalidJSONCharset:                                    mysql.Message("Cannot create a JSON value from a string with CHARACTER SET '%s'.", nil),
 	ErrInvalidTypeForJSON:                                    mysql.Message("Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.", nil),
 	ErrInvalidJSONPathMultipleSelection:                      mysql.Message("In this situation, path expressions may not contain the * and ** tokens or an array range.", nil),
