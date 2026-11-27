@@ -266,10 +266,7 @@ func (c *s3Client) DeleteObjects(ctx context.Context, names []string) error {
 		},
 	}
 	var optFns []func(*s3.Options)
-	// when using AWS SDK to access S3 compatible storage, such as KS3.
-	if c.s3Compatible {
-		optFns = []func(*s3.Options){withContentMD5}
-	}
+	optFns = []func(*s3.Options){withContentMD5}
 	_, err := c.svc.DeleteObjects(ctx, input, optFns...)
 	return errors.Trace(err)
 }
