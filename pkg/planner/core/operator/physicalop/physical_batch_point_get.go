@@ -91,6 +91,9 @@ type PointGetPlan struct {
 	PlanCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
+	// CoveredByIndex indicates whether the index covers all required columns,
+	// so we don't need to fetch row data from the table
+	CoveredByIndex bool
 
 	// NOTE: please update FastClonePointGetForPlanCache accordingly if you add new fields here.
 }
