@@ -1265,16 +1265,28 @@ fn apply_index_visibility(
             ),
         ));
     }
-    let wanted = index.go_to_lower();
-    // Go `setIndexVisibility` walks EVERY index and sets each one whose name
-    // matches, rather than stopping at the first.
+    set_index_visibility(info, index, invisible);
+    Ok(AlterColumnOutcome::Applied)
+}
+
+/// Go `setIndexVisibility`: every index of that name, and the temporary
+/// index a MODIFY COLUMN builds to replace it (a changing index over a
+/// changing column, whose origin name matches case-insensitively; an
+/// ordinary index whose name merely has a suffix is not one).
+fn set_index_visibility(info: &TableInfo, name: &str, invisible: bool) {
+    let wanted = name.go_to_lower();
     for candidate in info.indices.iter_deref() {
-        let mut candidate = candidate.write();
-        if candidate.name.lowercase() == wanted {
-            candidate.invisible = invisible;
+        let matches = {
+            let read = candidate.read();
+            read.name.lowercase() == wanted
+                || (read.is_changing()
+                    && modify_column::is_temp_index(&read, info)
+                    && tidb_mysql::equal_fold(&read.get_changing_origin_name(), name))
+        };
+        if matches {
+            candidate.write().invisible = invisible;
         }
     }
-    Ok(AlterColumnOutcome::Applied)
 }
 
 /// Go `onSetDefaultValue` over an EVOLVING `TableInfo`.

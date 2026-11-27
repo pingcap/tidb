@@ -1814,3 +1814,42 @@ fn renaming_an_expression_index_frees_its_name_like_go() {
         [["1"]]
     );
 }
+
+/// Go `TestAlterIndexVisibility` (bd29ad1ac3f): an ordinary index whose name
+/// has an underscore-delimited suffix is not the temporary index a MODIFY
+/// COLUMN builds, so it keeps its visibility; and (gomaster probe) the
+/// temporary index of a MODIFY COLUMN in the same statement takes the
+/// change, so the replaced index ends up with it.
+#[test]
+fn test_alter_index_visibility() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = testkit(&stack, 9311);
+    tk.must_exec("use test");
+    let query = |table: &str| {
+        format!(
+            "select key_name, is_visible from information_schema.tidb_indexes \
+             where table_schema = 'test' and table_name = '{table}' order by key_name"
+        )
+    };
+    tk.must_exec("create table t_invisible (k int, key idx_k(k), key idx_k_1(k), key idx_k_copy(k))");
+    tk.must_exec("alter table t_invisible alter index idx_k invisible");
+    tk.must_query(&query("t_invisible")).check(["idx_k NO", "idx_k_1 YES", "idx_k_copy YES"]);
+    tk.must_exec("create table t_visible (k int, key idx_k(k) invisible, key idx_k_1(k) invisible, key idx_k_copy(k) invisible)");
+    tk.must_exec("alter table t_visible alter index idx_k visible");
+    tk.must_query(&query("t_visible")).check(["idx_k YES", "idx_k_1 NO", "idx_k_copy NO"]);
+
+    tk.must_exec("create table t (a int, b int, key idx(a), key idx_1(a))");
+    tk.must_exec("insert into t values (1, 1)");
+    tk.must_exec("alter table t modify column a bigint, alter index idx invisible");
+    tk.must_query(&query("t")).check(["idx NO", "idx_1 YES"]);
+    tk.must_exec("admin check table t");
+    // Go `TestMultiSchemaChangeAlterIndex`'s order: the visibility sub-job
+    // runs while the MODIFY COLUMN's temporary index stands in for `idx`.
+    tk.must_exec("create table t2 (a int, b int, key idx(a, b), key idx_1(b))");
+    tk.must_exec("insert into t2 values (1, 2)");
+    tk.must_exec("alter table t2 alter index idx invisible, modify column a tinyint, alter index idx_1 invisible");
+    // One row per index column, as Go's TIDB_INDEXES has.
+    tk.must_query(&query("t2")).check(["idx NO", "idx NO", "idx_1 NO"]);
+    assert_eq!(tk.must_exec_to_err("select * from t2 use index (idx)").code, 1176);
+    tk.must_exec("admin check table t2");
+}

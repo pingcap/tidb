@@ -2317,7 +2317,7 @@ struct ChangingIndex {
 }
 
 /// Go `isTempIndex`.
-fn is_temp_index(index: &IndexInfo, info: &TableInfo) -> bool {
+pub(super) fn is_temp_index(index: &IndexInfo, info: &TableInfo) -> bool {
     index.columns.iter_deref().any(|part| {
         let part = part.read();
         part.use_changing_type
