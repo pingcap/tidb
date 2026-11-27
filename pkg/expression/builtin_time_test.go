@@ -3101,6 +3101,15 @@ func TestTimeFormat(t *testing.T) {
 			"000001"},
 		{[]string{"1990-05-07 19:30:10", `%H %i %s`},
 			"19 30 10"},
+		// issue:73298, a negative TIME keeps its sign
+		{[]string{"-01:02:03", `%H:%i:%s`},
+			"-01:02:03"},
+		{[]string{"-01:02:03", `%T`},
+			"-01:02:03"},
+		{[]string{"-01:02:03", `x%H`},
+			"-x01"},
+		{[]string{"-838:59:59", `%H|%T`},
+			"-838|838:59:59"},
 	}
 	dtblDate := tblToDtbl(tblDate)
 	for i, c := range dtblDate {
