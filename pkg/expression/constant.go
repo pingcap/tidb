@@ -515,6 +515,10 @@ func (c *Constant) Equal(ctx EvalContext, b Expression) bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
+	// Binary literals with different byte widths are distinct constants.
+	if c.Value.Kind() == types.KindBinaryLiteral && y.Value.Kind() == types.KindBinaryLiteral {
+		return slices.Equal(c.Value.GetBinaryLiteral(), y.Value.GetBinaryLiteral())
+	}
 	con, err := c.Value.Compare(typeCtx(ctx), &y.Value, collate.GetBinaryCollator())
 	if err != nil || con != 0 {
 		return false
