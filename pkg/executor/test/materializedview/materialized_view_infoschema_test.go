@@ -17,6 +17,7 @@ package materializedview
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -48,6 +49,41 @@ func testInformationSchemaTiDBMViews(t *testing.T) {
 		Check(testkit.Rows("1"))
 	tk.MustQuery("select mview_sql_content like 'SELECT%' from information_schema.tidb_mviews where table_schema = 'test' and mview_name = 'mv_meta'").
 		Check(testkit.Rows("1"))
+
+	comment := strings.Repeat("c", 2048)
+	tk.MustExec(fmt.Sprintf("create materialized view mv_long_comment (a, cnt) comment='%s' as select a, count(1) from t group by a", comment))
+	t.Run("comment metadata", func(t *testing.T) {
+		tk := newMViewTestKit(t, store)
+		tk.MustQuery("select mview_comment from information_schema.tidb_mviews where table_schema = 'test' and mview_name = 'mv_long_comment'").
+			Check(testkit.Rows(comment))
+		tk.MustQuery(`select column_type, character_maximum_length, character_octet_length
+			from information_schema.columns
+			where table_schema = 'information_schema'
+			  and ((table_name = 'TABLES' and column_name = 'TABLE_COMMENT')
+			    or (table_name = 'TIDB_MVIEWS' and column_name = 'MVIEW_COMMENT'))
+			order by table_name`).
+			Check(testkit.Rows("varchar(2048) 2048 8192", "varchar(2048) 2048 8192"))
+	})
+
+	t.Run("memory accounting", func(t *testing.T) {
+		for _, table := range []string{"tidb_mviews", "tidb_mlogs", "tidb_table_mview_dependencies"} {
+			t.Run(table, func(t *testing.T) {
+				tk := newMViewTestKit(t, store)
+				// Avoid MustQuery's extractor comparison because EXPLAIN ANALYZE timings vary.
+				rows := tk.MustQueryWithContext(context.Background(), "explain analyze select * from information_schema."+table+" where table_schema = 'test'").Rows()
+				found := false
+				for _, row := range rows {
+					if strings.Contains(row[0].(string), "MemTableScan") {
+						found = true
+						require.NotEqual(t, "0", row[2], "expected metadata rows")
+						require.NotEqual(t, "0 Bytes", row[7], "metadata rows must be tracked")
+						require.NotEqual(t, "N/A", row[7], "memory tracker must be registered")
+					}
+				}
+				require.True(t, found, "expected MemTableScan in %v", rows)
+			})
+		}
+	})
 }
 
 func testInformationSchemaTiDBMLogs(t *testing.T) {

@@ -768,7 +768,7 @@ var tableTiDBMViewsCols = []columnInfo{
 	{name: "MVIEW_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "MVIEW_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "MVIEW_SQL_CONTENT", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "MVIEW_COMMENT", tp: mysql.TypeVarchar, size: 128},
+	{name: "MVIEW_COMMENT", tp: mysql.TypeVarchar, size: 2048},
 	{name: "MVIEW_MODIFY_TIME", tp: mysql.TypeDatetime, flag: mysql.NotNullFlag},
 	{name: "REFRESH_METHOD", tp: mysql.TypeVarchar, size: 32},
 	{name: "REFRESH_START", tp: mysql.TypeVarchar, size: 128},

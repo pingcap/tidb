@@ -21,6 +21,15 @@ AS
 SELECT kcol, SUM(c0), SUM(c1), SUM(c2), SUM(c3), COUNT(1)
 FROM t
 GROUP BY kcol;
+select table_name, column_name, column_type, character_maximum_length, character_octet_length
+from information_schema.columns
+where table_schema = 'information_schema'
+and ((table_name = 'TABLES' and column_name = 'TABLE_COMMENT')
+or (table_name = 'TIDB_MVIEWS' and column_name = 'MVIEW_COMMENT'))
+order by table_name;
+table_name	column_name	column_type	character_maximum_length	character_octet_length
+TABLES	TABLE_COMMENT	varchar(2048)	2048	8192
+TIDB_MVIEWS	MVIEW_COMMENT	varchar(2048)	2048	8192
 CREATE MATERIALIZED VIEW mv_t1 (kcol, s0, s1, s2, s3, cnt)
 REFRESH FAST NEXT DATE_ADD(now(), interval 1 hour)
 AS
