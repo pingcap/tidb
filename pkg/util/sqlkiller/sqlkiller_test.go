@@ -15,6 +15,8 @@
 package sqlkiller
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/log"
@@ -107,4 +109,83 @@ func TestSQLKillerConcurrentReset(t *testing.T) {
 		require.Equal(t, reason, desc)
 		assertChanClosed(t, killer.GetKillEventChan())
 	})
+}
+
+// TestConnCancelInvokedOnKill verifies the ConnCancel hook is invoked exactly
+// once when a kill signal wins the first-writer CAS, and is left untouched by
+// subsequent (losing) signals.
+func TestConnCancelInvokedOnKill(t *testing.T) {
+	killer := &SQLKiller{}
+	var calls atomic.Int32
+	cancel := func() { calls.Add(1) }
+	killer.ConnCancel.Store(&cancel)
+
+	// First signal wins the CAS and must invoke the hook.
+	killer.SendKillSignal(QueryInterrupted)
+	require.Equal(t, int32(1), calls.Load())
+
+	// A second signal loses the CAS and must not invoke the hook again.
+	killer.SendKillSignal(MaxExecTimeExceeded)
+	require.Equal(t, int32(1), calls.Load())
+	require.Equal(t, QueryInterrupted, killer.GetKillSignal())
+}
+
+// TestConnCancelNilIsSafe verifies sending a kill signal does not panic when no
+// ConnCancel hook has been installed (the common short-statement path).
+func TestConnCancelNilIsSafe(t *testing.T) {
+	killer := &SQLKiller{}
+	require.NotPanics(t, func() {
+		killer.SendKillSignal(QueryInterrupted)
+	})
+	require.Equal(t, QueryInterrupted, killer.GetKillSignal())
+}
+
+// TestResetClearsConnCancel verifies Reset drops the ConnCancel hook so a stale
+// cancel from a previous statement cannot fire on a reused session.
+func TestResetClearsConnCancel(t *testing.T) {
+	killer := &SQLKiller{}
+	var calls atomic.Int32
+	cancel := func() { calls.Add(1) }
+	killer.ConnCancel.Store(&cancel)
+
+	killer.Reset()
+	require.Nil(t, killer.ConnCancel.Load())
+
+	// After Reset the hook is gone, so a fresh kill must not reach it.
+	killer.SendKillSignal(QueryInterrupted)
+	require.Equal(t, int32(0), calls.Load())
+}
+
+// TestConnCancelRaceSignalVsRegistration races kill-signal delivery against
+// ConnCancel registration. Regardless of interleaving, once a kill signal has
+// been observed the cancel hook must have run at least once, so an in-flight
+// RPC is always aborted instead of blocking until CoprReqTimeout.
+func TestConnCancelRaceSignalVsRegistration(t *testing.T) {
+	for range 200 {
+		killer := &SQLKiller{}
+		var calls atomic.Int32
+		cancel := func() { calls.Add(1) }
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		// Registration goroutine: install the hook via the production path, which
+		// reconciles with any kill signal that already landed.
+		go func() {
+			defer wg.Done()
+			killer.InstallConnCancel(&cancel)
+		}()
+
+		// Kill goroutine: deliver the signal concurrently.
+		go func() {
+			defer wg.Done()
+			killer.SendKillSignal(QueryInterrupted)
+		}()
+
+		wg.Wait()
+
+		require.Equal(t, QueryInterrupted, killer.GetKillSignal())
+		require.GreaterOrEqual(t, calls.Load(), int32(1),
+			"cancel hook must fire at least once when a kill signal is delivered")
+	}
 }
