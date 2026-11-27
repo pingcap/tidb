@@ -2149,19 +2149,40 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 
 // Set the flen of the union column using the max flen in children.
 func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.Expression) {
-	if resultTp.GetFlen() == -1 {
+	if resultTp.GetFlen() == types.UnspecifiedLength && resultTp.EvalType() != types.ETString {
 		return
 	}
+	evalCtx := b.ctx.GetExprCtx().GetEvalCtx()
 	isBinary := resultTp.GetCharset() == charset.CharsetBin
+	maxFlen := resultTp.GetFlen()
 	for i := range cols {
-		childTp := cols[i].GetType(b.ctx.GetExprCtx().GetEvalCtx())
+		childTp := cols[i].GetType(evalCtx)
+		if childTp.GetType() == mysql.TypeNull {
+			continue
+		}
+		childFlen := childTp.GetFlen()
 		childTpCharLen := 1
-		if isBinary {
+		if childFlen == types.UnspecifiedLength {
+			probeTp := resultTp.Clone()
+			probeTp.SetFlen(types.UnspecifiedLength)
+			castTp := expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), cols[i], probeTp).GetType(evalCtx)
+			childFlen = castTp.GetFlen()
+			if childFlen == types.UnspecifiedLength {
+				resultTp.SetFlen(types.UnspecifiedLength)
+				return
+			}
+			if types.IsTypeBlob(castTp.GetType()) && !types.IsTypeBlob(resultTp.GetType()) {
+				resultTp.SetType(castTp.GetType())
+			}
+		} else if isBinary {
 			if charsetInfo, ok := charset.CharacterSetInfos[childTp.GetCharset()]; ok {
 				childTpCharLen = charsetInfo.Maxlen
 			}
 		}
-		resultTp.SetFlen(max(resultTp.GetFlen(), childTpCharLen*childTp.GetFlen()))
+		maxFlen = max(maxFlen, childTpCharLen*childFlen)
+	}
+	if maxFlen != types.UnspecifiedLength {
+		resultTp.SetFlen(maxFlen)
 	}
 }
 
