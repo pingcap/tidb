@@ -2605,7 +2605,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 	}
 
 	if job.IsRollingback() {
-		return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob, tblInfo)
+		rollbackErr := error(dbterror.ErrCancelledDDLJob)
+		if job.Error != nil {
+			rollbackErr = job.Error
+		}
+		return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, rollbackErr, tblInfo)
 	}
 
 	failpoint.Inject("truncatePartCancel1", func(val failpoint.Value) {
@@ -2621,10 +2625,30 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 
 	switch job.SchemaState {
 	case model.StatePublic:
+<<<<<<< HEAD
 		// This work as a flag to ignore Global Index entries from the new partitions!
 		// Used in IDsInDDLToIgnore() for filtering new partitions from
 		// the global index
 		pi.NewPartitionIDs = newIDs[:]
+=======
+		// A queued job can still reference partitions a previous DDL has replaced.
+		postDefs := slices.Clone(pi.Definitions)
+		_, replacements := replaceTruncatePartitions(postDefs, oldIDs, newIDs)
+		// Prepare the full post-truncate affinity group set while cancellation is
+		// still safe. Publishing new partition IDs before this succeeds can lose
+		// data if a later PD failure cancels the job instead of finishing the
+		// truncate, and passing postDefs also backfills missing groups for
+		// untouched partitions (e.g. tables created before PD supported affinity).
+		if tblInfo.Affinity != nil {
+			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo, postDefs...); err != nil {
+				return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, err, tblInfo)
+			}
+			args.AffinityGroupsPrepared = true
+			job.FillArgs(args)
+		}
+		// IDsInDDLToIgnore uses these IDs to filter global index entries.
+		pi.NewPartitionIDs = getPartitionIDsFromDefinitions(replacements)
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
 		pi.DDLAction = model.ActionTruncateTablePartition
 
 		job.SchemaState = model.StateWriteOnly
@@ -2632,9 +2656,41 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		// We can still rollback here, since we have not yet started to write to the new partitions!
+<<<<<<< HEAD
 		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(jobCtx, job, jobCtx.metaMut, tblInfo, oldIDs, newIDs)
 		if err != nil {
 			return ver, errors.Trace(err)
+=======
+		// During a rolling upgrade, an older DDL owner can advance a job to
+		// StateWriteOnly without preparing affinity groups. Prepare them here
+		// before publishing new partition IDs so PD errors can still roll back
+		// cleanly instead of retrying indefinitely in StateDeleteReorganization.
+		if tblInfo.Affinity != nil && !args.AffinityGroupsPrepared {
+			postDefs := slices.Clone(pi.Definitions)
+			replaceTruncatePartitions(postDefs, oldIDs, newIDs)
+			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo, postDefs...); err != nil {
+				return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, err, tblInfo)
+			}
+			args.AffinityGroupsPrepared = true
+			job.FillArgs(args)
+		}
+		oldDefinitions, newDefinitions := replaceTruncatePartitions(pi.Definitions, oldIDs, newIDs)
+		if len(newDefinitions) > 0 {
+			if err = clearTruncatePartitionTiflashStatus(tblInfo, newDefinitions, getPartitionIDsFromDefinitions(oldDefinitions)); err != nil {
+				return ver, errors.Trace(err)
+			}
+			if err = publishTruncatePartitionPlacementBundles(jobCtx.metaMut, tblInfo, oldDefinitions, newDefinitions); err != nil {
+				return ver, errors.Trace(err)
+			}
+			if err = updateTruncatePartitionLabelRules(jobCtx, job, newDefinitions, tblInfo); err != nil {
+				return ver, errors.Trace(err)
+			}
+			var scatterScope string
+			if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
+				scatterScope = val
+			}
+			preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions, scatterScope)
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
 		}
 		var scatterScope string
 		if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
@@ -2696,8 +2752,15 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DDLState = model.StateNone
 		pi.DDLAction = model.ActionNone
 
+<<<<<<< HEAD
 		// Create new affinity groups first (critical operation - must succeed)
 		if tblInfo.Affinity != nil {
+=======
+		// Backfill groups for all current partitions if an older owner already
+		// published the replacement without preparing affinity groups.
+		// Retry on failure because the replacement is already visible.
+		if tblInfo.Affinity != nil && !args.AffinityGroupsPrepared {
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
 			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)

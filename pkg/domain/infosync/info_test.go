@@ -18,9 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +31,7 @@ import (
 	keyspacepb "github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -35,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/goleak"
 )
 
@@ -48,6 +53,162 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
+}
+
+func TestAffinityCreatePDHTTPStatus(t *testing.T) {
+	const body = "group already exists"
+	for _, tt := range []struct {
+		name      string
+		status    int
+		body      string
+		truncated bool
+	}{
+		{"bad request", http.StatusBadRequest, body, false},
+		{"conflict", http.StatusConflict, body, false},
+		{"misleading body", http.StatusBadRequest, "request pd http api failed with status: '409 Conflict'", false},
+		{"missing API", http.StatusNotFound, body, false},
+		{"failed precondition", http.StatusPreconditionFailed, body, false},
+		{"truncated conflict", http.StatusConflict, body, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var getCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				switch {
+				case req.URL.Path != pdhttp.AffinityGroups:
+					t.Errorf("unexpected PD request: %s %s", req.Method, req.URL)
+					w.WriteHeader(http.StatusInternalServerError)
+				case req.Method == http.MethodGet:
+					getCalls.Add(1)
+					ids := req.URL.Query()["ids"]
+					if len(ids) != 1 || ids[0] != "g1" {
+						t.Errorf("expected GET with ids=g1, got ids=%v", ids)
+					}
+					_, _ = io.WriteString(w, `{"affinity_groups":{"g1":{"id":"g1","range_count":1}}}`)
+				case req.Method == http.MethodPost && req.URL.Query().Get("skip_exist_check") == "true":
+					if tt.truncated {
+						w.Header().Set("Content-Length", strconv.Itoa(len(tt.body)+1))
+					}
+					w.WriteHeader(tt.status)
+					_, _ = io.WriteString(w, tt.body)
+				default:
+					t.Errorf("unexpected PD request: %s %s", req.Method, req.URL)
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			}))
+			defer server.Close()
+
+			discovery := servicediscovery.NewMockServiceDiscovery([]string{server.URL}, nil)
+			require.NoError(t, discovery.Init())
+			client := pdhttp.NewClientWithServiceDiscovery("test", discovery).WithRespHandler(pdResponseHandler)
+			defer client.Close()
+			groups := map[string][]pdhttp.AffinityGroupKeyRange{
+				"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+			}
+			err := affinity.NewPDManager(client).CreateAffinityGroupsIfNotExists(context.Background(), groups)
+			if tt.status == http.StatusConflict {
+				require.EqualValues(t, 1, getCalls.Load())
+				require.NoError(t, err)
+				return
+			}
+			require.Zero(t, getCalls.Load())
+			require.EqualError(t, err, "[domain:8243]"+tt.body)
+			require.True(t, ErrHTTPServiceError.Equal(err))
+			var statusError interface{ HTTPStatusCode() int }
+			require.ErrorAs(t, err, &statusError)
+			require.Equal(t, tt.status, statusError.HTTPStatusCode())
+		})
+	}
+
+	t.Run("gateway paths", func(t *testing.T) {
+		for _, path := range []string{
+			"/gateway" + pdhttp.AffinityGroups,
+			"/gateway" + pdhttp.AffinityGroups + "/policies",
+		} {
+			for _, status := range []int{http.StatusNotFound, http.StatusPreconditionFailed} {
+				t.Run(path+"/"+strconv.Itoa(status), func(t *testing.T) {
+					recorder := httptest.NewRecorder()
+					recorder.WriteHeader(status)
+					_, err := io.WriteString(recorder, body)
+					require.NoError(t, err)
+					resp := recorder.Result()
+					resp.Request = httptest.NewRequest(http.MethodPost, path, nil)
+
+					err = pdResponseHandler(resp, nil)
+					require.EqualError(t, err, "[domain:8243]"+body)
+					var statusError interface{ HTTPStatusCode() int }
+					require.ErrorAs(t, err, &statusError)
+					require.Equal(t, status, statusError.HTTPStatusCode())
+				})
+			}
+		}
+	})
+}
+
+func TestAffinityGetPDHTTPNotFound(t *testing.T) {
+	ids := make([]string, 101)
+	for i := range ids {
+		ids[i] = "g" + strconv.Itoa(i)
+	}
+	for _, firstBatchOK := range []bool{false, true} {
+		t.Run("first_batch_succeeds="+strconv.FormatBool(firstBatchOK), func(t *testing.T) {
+			var batchCalls, scanCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.Method != http.MethodGet || req.URL.Path != pdhttp.AffinityGroups {
+					t.Errorf("unexpected PD request: %s %s", req.Method, req.URL)
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				batchIDs := req.URL.Query()["ids"]
+				if len(batchIDs) == 0 {
+					scanCalls.Add(1)
+				} else if batchCalls.Add(1) == 1 && firstBatchOK {
+					_, _ = io.WriteString(w, `{"affinity_groups":{"g0":{"id":"g0","range_count":1}}}`)
+					return
+				}
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = io.WriteString(w, "unsupported affinity GET")
+			}))
+			defer server.Close()
+
+			discovery := servicediscovery.NewMockServiceDiscovery([]string{server.URL}, nil)
+			require.NoError(t, discovery.Init())
+			client := pdhttp.NewClientWithServiceDiscovery("test", discovery).WithRespHandler(pdResponseHandler)
+			defer client.Close()
+			t.Cleanup(affinity.SetPDClientForTest(client))
+			result, err := affinity.GetGroupStates(context.Background(), ids)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.EqualValues(t, 1, scanCalls.Load())
+			if firstBatchOK {
+				require.EqualValues(t, 2, batchCalls.Load())
+				require.Len(t, result, 1)
+				require.Equal(t, "g0", result["g0"].ID)
+				require.Nil(t, result["g100"])
+			} else {
+				require.EqualValues(t, 1, batchCalls.Load())
+				require.Empty(t, result)
+			}
+		})
+	}
+}
+
+func TestPDResponseHandlerPlacementCompatibility(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusPreconditionFailed, http.StatusBadRequest} {
+		recorder := httptest.NewRecorder()
+		recorder.WriteHeader(status)
+		_, err := io.WriteString(recorder, "placement rule error")
+		require.NoError(t, err)
+		resp := recorder.Result()
+		resp.Request = httptest.NewRequest(http.MethodGet, "/pd/api/v1/config/placement-rule", nil)
+		err = pdResponseHandler(resp, nil)
+		if status == http.StatusBadRequest {
+			require.EqualError(t, err, "[domain:8243]placement rule error")
+			require.True(t, ErrHTTPServiceError.Equal(err))
+			require.ErrorIs(t, err, ErrHTTPServiceError)
+		} else {
+			require.NoError(t, err)
+		}
+	}
 }
 
 func TestPutBundlesRetry(t *testing.T) {

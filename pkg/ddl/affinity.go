@@ -99,7 +99,14 @@ func collectAffinityGroupIDs(groups map[string][]pdhttp.AffinityGroupKeyRange) [
 }
 
 // createTableAffinityGroupsInPD creates affinity groups for a table in PD.
+<<<<<<< HEAD
 // This is a critical operation. If it fails, the DDL should fail.
+=======
+// With no partition definitions, it uses all partitions of the table.
+// Callers that intend to create groups for only selected partitions must skip
+// this call if their selection is empty. Callers must handle creation errors
+// according to whether the DDL can still be rolled back.
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
 // Used by: CREATE TABLE, ALTER TABLE AFFINITY = 'xxx', TRUNCATE TABLE, TRUNCATE PARTITION.
 func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo) error {
 	if tblInfo == nil || tblInfo.Affinity == nil {

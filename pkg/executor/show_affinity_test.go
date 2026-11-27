@@ -249,6 +249,27 @@ func TestShowAffinityColumns(t *testing.T) {
 	require.Equal(t, "9", row[7])
 }
 
+func TestShowAffinitySnapshot(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("insert into mysql.tidb (variable_name, variable_value) values ('tikv_gc_safe_point', '20060102-15:04:05 +0000 UTC')")
+	tk.MustExec(`create table p (id int) affinity='partition' partition by range (id)
+		(partition p0 values less than (10), partition p1 values less than maxvalue)`)
+	tk.MustExec("begin")
+	snapshot := tk.Session().GetSessionVars().TxnCtx.StartTS
+	tk.MustExec("rollback")
+	tk.MustExec("drop table p")
+	tk.MustExec("create table current_t (id int) affinity='table'")
+	tk.MustQuery("show affinity").CheckAt([]int{0, 1, 2}, testkit.Rows("test current_t <nil>"))
+
+	tk.MustExec("set @@tidb_snapshot = ?", snapshot)
+	tk.MustQuery("show affinity").Sort().CheckAt([]int{0, 1, 2}, testkit.Rows(
+		"test p p0",
+		"test p p1",
+	))
+}
+
 func TestShowAffinityNullStatus(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
