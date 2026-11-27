@@ -1217,3 +1217,35 @@ func TestStaleReadTxnWithAutocommitOff(t *testing.T) {
 	require.False(t, sessVars.InTxn(), "DDL should implicitly end the stale-read txn")
 	tk.MustExec("drop table t2")
 }
+
+func TestSequenceWriteRejectedInStalenessReadOnlyTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create sequence ro_seq start 1 increment 1 cache 1")
+	time.Sleep(100 * time.Millisecond)
+	tk.MustExec("set @ts = now(6)")
+	time.Sleep(200 * time.Millisecond)
+
+	const errMsg = "only support read-only statement during read-only staleness transactions"
+	tk.MustExec("start transaction read only as of timestamp @ts")
+	for _, sql := range []string{
+		"select setval(ro_seq, 9000)",
+		"do setval(ro_seq, 9100)",
+		"select nextval(ro_seq)",
+		"select next value for ro_seq",
+		"select coalesce(setval(ro_seq, 9200), 0)",
+		"select 1 union select nextval(ro_seq)",
+		"explain analyze select nextval(ro_seq)",
+	} {
+		tk.MustGetErrMsg(sql, errMsg)
+	}
+	tk.MustQuery("select lastval(ro_seq)").Check(testkit.Rows("<nil>"))
+	tk.MustExec("do lastval(ro_seq)")
+	tk.MustExec("rollback")
+
+	// Sequence state must remain untouched across sessions.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustQuery("select nextval(ro_seq)").Check(testkit.Rows("1"))
+}

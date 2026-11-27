@@ -34,19 +34,24 @@ func IsReadOnly(node Node, checkGlobalVars bool) bool {
 			}
 		}
 
-		if !checkGlobalVars {
-			return true
-		}
-
 		checker := readOnlyChecker{
-			readOnly: true,
+			readOnly:        true,
+			checkGlobalVars: checkGlobalVars,
 		}
 
 		Walk(node, &checker)
 		return checker.readOnly
 	case *ExplainStmt:
 		return !st.Analyze || IsReadOnly(st.Stmt, checkGlobalVars)
-	case *DoStmt, *ShowStmt:
+	case *DoStmt:
+		checker := readOnlyChecker{
+			readOnly:        true,
+			checkGlobalVars: checkGlobalVars,
+		}
+
+		Walk(node, &checker)
+		return checker.readOnly
+	case *ShowStmt:
 		return true
 	case *RecommendIndexStmt:
 		return st.Action == RecommendIndexActionRun || st.Action == RecommendIndexActionReturn
@@ -80,19 +85,25 @@ func IsReadOnly(node Node, checkGlobalVars bool) bool {
 	}
 }
 
-// readOnlyChecker checks whether a query's ast is readonly, if it satisfied
-// 1. selectstmt;
-// 2. need not to set var;
-// it is readonly statement.
+// readOnlyChecker checks whether a query's ast is readonly, if it satisfies:
+// 1. does not set a system variable (when checkGlobalVars is true);
+// 2. does not call state-mutating sequence functions (nextval/setval).
 type readOnlyChecker struct {
-	readOnly bool
+	readOnly        bool
+	checkGlobalVars bool
 }
 
 // Enter implements InPlaceVisitor interface.
 func (checker *readOnlyChecker) Enter(in Node) (skipChildren bool) {
-	if node, ok := in.(*VariableExpr); ok {
+	switch node := in.(type) {
+	case *VariableExpr:
 		// like func rewriteVariable(), this stands for SetVar.
-		if node.IsSystem && node.Value != nil {
+		if checker.checkGlobalVars && node.IsSystem && node.Value != nil {
+			checker.readOnly = false
+			return true
+		}
+	case *FuncCallExpr:
+		if node.Schema.L == "" && (node.FnName.L == NextVal || node.FnName.L == SetVal) {
 			checker.readOnly = false
 			return true
 		}
