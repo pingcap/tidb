@@ -1725,11 +1725,6 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	numberOfKVsInSST, err := client.LogFileManager.CountExtraSSTTotalKVs(ctx)
-	if err != nil {
-		return err
-	}
-
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -1747,8 +1742,34 @@ func restoreStream(
 	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
 	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
 
-	totalWorkUnits := numberOfKVsInSST + client.Stats.NumEntries
+	var checkpointSSTProgress int64
+	updateSSTStatsWithCheckpoint := func(kvCount, size uint64) {
+		mu.Lock()
+		defer mu.Unlock()
+		totalKVCount += kvCount
+		totalSize += size
+		checkpointTotalKVCount += kvCount
+		checkpointTotalSize += size
+		checkpointSSTProgress += int64(kvCount)
+	}
+	compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(
+		ctx, sstsIter, rewriteRules, sstCheckpointSets,
+		updateSSTStatsWithCheckpoint, splitSize, splitKeys,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	sstFileSets, numberOfKVsInSST, err := client.CollectSSTFileSets(ctx, compactedSplitIter, rewriteRules)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	totalWorkUnits := checkpointSSTProgress + numberOfKVsInSST + client.Stats.NumEntries
 	err = glue.WithProgress(ctx, g, "Restore Files(SST + Log)", totalWorkUnits, !cfg.LogProgress, func(p glue.Progress) (pErr error) {
+		if checkpointSSTProgress > 0 {
+			p.IncBy(checkpointSSTProgress)
+		}
 		updateStatsWithCheckpoint := func(kvCount, size uint64) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -1759,15 +1780,8 @@ func restoreStream(
 			// increase the progress
 			p.IncBy(int64(kvCount))
 		}
-		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(
-			ctx, sstsIter, rewriteRules, sstCheckpointSets,
-			updateStatsWithCheckpoint, splitSize, splitKeys,
-		)
-		if err != nil {
-			return errors.Trace(err)
-		}
 
-		err = client.RestoreSSTFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
+		err = client.RestoreSSTFileSets(ctx, sstFileSets, importModeSwitcher, p.IncBy)
 		if err != nil {
 			return errors.Trace(err)
 		}
