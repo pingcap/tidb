@@ -105,6 +105,7 @@ func (b *builtinLeastIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	}
 
 	i64s := result.Int64s()
+	unsignedCmp := mysql.HasUnsignedFlag(b.tp.GetFlag())
 	for j := 1; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalInt(ctx, input, buf); err != nil {
 			return err
@@ -116,7 +117,9 @@ func (b *builtinLeastIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 				continue
 			}
 			v := buf.GetInt64(i)
-			if v < i64s[i] {
+			// Unsigned integer values are still carried in int64 slots, so the boundary above MaxInt64
+			// must be ordered by uint64 instead of signed int64.
+			if (!unsignedCmp && v < i64s[i]) || (unsignedCmp && uint64(v) < uint64(i64s[i])) {
 				i64s[i] = v
 			}
 		}
@@ -140,6 +143,7 @@ func (b *builtinGreatestIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	}
 
 	i64s := result.Int64s()
+	unsignedCmp := mysql.HasUnsignedFlag(b.tp.GetFlag())
 	for j := 1; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalInt(ctx, input, buf); err != nil {
 			return err
@@ -151,7 +155,9 @@ func (b *builtinGreatestIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 			if result.IsNull(i) {
 				continue
 			}
-			if v[i] > i64s[i] {
+			// Unsigned integer values are still carried in int64 slots, so the boundary above MaxInt64
+			// must be ordered by uint64 instead of signed int64.
+			if (!unsignedCmp && v[i] > i64s[i]) || (unsignedCmp && uint64(v[i]) > uint64(i64s[i])) {
 				i64s[i] = v[i]
 			}
 		}
