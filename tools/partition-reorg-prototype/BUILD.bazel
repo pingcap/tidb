@@ -1,0 +1,61 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "partition-reorg-prototype_lib",
+    srcs = [
+        "ingest.go",
+        "main.go",
+        "merge_fixture.go",
+        "online_index.go",
+        "online_scenarios.go",
+        "protocol.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tools/partition-reorg-prototype",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/ingestor/engineapi",
+        "//pkg/ingestor/simplesst",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/objstore",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/tablecodec",
+        "//pkg/types",
+        "//pkg/util/codec",
+        "//pkg/util/rowcodec",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_tikv_client_go_v2//error",
+        "@com_github_tikv_client_go_v2//txnkv",
+        "@com_github_tikv_client_go_v2//txnkv/transaction",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//pkg/caller",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+    ],
+)
+
+go_binary(
+    name = "partition-reorg-prototype",
+    embed = [":partition-reorg-prototype_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "partition-reorg-prototype_test",
+    timeout = "short",
+    srcs = ["protocol_test.go"],
+    data = glob(["testdata/**"]),
+    embed = [":partition-reorg-prototype_lib"],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        "//pkg/kv",
+        "//pkg/tablecodec",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//error",
+    ],
+)
