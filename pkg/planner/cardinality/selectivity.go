@@ -73,6 +73,7 @@ func Selectivity(
 	}
 
 	var nodes []*StatsNode
+	var coveredConstExprMask int64
 	remainedExprs := make([]expression.Expression, 0, len(exprs))
 
 	// Deal with the correlated column.
@@ -118,11 +119,12 @@ func Selectivity(
 		id := col.UniqueID
 		colStats := coll.GetCol(id)
 		if colStats != nil {
-			maskCovered, ranges, _, _, err :=
+			maskCovered, constExprMask, ranges, _, _, err :=
 				getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
+			coveredConstExprMask |= constExprMask
 			nodes = append(nodes, &StatsNode{Tp: ColType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
 			var cnt float64
 			var cntEst statistics.RowEstimate
@@ -203,7 +205,7 @@ func Selectivity(
 			for range len(idxCols) - len(lengths) {
 				lengths = append(lengths, types.UnspecifiedLength)
 			}
-			maskCovered, ranges, partCover, minAccessCondsForDNFCond, err :=
+			maskCovered, constExprMask, ranges, partCover, minAccessCondsForDNFCond, err :=
 				getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, id2Paths[idxStats.ID], idxCols...)
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -214,6 +216,7 @@ func Selectivity(
 			}
 			countResult.DivideAll(float64(coll.RealtimeCount))
 			selectivity, minSelectivity, maxSelectivity := countResult.Est, countResult.MinEst, countResult.MaxEst
+			coveredConstExprMask |= constExprMask
 			nodes = append(nodes, &StatsNode{
 				Tp:                       IndexType,
 				ID:                       id,
@@ -231,6 +234,9 @@ func Selectivity(
 	usedSets := GetUsableSetsByGreedy(nodes)
 	// Initialize the mask with the full set.
 	mask := (int64(1) << uint(len(remainedExprs))) - 1
+	// Constant-only expressions covered by access conditions should not affect index comparison, but they
+	// should retain the old behavior of being excluded from the residual selectivity calculation.
+	mask &^= coveredConstExprMask
 
 	for _, set := range usedSets {
 		mask &^= set.mask
@@ -831,7 +837,7 @@ func findPrefixOfIndexByCol(ctx planctx.PlanContext, cols []*expression.Column, 
 
 func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, rangeType ranger.RangeType,
 	lengths []int, cachedPath *planutil.AccessPath, cols ...*expression.Column) (
-	mask int64, ranges []*ranger.Range, partCover bool, minAccessCondsForDNFCond int, err error) {
+	mask int64, constExprMask int64, ranges []*ranger.Range, partCover bool, minAccessCondsForDNFCond int, err error) {
 	isDNF := false
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
@@ -851,7 +857,7 @@ func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, ra
 		var res *ranger.DetachRangeResult
 		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx.GetRangerCtx(), exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
 		if err != nil {
-			return 0, nil, false, 0, err
+			return 0, 0, nil, false, 0, err
 		}
 		ranges = res.Ranges
 		accessConds = res.AccessConds
@@ -862,21 +868,32 @@ func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, ra
 		panic("should never be here")
 	}
 	if err != nil {
-		return 0, nil, false, 0, err
+		return 0, 0, nil, false, 0, err
 	}
 	if isDNF && len(accessConds) > 0 {
-		mask |= 1
-		return mask, ranges, len(remainedConds) > 0, minAccessCondsForDNFCond, nil
+		if len(expression.ExtractColumns(exprs[0])) == 0 {
+			constExprMask |= 1
+		} else {
+			mask |= 1
+		}
+		return mask, constExprMask, ranges, len(remainedConds) > 0, minAccessCondsForDNFCond, nil
 	}
 	for i := range exprs {
 		for j := range accessConds {
 			if exprs[i].Equal(ctx.GetExprCtx().GetEvalCtx(), accessConds[j]) {
-				mask |= 1 << uint64(i)
+				// Column and index statistics cannot estimate a predicate that references no column. Such a predicate may
+				// remain in AccessConds after constant propagation (for example, eq(param, param)). Keep it out
+				// of the comparison mask, while recording that it was covered so residual estimation can skip it.
+				if len(expression.ExtractColumns(exprs[i])) == 0 {
+					constExprMask |= 1 << uint64(i)
+				} else {
+					mask |= 1 << uint64(i)
+				}
 				break
 			}
 		}
 	}
-	return mask, ranges, false, 0, nil
+	return mask, constExprMask, ranges, false, 0, nil
 }
 
 func getMaskAndSelectivityForMVIndex(
