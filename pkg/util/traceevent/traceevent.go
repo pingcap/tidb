@@ -106,6 +106,7 @@ func init() {
 
 	// Register TiDB's trace event handlers with client-go
 	RegisterWithClientGo()
+	initDiagnosticRecorderFromEnv()
 }
 
 // Enable enables trace events for the specified categories.
@@ -117,6 +118,10 @@ func IsEnabled(category tracing.TraceCategory) bool {
 	if kerneltype.IsClassic() && !intest.InTest {
 		return false
 	}
+	return legacyCategoryEnabled(category) || (diagnosticEnabled.Load() && category&diagnosticCategories != 0)
+}
+
+func legacyCategoryEnabled(category tracing.TraceCategory) bool {
 	fr := GetFlightRecorder()
 	if fr == nil {
 		return false
@@ -245,6 +250,15 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 		Timestamp: time.Now(),
 		TraceID:   TraceIDFromContext(ctx),
 		Fields:    copyFieldsWithCapacity(fields, 3),
+	}
+	if diagnosticEnabled.Load() && category&diagnosticCategories != 0 {
+		if sink := diagnosticRecorder.Load(); sink != nil {
+			sink.Record(ctx, event)
+		}
+	}
+	// Additional diagnostic categories must not enter legacy retention/logging.
+	if !legacyCategoryEnabled(category) {
+		return
 	}
 
 	// Record to flight recorder if enabled (base or full mode).
