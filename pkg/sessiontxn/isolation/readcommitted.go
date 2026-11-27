@@ -142,7 +142,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 	return p.prepareStmt(false)
 }
 
-func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
+func (p *PessimisticRCTxnContextProvider) prepareStmtTS(inWarmup bool) {
 	if p.stmtTSFuture != nil {
 		return
 	}
@@ -154,6 +154,11 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	case p.latestOracleTSValid && sessVars.StmtCtx.RCCheckTS:
 		stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	default:
+		failpoint.Inject("requestTsoFromPD", func() {
+			if inWarmup {
+				sessiontxn.WarmupTsoRequestCountInc(p.sctx)
+			}
+		})
 		stmtTSFuture = p.getOracleFuture()
 	}
 
@@ -188,7 +193,7 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 		return 0, err
 	}
 
-	p.prepareStmtTS()
+	p.prepareStmtTS(false)
 	start := time.Now()
 	if ts, err = p.stmtTSFuture.Wait(); err != nil {
 		return 0, err
@@ -260,12 +265,12 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx co
 
 // AdviseWarmup provides warmup for inner state
 func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
-	if err := p.prepareTxn(); err != nil {
+	if err := p.baseTxnContextProvider.AdviseWarmup(); err != nil {
 		return err
 	}
 
-	if !p.isTidbSnapshotEnabled() {
-		p.prepareStmtTS()
+	if !p.isTidbSnapshotEnabled() && !p.currentStmtMayNotNeedTSO {
+		p.prepareStmtTS(true)
 	}
 
 	return nil
