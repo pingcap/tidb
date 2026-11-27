@@ -255,7 +255,7 @@ impl DataSource {
         let mut strong = Vec::new();
         let mut nullable = Vec::new();
         for index in &self.table_indices() {
-            if !index.read().unique || !index.read().is_public() {
+            if !index.read().unique || !index.read().is_public() || index.read().has_condition() {
                 continue;
             }
             if self

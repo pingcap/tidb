@@ -976,3 +976,23 @@ fn an_ordinary_index_over_a_vector_column_is_refused() {
     assert_eq!(code, 8200);
     assert!(message.contains("only VECTOR INDEX can be added to vector column"), "{message}");
 }
+
+/// Go `TestPartialIndex`'s rows from 3045c5aad75: ALTER TABLE cannot
+/// silently discard a partial primary key's condition, and a partial unique
+/// index is no implicit primary key even over NOT NULL columns (so it may
+/// turn invisible).
+#[test]
+fn test_partial_index_is_no_primary_key() {
+    let mut tk = Session::new();
+    tk.run("create table t3 (a int not null)").unwrap();
+    let error = tk
+        .run("alter table t3 add primary key(a) where a > 0")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (8200, "Unsupported add partial index: create an primary key with partial index is not supported")
+    );
+    tk.run("create table t4 (a int not null, unique index uk(a) where a > 0)").unwrap();
+    tk.run("alter table t4 alter index uk invisible").unwrap();
+}

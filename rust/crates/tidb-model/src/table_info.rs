@@ -585,7 +585,8 @@ impl TableInfo {
     }
 
     /// Go `GetPrimaryKey`: the explicit primary index, else an implicit one
-    /// (a unique index over only non-null, non-hidden public columns).
+    /// (the first non-partial unique index over only non-null, non-hidden
+    /// public columns).
     pub fn get_primary_key(&self) -> Option<GoShared<IndexInfo>> {
         let mut implicit_pk = None;
         for key in self.indices.iter_deref() {
@@ -597,7 +598,7 @@ impl TableInfo {
             if index.columns.is_empty() {
                 continue;
             }
-            if implicit_pk.is_none() && index.unique {
+            if implicit_pk.is_none() && index.unique && !index.has_condition() {
                 let mut all_col_not_null = true;
                 let mut skip = false;
                 for idx_col in index.columns.iter_deref() {

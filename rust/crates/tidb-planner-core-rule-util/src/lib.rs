@@ -159,7 +159,10 @@ pub fn check_index_can_be_key(
     schema: &Schema,
 ) -> (Option<Vec<Column>>, Option<Vec<Column>>) {
     let index = index.read();
-    if !index.unique {
+    // A partial unique index only guarantees uniqueness among the rows that
+    // satisfy its condition, so it cannot be used as an unconditional key of
+    // the relation.
+    if !index.unique || index.has_condition() {
         return (None, None);
     }
     let mut unique_key = Vec::with_capacity(index.columns.len());

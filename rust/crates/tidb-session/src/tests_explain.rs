@@ -11207,3 +11207,139 @@ fn test_cor_col_eq_provides_index_order() {
     assert!(has_operator(&infos, &["TopN"]), "a correlated range must not claim order on later columns: {infos:?}");
     assert_eq!(rows(&mut tk, &format!("{min_after_range} order by 1")), [["NULL"], ["NULL"], ["3"], ["4"]]);
 }
+
+/// Go `TestPartialUniqueIndexDoesNotImplyGlobalUniqueness` (3045c5aad75): a
+/// partial unique index guarantees uniqueness only among the rows its
+/// condition admits, so it is no key of the relation -- not for DISTINCT or
+/// GROUP BY elimination, outer join elimination, max-one-row, or
+/// ONLY_FULL_GROUP_BY.
+#[test]
+fn test_partial_unique_index_does_not_imply_global_uniqueness() {
+    let mut tk = Session::new();
+    let rows = |tk: &mut Session, sql: &str| {
+        let result = tk.run(sql);
+        if let Err(error) = &result {
+            panic!("{sql}: {error:?}");
+        }
+        row_text(result)
+    };
+    let plan = |tk: &mut Session, sql: &str| format!("{:?}", rows(tk, &format!("explain format = 'plan_tree' {sql}")));
+    tk.run(
+        "create table partial_unique (id bigint primary key, domain varchar(253) not null, \
+         deleted_at datetime null, unique index uk_domain_active(domain) where deleted_at is null)",
+    )
+    .unwrap();
+    tk.run(
+        "insert into partial_unique values (1, 'example.com', null), (2, 'example.com', '2026-01-01'), \
+         (3, 'example.com', '2026-01-02'), (4, 'example.com', '2026-01-03')",
+    )
+    .unwrap();
+
+    assert_eq!(rows(&mut tk, "select count(distinct domain) from partial_unique"), [["1"]]);
+    assert!(plan(&mut tk, "select count(distinct domain) from partial_unique").contains("Agg"));
+    assert_eq!(rows(&mut tk, "select distinct domain from partial_unique"), [["example.com"]]);
+    assert!(plan(&mut tk, "select distinct domain from partial_unique").contains("Agg"));
+    assert_eq!(rows(&mut tk, "select domain, count(*) from partial_unique group by domain"), [["example.com", "4"]]);
+    assert!(plan(&mut tk, "select domain, count(*) from partial_unique group by domain").contains("Agg"));
+
+    tk.run("create table partial_outer (id bigint primary key, domain varchar(253) not null)").unwrap();
+    tk.run("insert into partial_outer values (1, 'example.com')").unwrap();
+    assert_eq!(
+        rows(
+            &mut tk,
+            "select o.id from partial_outer o left join partial_unique i on o.domain = i.domain and i.deleted_at is not null"
+        ),
+        [["1"], ["1"], ["1"]]
+    );
+    let error = tk
+        .run("select (select i.id from partial_unique i where i.domain = o.domain and i.deleted_at is not null) from partial_outer o")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!((error.code, error.message.as_str()), (1242, "Subquery returns more than 1 row"));
+    assert_eq!(
+        rows(
+            &mut tk,
+            "select o.id from partial_outer o left join partial_unique i on o.domain = i.domain order by o.id limit 2 offset 1"
+        ),
+        [["1"], ["1"]]
+    );
+
+    tk.run("set @@session.sql_mode = 'ONLY_FULL_GROUP_BY'").unwrap();
+    for enabled in ["off", "on"] {
+        tk.run(&format!("set @@session.tidb_enable_new_only_full_group_by_check = {enabled}")).unwrap();
+        let error = tk.run("select domain, id from partial_unique group by domain").unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1055, "{enabled}: {}", error.message);
+    }
+
+    assert!(plan(
+        &mut tk,
+        "select * from partial_unique use index(uk_domain_active) where domain = 'example.com' and deleted_at is null"
+    )
+    .contains("uk_domain_active"));
+    assert_eq!(
+        rows(&mut tk, "select id from partial_unique use index(uk_domain_active) where domain = 'example.com' and deleted_at is null"),
+        [["1"]]
+    );
+    assert!(!plan(&mut tk, "select * from partial_unique use index(uk_domain_active) where domain = 'example.com'")
+        .contains("uk_domain_active"));
+    assert_eq!(
+        rows(&mut tk, "select id from partial_unique use index(uk_domain_active) where domain = 'example.com' order by id"),
+        [["1"], ["2"], ["3"], ["4"]]
+    );
+
+    tk.run("create table partial_composite (a int null, b int not null, c int, unique index uk_ab_active(a, b) where c = 1)").unwrap();
+    tk.run("insert into partial_composite values (1, 1, 1), (1, 1, 2), (1, 1, 3), (null, 1, 1), (null, 1, 2)").unwrap();
+    assert_eq!(
+        rows(&mut tk, "select a, b, count(*) from partial_composite group by a, b order by a"),
+        [["NULL", "1", "2"], ["1", "1", "3"]]
+    );
+    assert_eq!(
+        rows(&mut tk, "select a, b, count(*) from partial_composite where a is not null group by a, b"),
+        [["1", "1", "3"]]
+    );
+
+    tk.run("create table regular_keys (id int primary key, a int not null unique, payload int)").unwrap();
+    tk.run("insert into regular_keys values (1, 10, 100), (2, 20, 200)").unwrap();
+    for enabled in ["off", "on"] {
+        tk.run(&format!("set @@session.tidb_enable_new_only_full_group_by_check = {enabled}")).unwrap();
+        assert_eq!(rows(&mut tk, "select a, payload from regular_keys group by a order by a"), [["10", "100"], ["20", "200"]]);
+        assert_eq!(rows(&mut tk, "select id, payload from regular_keys group by id order by id"), [["1", "100"], ["2", "200"]]);
+    }
+}
+
+/// Go `TestNaturalJoinWithCorrelatedSubquery`'s "nested filtering apply"
+/// (e343a53e558): a true Selection over a chain of Applies is pruned only
+/// when every Apply in the chain is an outer join; a filtering (semi) Apply
+/// below keeps the chain.
+#[test]
+fn test_nested_filtering_apply_is_not_pruned() {
+    let mut tk = Session::new();
+    let rows = |tk: &mut Session, sql: &str| {
+        let result = tk.run(sql);
+        if let Err(error) = &result {
+            panic!("{sql}: {error:?}");
+        }
+        row_text(result)
+    };
+    tk.run("create table t(c1 int, c2 int)").unwrap();
+    tk.run("insert into t values(null,null),(-7,null)").unwrap();
+    let predicate = "(o.c2 in(select i.c1 from t i where o.c1 is not null)) and ((o.c1 in(select 1 from t)) or true)";
+    assert!(rows(&mut tk, &format!("select o.c2 from t o where {predicate}")).is_empty());
+    assert_eq!(
+        rows(&mut tk, &format!("select o.c2 from t o where not({predicate}) or ({predicate}) is null")),
+        [["NULL"], ["NULL"]]
+    );
+    tk.run("insert into t values(1,1)").unwrap();
+    assert_eq!(rows(&mut tk, &format!("select o.c2 from t o where {predicate}")), [["1"]]);
+    for (condition, count) in [
+        ("exists(select 1 from t i where i.c1=o.c1)", "2"),
+        ("not exists(select 1 from t i where i.c1=o.c1)", "1"),
+        ("o.c2 not in(select i.c1 from t i where o.c1 is not null)", "1"),
+    ] {
+        assert_eq!(
+            rows(&mut tk, &format!("select count(*) from t o where ({condition}) and ((o.c1 in(select 1 from t)) or true)")),
+            [[count]],
+            "{condition}"
+        );
+    }
+}

@@ -225,7 +225,7 @@ fn join_keys_contain_unique_index(
         let Some(index) = &path.index else {
             return false;
         };
-        if !index.read().unique {
+        if !index.read().unique || index.read().has_condition() {
             return false;
         }
         let idx_cols: Vec<&Column> = if path.is_table_path() {

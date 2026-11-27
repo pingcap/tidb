@@ -539,7 +539,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
 
         for index in &table.table_indices() {
-            if !index.read().unique {
+            if !index.read().unique || index.read().has_condition() {
                 continue;
             }
             let whole_index_determined = index.read().columns.iter_deref().all(|index_column| {

@@ -141,7 +141,27 @@ impl DecorrelateSolver {
         let top_apply = &plan.children()[0];
         let mut bottom = top_apply;
         while let LogicalPlan::Apply(_) = bottom {
-            bottom = &bottom.children()[0];
+            let child = &bottom.children()[0];
+            if let LogicalPlan::Apply(next) = child {
+                // Avoid pruning when the left-child chain contains a
+                // filtering Apply. E.g., for `WHERE a IN (subq1) AND (b IN
+                // (subq2) OR TRUE)`, the chain is: Selection(true) ->
+                // Apply(LeftOuterSemiJoin) -> Apply(SemiJoin).
+                if !matches!(
+                    next.join.join_type,
+                    LogicalJoinType::LeftOuter | LogicalJoinType::LeftOuterSemi
+                ) {
+                    return None;
+                }
+                // The IsLateral guard above only covers the topmost Apply,
+                // but this walk drops every Apply it passes. A LATERAL Apply
+                // nested below a prunable one may still return several rows
+                // per outer row, so pruning the chain would lose them.
+                if next.is_lateral {
+                    return None;
+                }
+            }
+            bottom = child;
         }
         if let (Some(apply_schema), Some(child_schema)) = (top_apply.schema(), bottom.schema()) {
             let contains = |schema: &Schema, id: i64| {

@@ -896,8 +896,16 @@ fn create_index_from_constraint<S: MetaSnapshot>(
     // NOT NULL), so it lowers through the same CreateIndex statement the
     // other index kinds use.
     let primary = index.kind == IndexConstraintKind::PrimaryKey;
-    // Go `CreatePrimaryKey` refuses a clustered key before it looks at the
-    // table.
+    // Go `CreatePrimaryKey` refuses a partial or a clustered key before it
+    // looks at the table.
+    if primary && index.options.condition.is_some() {
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX.gen_with_stack_by_args(&[
+                "create an primary key with partial index is not supported".into(),
+            ]),
+        )
+        .into());
+    }
     if primary
         && matches!(
             index.options.primary_key_storage,
