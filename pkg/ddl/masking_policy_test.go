@@ -861,17 +861,18 @@ func TestMaskingPolicyAddColumnRollbackWithoutSysTable(t *testing.T) {
 	var rolledBack, readMissingTable atomic.Bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionAddColumn && job.SchemaState == model.StateWriteOnly && !rolledBack.Swap(true) {
-			job.State = model.JobStateRollingback
+			// Normal cancellation prepares the rollback arguments for both job versions.
+			job.State = model.JobStateCancelling
 			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMissingMaskingPolicySysTable", "return(true)")
 		}
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
-		if job.Type == model.ActionAddColumn && job.IsRollingback() && job.Error != nil {
+		if job.Type == model.ActionAddColumn && job.IsRollingback() && job.Error != nil && job.Error.Code() != errno.ErrCancelledDDLJob {
 			readMissingTable.Store(true)
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockMissingMaskingPolicySysTable"))
 		}
 	})
-	_ = tk.ExecToErr("alter table t_rollback add column b int")
+	tk.MustGetErrCode("alter table t_rollback add column b int", errno.ErrCancelledDDLJob)
 	require.True(t, rolledBack.Load())
 	require.False(t, readMissingTable.Load(), "ADD COLUMN rollback must not query the missing policy table")
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_rollback"))
