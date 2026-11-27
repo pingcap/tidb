@@ -374,3 +374,18 @@ alter table child drop foreign key fk1, drop foreign key fk3;
 show create table child;
 alter table child drop foreign key fk1, drop foreign key fk2;
 show create table child;
+
+# TestMultiSchemaChangeAutoRandomBits
+drop table if exists t, t2;
+set @@tidb_allow_remove_auto_inc = 1;
+create table t (id bigint auto_increment primary key, v int);
+-- error 8200
+alter table t modify id bigint auto_random(1), add unique index uv(v);
+show create table t;
+create table t2 (id bigint auto_random(3) primary key, v int);
+-- error 8200
+alter table t2 modify id bigint auto_random(4), add column c int;
+alter table t2 modify id bigint auto_random(3), add column c int;
+show create table t2;
+set @@tidb_allow_remove_auto_inc = default;
+drop table t, t2;
