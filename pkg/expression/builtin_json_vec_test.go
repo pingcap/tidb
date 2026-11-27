@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -155,4 +157,49 @@ func TestVectorizedBuiltinJSONFunc(t *testing.T) {
 
 func BenchmarkVectorizedBuiltinJSONFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinJSONCases)
+}
+
+func BenchmarkJSONExtractText(b *testing.B) {
+	record := `{"id":1,"name":"TiDB用户","values":[1,2,3],"enabled":true}`
+	records := strings.Repeat(record+",", 63) + record
+	inputs := []struct{ name, doc, path string }{
+		{"small", `{"a":{"value":123,"text":"TiDB"},"b":[1,2,3],"active":true}`, "$.a.value"},
+		{"4KiB_string", `{"a":{"value":123,"text":"` + strings.Repeat("TiDB用户", 400) + `"},"b":[1,2,3]}`, "$.a.value"},
+		{"64_records", `{"a":{"value":123},"unused":[` + records + `]}`, "$.a.value"},
+		{"64KiB_string", `{"unused":"` + strings.Repeat("x", 65536) + `","a":{"value":123}}`, "$.a.value"},
+		{"selected_document", `{"a":{"value":123,"records":[` + records + `]}}`, "$.a"},
+		{"missing_path", `{"unused":[` + records + `]}`, "$.a.value"},
+		{"array_path", `{"unused":[` + records + `]}`, "$.unused[0]"},
+	}
+	for _, in := range inputs {
+		for _, docType := range []types.EvalType{types.ETString, types.ETJson} {
+			b.Run(fmt.Sprintf("%s/%s", in.name, docType), func(b *testing.B) {
+				ctx := createContext(b)
+				var generator dataGenerator = &constStrGener{in.doc}
+				if docType == types.ETJson {
+					generator = &constJSONGener{in.doc}
+				}
+				tc := vecExprBenchCase{retEvalType: types.ETJson, childrenTypes: []types.EvalType{docType, types.ETString}, geners: []dataGenerator{generator, &constStrGener{in.path}}, chunkSize: 128}
+				fn, _, input, output := genVecBuiltinFuncBenchCase(ctx, ast.JSONExtract, tc)
+				b.Run("vector", func(b *testing.B) {
+					b.ReportAllocs()
+					for b.Loop() {
+						if err := fn.vecEvalJSON(ctx, input, output); err != nil {
+							b.Fatal(err)
+						}
+					}
+					b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*input.NumRows()), "ns/row")
+				})
+				b.Run("scalar", func(b *testing.B) {
+					b.ReportAllocs()
+					row := input.GetRow(0)
+					for b.Loop() {
+						if _, _, err := fn.evalJSON(ctx, row); err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+			})
+		}
+	}
 }
