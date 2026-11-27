@@ -1252,6 +1252,11 @@ func PropagateType(ctx EvalContext, evalType types.EvalType, args ...Expression)
 	switch evalType {
 	case types.ETReal:
 		expr := args[0]
+		// A CAST must apply its own rounding and overflow rules before the outer
+		// conversion. Widening its target type changes the value, not just metadata.
+		if sf, ok := expr.(*ScalarFunction); ok && sf.FuncName.L == ast.Cast {
+			return
+		}
 		oldFlen, oldDecimal := expr.GetType(ctx).GetFlen(), expr.GetType(ctx).GetDecimal()
 		newFlen, newDecimal := setDataTypeDouble(expr.GetType(ctx).GetDecimal())
 		// For float(M,D), double(M,D) or decimal(M,D), M must be >= D.
