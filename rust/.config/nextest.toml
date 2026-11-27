@@ -48,3 +48,9 @@ test-threads = 12
 [[profile.default.overrides]]
 filter = 'test(/^executor_partition_table_test::/) | test(/partition_db_partition_ddl_source::/) | test(/serial_ddl_ingest_source::/) | test(/materialized_view::/) | test(/^executor_parallel_apply_test::/) | test(/^executor_test_aggregate_aggregate_test::/) | test(test_union2) | test(/^executor_join_test_mergejoin/)'
 priority = 100
+
+# Iteration and mutation runs (`--profile quick`): a hung test is killed after
+# 90 s instead of the default's 10 min, so a deadlock or retry loop costs a
+# minute and a half, not a gate's worth of time. Targeted tests take seconds.
+[profile.quick]
+slow-timeout = { period = "30s", terminate-after = 3 }
