@@ -140,14 +140,24 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems) (byItems []*util.ByIt
 	parentUsedCols []*expression.Column) {
 	prunedByItems := make([]*util.ByItems, 0)
 	byItems = make([]*util.ByItems, 0, len(old))
-	seen := make(map[string]struct{}, len(old))
+	seen := make(map[string][]expression.Expression, len(old))
 	for _, byItem := range old {
 		pruned := true
 		hash := string(byItem.Expr.HashCode())
-		_, hashMatch := seen[hash]
-		seen[hash] = struct{}{}
+		duplicate := false
+		for _, expr := range seen[hash] {
+			// HashCode can collide for distinct CAST targets, including nested casts.
+			// Equals checks the expression structure without the cached-hash shortcut.
+			if expr.Equals(byItem.Expr) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			seen[hash] = append(seen[hash], byItem.Expr)
+		}
 		cols := expression.ExtractColumns(byItem.Expr)
-		if !hashMatch {
+		if !duplicate {
 			if len(cols) == 0 {
 				if !expression.IsRuntimeConstExpr(byItem.Expr) {
 					pruned = false
