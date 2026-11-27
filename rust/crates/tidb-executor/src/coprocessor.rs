@@ -46,14 +46,19 @@ fn pb_meta(fields: &[FieldType]) -> tidb_executor_internal_exec::ExecutorMeta {
     tidb_executor_internal_exec::ExecutorMeta::new(schema, 0, 32, 1024)
 }
 
-/// Opens, drains and closes `executor`, whose rows have `fields`.
+/// Opens, drains and closes `executor`, whose rows have `fields`. Go
+/// master `HandleRequest` (516070a35ae) closes the executor on every exit:
+/// "Open can partially initialize the executor before returning an error".
+/// A close error is the answer only when nothing failed before it; otherwise
+/// it is logged (`terror.Log`).
 fn drain(
     mut executor: Box<dyn tidb_executor_internal_exec::Executor>,
     fields: &[FieldType],
 ) -> Result<Vec<Vec<Datum>>, String> {
-    executor
-        .open()
-        .map_err(|error| tidb_driver_error::DriverError::from(error).to_string())?;
+    if let Err(error) = executor.open() {
+        log_close_error(executor.as_mut());
+        return Err(tidb_driver_error::DriverError::from(error).to_string());
+    }
     let result = (|| -> Result<Vec<Vec<Datum>>, String> {
         let mut output = Vec::new();
         let mut chunk = tidb_chunk::chunk::Chunk::new(fields, 32, 1024);
@@ -70,12 +75,25 @@ fn drain(
         }
         Ok(output)
     })();
-    let close = executor
+    let rows = match result {
+        Ok(rows) => rows,
+        Err(error) => {
+            log_close_error(executor.as_mut());
+            return Err(error);
+        }
+    };
+    executor
         .close()
-        .map_err(|error| tidb_driver_error::DriverError::from(error).to_string());
-    let rows = result?;
-    close?;
+        .map_err(|error| tidb_driver_error::DriverError::from(error).to_string())?;
     Ok(rows)
+}
+
+/// Go `terror.Log(exec.Close(e))`.
+fn log_close_error(executor: &mut dyn tidb_executor_internal_exec::Executor) {
+    if let Err(error) = executor.close() {
+        let error = tidb_driver_error::DriverError::from(error).to_mysql_error();
+        tidb_terror::log(Some(&error));
+    }
 }
 
 /// The rows of a memory table a [`PbPlan`] reads: one value per column of
@@ -429,3 +447,90 @@ pub trait CoprocessorDagHandler: crate::show::exec::ShowExec + crate::compiler::
 }
 
 impl<T: crate::show::exec::ShowExec + crate::compiler::CompilerSession> CoprocessorDagHandler for T {}
+
+#[cfg(test)]
+mod close_on_every_exit_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use tidb_chunk::chunk::Chunk;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_driver_error::ExecError;
+    use tidb_executor_internal_exec::{Executor, ExecutorMeta};
+
+    /// Go `TestCoprocessorDAGHandlerClosesExecutor`'s mock executor
+    /// (`mockCoprocessorDAGExecutor`): fails where told and counts its
+    /// `Close` calls.
+    struct FailingExec {
+        meta: ExecutorMeta,
+        fail_open: bool,
+        fail_next: bool,
+        fail_close: bool,
+        closes: Arc<AtomicUsize>,
+    }
+
+    impl Executor for FailingExec {
+        fn open(&mut self) -> Result<(), ExecError> {
+            if self.fail_open { Err(ExecError::internal("open failed")) } else { Ok(()) }
+        }
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            if self.fail_next { Err(ExecError::internal("next failed")) } else { Ok(()) }
+        }
+        fn close(&mut self) -> Result<(), ExecError> {
+            self.closes.fetch_add(1, Ordering::SeqCst);
+            if self.fail_close { Err(ExecError::internal("close failed")) } else { Ok(()) }
+        }
+        fn schema(&self) -> &tidb_expr::schema::Schema {
+            self.meta.schema()
+        }
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+    }
+
+    fn run(fail_open: bool, fail_next: bool, fail_close: bool) -> (Result<usize, String>, usize) {
+        let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
+        let closes = Arc::new(AtomicUsize::new(0));
+        let executor = FailingExec {
+            meta: super::pb_meta(&fields),
+            fail_open,
+            fail_next,
+            fail_close,
+            closes: Arc::clone(&closes),
+        };
+        let result = super::drain(Box::new(executor), &fields).map(|rows| rows.len());
+        (result, closes.load(Ordering::SeqCst))
+    }
+
+    /// Go master 516070a35ae: the executor is closed after an Open error,
+    /// after a Next error, and after success; a Close error is the answer
+    /// only when nothing failed before it.
+    #[test]
+    fn test_coprocessor_dag_handler_closes_executor() {
+        let (result, closes) = run(true, false, false);
+        assert!(result.unwrap_err().contains("open failed"));
+        assert_eq!(closes, 1);
+        let (result, closes) = run(true, false, true);
+        assert!(result.unwrap_err().contains("open failed"));
+        assert_eq!(closes, 1);
+        let (result, closes) = run(false, true, true);
+        assert!(result.unwrap_err().contains("next failed"));
+        assert_eq!(closes, 1);
+        let (result, closes) = run(false, false, true);
+        assert!(result.unwrap_err().contains("close failed"));
+        assert_eq!(closes, 1);
+        let (result, closes) = run(false, false, false);
+        assert_eq!(result, Ok(0));
+        assert_eq!(closes, 1);
+    }
+}
