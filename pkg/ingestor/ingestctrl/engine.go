@@ -1483,7 +1483,12 @@ func (sw *sstWriter) writeKVs(kvs []common.KvPair) error {
 			return errors.Trace(err)
 		}
 		sw.totalSize += int64(len(p.Key)) + int64(len(p.Val))
-		sw.lastKey = p.Key
+		// Copy the key instead of aliasing it: in the sorted path the caller
+		// (appendRowsSorted) stores encoded keys as slices into a reusable
+		// sortedKeyBuf. If we keep a reference here, the next batch reusing the
+		// buffer can overwrite the bytes sw.lastKey points to, making a
+		// non-duplicate key compare equal and get silently skipped.
+		sw.lastKey = append(sw.lastKey[:0], p.Key...)
 	}
 	sw.totalCount += int64(len(kvs))
 	sw.maxKey = append(sw.maxKey[:0], sw.lastKey...)
