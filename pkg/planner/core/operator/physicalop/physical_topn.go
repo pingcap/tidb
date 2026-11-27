@@ -358,9 +358,17 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		if !ok {
 			return ret
 		}
-		// Reject any filters.
-		if len(ds.PushedDownConds) > 0 {
+		// Keep the ANN path only for a matching distance upper bound. Other
+		// predicates still use the regular scan path because their selectivity
+		// cannot currently be accounted for by the vector index.
+		if len(ds.PushedDownConds) > 1 {
 			return ret
+		}
+		if len(ds.PushedDownConds) == 1 {
+			boundVS := expression.InterpretVectorDistanceLEExpr(ds.PushedDownConds[0])
+			if !expression.SameVectorSearchExpr(vs, boundVS) {
+				return ret
+			}
 		}
 		resultProp := &property.PhysicalProperty{
 			TaskTp:            property.MppTaskType,
