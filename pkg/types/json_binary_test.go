@@ -360,6 +360,21 @@ func TestCompareBinary(t *testing.T) {
 		{CreateBinaryJSON(uint64(9)), CreateBinaryJSON(float64(9.0)), 0},
 		{CreateBinaryJSON(uint64(9)), CreateBinaryJSON(float64(8.9)), 1},
 		{CreateBinaryJSON(uint64(9)), CreateBinaryJSON(float64(9.1)), -1},
+
+		{CreateBinaryJSON(int64(1 << 53)), CreateBinaryJSON(float64(1 << 53)), 0},
+		{CreateBinaryJSON(int64(1<<53 + 1)), CreateBinaryJSON(float64(1 << 53)), 1},
+		{CreateBinaryJSON(float64(1 << 53)), CreateBinaryJSON(int64(1<<53 + 1)), -1},
+		{CreateBinaryJSON(int64(-1<<53 - 1)), CreateBinaryJSON(float64(-1 << 53)), -1},
+		{CreateBinaryJSON(int64(math.MaxInt64)), CreateBinaryJSON(float64(1 << 63)), -1},
+		{CreateBinaryJSON(int64(math.MinInt64)), CreateBinaryJSON(float64(-1 << 63)), 0},
+		{CreateBinaryJSON(uint64(1 << 53)), CreateBinaryJSON(float64(1 << 53)), 0},
+		{CreateBinaryJSON(uint64(1<<53 + 1)), CreateBinaryJSON(float64(1 << 53)), 1},
+		{CreateBinaryJSON(float64(1 << 53)), CreateBinaryJSON(uint64(1<<53 + 1)), -1},
+		{CreateBinaryJSON(uint64(math.MaxUint64)), CreateBinaryJSON(float64(1 << 64)), -1},
+		{CreateBinaryJSON(uint64(1 << 63)), CreateBinaryJSON(float64(1 << 63)), 0},
+
+		{CreateBinaryJSON(float64(8.999999999)), CreateBinaryJSON(int64(9)), 0},
+		{CreateBinaryJSON(float64(8.999999999)), CreateBinaryJSON(uint64(9)), 0},
 	}
 
 	for _, test := range tests {
