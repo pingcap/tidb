@@ -55,7 +55,7 @@ func NewPDManager(client pdhttp.Client) Manager {
 
 // CreateAffinityGroupsIfNotExists creates affinity groups in PD.
 // It first uses skip_exist_check and validates the returned state for every group.
-// On older PD versions a batch conflict means at least one group already exists.
+// On conflict, it looks up existing groups and accepts them only if they have key ranges.
 func (m *pdManager) CreateAffinityGroupsIfNotExists(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange) error {
 	if len(groups) == 0 {
 		return nil
@@ -68,10 +68,6 @@ func (m *pdManager) CreateAffinityGroupsIfNotExists(ctx context.Context, groups 
 	if !isPDHTTPStatusError(err, http.StatusConflict) {
 		return err
 	}
-	if len(groups) == 1 {
-		return nil
-	}
-
 	return m.createAffinityGroupsIfNotExistsByFiltering(ctx, groups)
 }
 

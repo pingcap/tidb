@@ -108,6 +108,8 @@ func TestCreateAffinityGroupsIfNotExistsUseSkipExistCheck(t *testing.T) {
 }
 
 func TestCreateAffinityGroupsIfNotExistsFallbackWhenSkipExistRejected(t *testing.T) {
+	t.Run("single group", testCreateGroupsIfNotExistsRechecksSingleGroupConflict)
+
 	ctx := context.Background()
 	client := &mockPDClient{}
 	manager := &pdManager{Client: client}
@@ -127,6 +129,55 @@ func TestCreateAffinityGroupsIfNotExistsFallbackWhenSkipExistRejected(t *testing
 
 	require.NoError(t, manager.CreateAffinityGroupsIfNotExists(ctx, groups))
 	client.AssertExpectations(t)
+}
+
+func testCreateGroupsIfNotExistsRechecksSingleGroupConflict(t *testing.T) {
+	ctx := context.Background()
+	conflict := pdStatusErr(http.StatusConflict)
+	groups := map[string][]pdhttp.AffinityGroupKeyRange{
+		"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+	}
+	for _, tc := range []struct {
+		name       string
+		rangeCount int
+		attempts   int
+	}{
+		{"positive range count", 1, 1},
+		{"zero range count", 0, maxRetryTimes + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mockPDClient{}
+			InitManager(client)
+			t.Cleanup(func() { InitManager(nil) })
+			state := affinityGroupState("g1")
+			state.RangeCount = tc.rangeCount
+			states := map[string]*pdhttp.AffinityGroupState{"g1": state}
+			ids := []string{"g1"}
+			var calls []*mock.Call
+			for range tc.attempts {
+				calls = append(calls,
+					client.On("CreateAffinityGroups", ctx, groups, 1).Return(nil, conflict).Once(),
+					client.On("GetAffinityGroups", ctx, ids).Return(states, nil).Once(),
+				)
+				if tc.rangeCount > 0 {
+					continue
+				}
+				calls = append(calls,
+					client.On("CreateAffinityGroups", ctx, groups, 0).Return(nil, conflict).Once(),
+					client.On("GetAffinityGroups", ctx, ids).Return(states, nil).Once(),
+				)
+			}
+			mock.InOrder(calls...)
+
+			err := CreateGroupsIfNotExists(ctx, groups)
+			if tc.rangeCount > 0 {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, conflict)
+			}
+			client.AssertExpectations(t)
+		})
+	}
 }
 
 func TestCreateGroupsIfNotExistsRechecksBatchConflict(t *testing.T) {

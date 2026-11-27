@@ -1795,6 +1795,26 @@ func TestAffinityPDInteraction(t *testing.T) {
 	}
 	checkAffinityGroupsInPD(t, dom, "test", "t1", false)
 
+	// A group can still conflict after PD has removed its last key range.
+	t.Run("alter rejects group with zero ranges", func(t *testing.T) {
+		ctx := context.Background()
+		tbl, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
+		require.NoError(t, err)
+		id := ddl.GetTableAffinityGroupID(store.GetCodec(), tbl.Meta().ID)
+		require.NoError(t, cli.manager.CreateAffinityGroupsIfNotExists(ctx, map[string][]pdhttp.AffinityGroupKeyRange{id: nil}))
+		cli.labelRules.Store(id, []pdhttp.AffinityGroupKeyRange(nil))
+		cli.legacyPD.Store(true)
+		t.Cleanup(func() {
+			cli.legacyPD.Store(false)
+			require.NoError(t, cli.BatchDeleteAffinityGroups(ctx, []string{id}, true))
+		})
+
+		require.ErrorContains(t, tk.ExecToErr("alter table t1 affinity = 'table'"), "409 Conflict")
+		tbl, err = dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
+		require.NoError(t, err)
+		require.Nil(t, tbl.Meta().Affinity, "failed ALTER must not publish affinity")
+	})
+
 	// Test 4: Alter table to add affinity back
 	tk.MustExec("alter table t1 affinity = 'table'")
 	checkAffinityGroupsInPD(t, dom, "test", "t1", true)
