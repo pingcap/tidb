@@ -225,6 +225,7 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 }
 
 func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
+	t.Run("lookup range count", testIndexJoinLookupRangeCount)
 	indexJoinCtx := prepareForAnalyzeLookUpFilters()
 	dsSchema := indexJoinCtx.dataSourceNode.Schema()
 	tests := []indexJoinTestCase{
@@ -350,6 +351,51 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	}
 	for i, tt := range tests {
 		testAnalyzeLookUpFilters(t, indexJoinCtx, &tt, fmt.Sprintf("test case: %v", i))
+	}
+}
+
+func testIndexJoinLookupRangeCount(t *testing.T) {
+	fixture := prepareForAnalyzeLookUpFilters()
+	ds := fixture.dataSourceNode
+	bValues := make([]string, 36)
+	cValues := make([]string, len(bValues))
+	for i := range bValues {
+		bValues[i] = fmt.Sprint(i)
+		cValues[i] = fmt.Sprintf("'%02d'", i)
+	}
+	predicate := fmt.Sprintf("b in (%s) and c in (%s)", strings.Join(bValues, ","), strings.Join(cValues, ","))
+	conds, err := rewriteSimpleExpr(ds.SCtx().GetExprCtx(), predicate, ds.Schema(), fixture.dsNames)
+	require.NoError(t, err)
+	info := &indexJoinPathInfo{
+		outerJoinKeys:         []*expression.Column{fixture.joinNode.Schema().Columns[ds.Schema().Len()]},
+		innerJoinKeys:         ds.Schema().Columns[:1],
+		innerSchema:           ds.Schema(),
+		innerPushedConditions: conds,
+	}
+	// The leading index column comes from the outer row, so the DataSource sees a full range.
+	build := func(width int) *indexJoinPathResult {
+		path := &util.AccessPath{
+			IdxCols:    fixture.path.IdxCols[:width],
+			IdxColLens: fixture.path.IdxColLens[:width],
+			Ranges:     ranger.FullRange(),
+		}
+		result, empty, err := indexJoinPathBuild(ds.SCtx(), path, info, false)
+		require.NoError(t, err)
+		require.False(t, empty)
+		require.NotNil(t, result)
+		require.Len(t, path.Ranges, 1)
+		return result
+	}
+	wide, narrow := build(3), build(1)
+	require.Len(t, wide.chosenRanges.Range(), 1296)
+	require.Len(t, narrow.chosenRanges.Range(), 1)
+	for _, tc := range []struct {
+		threshold int64
+		want      int
+	}{{1000, 0}, {1296, 1}, {0, 1}} {
+		require.Equal(t, tc.want, compareEqOrIn(wide.candidate, narrow.candidate, tc.threshold))
+		require.Equal(t, -tc.want, compareEqOrIn(narrow.candidate, wide.candidate, tc.threshold))
+		require.Equal(t, tc.want == 0, isBroadIndexLookup(wide.candidate, 10000, tc.threshold))
 	}
 }
 
