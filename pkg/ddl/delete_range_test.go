@@ -16,9 +16,14 @@ package ddl
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,6 +32,7 @@ type delRangeExecWrapperForTest struct {
 	consumed int
 	sql      string
 	params   []any
+	consume  func([]any) error
 }
 
 func (*delRangeExecWrapperForTest) UpdateTSOForJob() error { return nil }
@@ -45,6 +51,11 @@ func (w *delRangeExecWrapperForTest) AppendParamsList(jobID, elemID int64, start
 }
 
 func (w *delRangeExecWrapperForTest) ConsumeDeleteRange(_ context.Context, sql string) error {
+	if w.consume != nil {
+		if err := w.consume(w.params); err != nil {
+			return err
+		}
+	}
 	w.consumed++
 	w.sql = sql
 	return nil
@@ -102,5 +113,136 @@ func TestDoBatchDeleteTablesRangeSkipsRewrittenIDs(t *testing.T) {
 			require.Equal(t, tt.expectedComma, strings.Contains(wrapper.sql, insertDeleteRangeSQLValue+","+insertDeleteRangeSQLValue))
 			require.False(t, strings.HasSuffix(wrapper.sql, ","))
 		})
+	}
+}
+
+// TestColumnDeleteRangeMixedVersionRetry preserves legacy element IDs even when
+// an owner changes after any committed batch in a multi-schema job.
+func TestColumnDeleteRangeMixedVersionRetry(t *testing.T) {
+	for _, version := range []model.JobVersion{model.JobVersion1, model.JobVersion2} {
+		for _, tc := range []struct {
+			name         string
+			types        []model.ActionType
+			partitionIDs []int64
+		}{
+			{"drop columns", []model.ActionType{model.ActionDropColumn, model.ActionDropColumn}, []int64{20, 21}},
+			{"modify columns", []model.ActionType{model.ActionModifyColumn, model.ActionModifyColumn}, []int64{20, 21}},
+			{"mixed subjobs", []model.ActionType{model.ActionDropColumn, model.ActionModifyColumn, model.ActionDropIndex}, []int64{20, 21}},
+			{"nonpartitioned", []model.ActionType{model.ActionDropColumn, model.ActionModifyColumn}, nil},
+		} {
+			t.Run(fmt.Sprintf("v%d/%s", version, tc.name), func(t *testing.T) {
+				job := &model.Job{
+					ID: 100, TableID: 10, Version: version, Type: model.ActionMultiSchemaChange,
+					State: model.JobStateDone, MultiSchemaInfo: &model.MultiSchemaInfo{},
+				}
+				var legacyRanges, extraRanges []tblIdxID
+				for i, tp := range tc.types {
+					indexID := int64(i + 1)
+					proxy := &model.Job{Version: version, Type: tp}
+					switch tp {
+					case model.ActionDropColumn:
+						proxy.FillArgs(&model.TableColumnArgs{
+							Col: &model.ColumnInfo{}, IndexIDs: []int64{indexID}, PartitionIDs: tc.partitionIDs,
+						})
+					case model.ActionModifyColumn:
+						proxy.FillFinishedArgs(&model.ModifyColumnArgs{IndexIDs: []int64{indexID}, PartitionIDs: tc.partitionIDs})
+					case model.ActionDropIndex:
+						proxy.FillFinishedArgs(&model.ModifyIndexArgs{
+							OpType: model.OpDropIndex, PartitionIDs: tc.partitionIDs,
+							IndexArgs: []*model.IndexArg{{IndexID: indexID}},
+						})
+					}
+					_, err := proxy.Encode(true)
+					require.NoError(t, err)
+					job.MultiSchemaInfo.SubJobs = append(job.MultiSchemaInfo.SubJobs, &model.SubJob{
+						Type: tp, State: model.JobStateDone, RawArgs: proxy.RawArgs,
+					})
+					physicalIDs := tc.partitionIDs
+					if len(physicalIDs) == 0 {
+						physicalIDs = []int64{job.TableID}
+					}
+					for _, pid := range physicalIDs {
+						legacyRanges = append(legacyRanges, tblIdxID{physicalID: pid, indexID: indexID})
+					}
+					if len(tc.partitionIDs) > 0 && tp != model.ActionDropIndex {
+						extraRanges = append(extraRanges, tblIdxID{physicalID: job.TableID, indexID: indexID})
+					}
+				}
+				expectedRanges := append(legacyRanges[:len(legacyRanges):len(legacyRanges)], extraRanges...)
+				batchCount := len(legacyRanges)
+				if len(extraRanges) > 0 {
+					batchCount++
+				}
+				for committed := 0; committed <= batchCount; committed++ {
+					t.Run(fmt.Sprintf("committed_%d", committed), func(t *testing.T) {
+						type rangeKeys struct{ start, end string }
+						rows := make(map[int64]rangeKeys)
+						ownerChanged := errors.New("injected owner change")
+						newWrapper := func(failAfter int) *delRangeExecWrapperForTest {
+							batches := 0
+							return &delRangeExecWrapperForTest{
+								rewrite: map[int64]int64{10: 10, 20: 20, 21: 21},
+								consume: func(params []any) error {
+									if batches == failAfter {
+										return ownerChanged
+									}
+									batches++
+									// Each call commits independently. Match INSERT IGNORE's
+									// unique (job_id, element_id), even for conflicting keys.
+									for j := 0; j < len(params); j += 4 {
+										require.Equal(t, job.ID, params[j])
+										id := params[j+1].(int64)
+										if _, exists := rows[id]; !exists {
+											rows[id] = rangeKeys{params[j+2].(string), params[j+3].(string)}
+										}
+									}
+									return nil
+								},
+							}
+						}
+						err := AddDelRangeJobInternal(context.Background(), newWrapper(committed), job)
+						if committed < batchCount {
+							require.ErrorIs(t, err, ownerChanged)
+						} else {
+							require.NoError(t, err)
+						}
+						// An older owner only schedules the original ranges and starts
+						// its allocator from scratch. None may collide with new ranges.
+						var oldAllocator elementIDAlloc
+						for _, r := range legacyRanges {
+							require.NoError(t, doBatchDeleteIndiceRange(context.Background(), newWrapper(-1),
+								job.ID, r.physicalID, []int64{r.indexID}, &oldAllocator, "legacy owner retry"))
+						}
+						checkRanges := func(ranges []tblIdxID) {
+							for j, r := range ranges {
+								want := rangeKeys{
+									hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(r.physicalID, r.indexID)),
+									hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(r.physicalID, r.indexID+1)),
+								}
+								require.Equal(t, want, rows[int64(j+1)], "element ID %d", j+1)
+							}
+						}
+						checkRanges(legacyRanges)
+						// A new owner can subsequently add all logical-table ranges
+						// and retry again without changing any existing assignment.
+						for range 2 {
+							require.NoError(t, AddDelRangeJobInternal(context.Background(), newWrapper(-1), job))
+							checkRanges(expectedRanges)
+							require.Len(t, rows, len(expectedRanges))
+						}
+						// Resume a partially committed old-owner plan on the new owner.
+						clear(rows)
+						oldAllocator = elementIDAlloc{}
+						for _, r := range legacyRanges[:min(committed, len(legacyRanges))] {
+							require.NoError(t, doBatchDeleteIndiceRange(context.Background(), newWrapper(-1),
+								job.ID, r.physicalID, []int64{r.indexID}, &oldAllocator, "legacy owner"))
+						}
+						require.NoError(t, AddDelRangeJobInternal(context.Background(), newWrapper(-1), job))
+						checkRanges(expectedRanges)
+						require.Len(t, rows, len(expectedRanges))
+					})
+				}
+			})
+		}
 	}
 }
