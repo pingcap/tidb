@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -260,6 +261,13 @@ func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *logicalop.LogicalAg
 	if _, ok := join.Children()[childIdx].(*logicalop.LogicalJoin); ok {
 		return child, nil
 	}
+	conds := expression.ScalarFuncs2Exprs(join.EqualConditions)
+	conds = append(conds, join.LeftConditions...)
+	conds = append(conds, join.RightConditions...)
+	conds = append(conds, join.OtherConditions...)
+	if !checkJoinCondsCollation(join.SCtx().GetExprCtx(), child.Schema(), conds) {
+		return child, nil
+	}
 	tmpSchema := expression.NewSchema(gbyCols...)
 	for _, key := range child.Schema().PKOrUK {
 		if tmpSchema.ColumnsIndices(key) != nil { // gby item need to be covered by key.
@@ -288,6 +296,56 @@ func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *logicalop.LogicalAg
 		}
 	}
 	return agg, nil
+}
+
+// checkJoinCondsCollation returns false if a join condition may give different results for string values of a column
+// from the schema that the pushed agg puts into one group. The pushed agg groups by the column's collation and keeps
+// only one representative value per group, so unless the collation is binary, the column may only be used as a direct
+// argument of a string comparison or IN that compares with the column's own collation. Any other use, e.g.
+// `varbinary_col = general_ci_col`, `concat(col, 'x') = ...` or `col like ...`, may tell the grouped values apart.
+func checkJoinCondsCollation(ctx expression.BuildContext, schema *expression.Schema, conds []expression.Expression) bool {
+	evalCtx := ctx.GetEvalCtx()
+	// cmpColl is the collation of the comparison if expr is its direct argument, otherwise it is empty.
+	var check func(expr expression.Expression, cmpColl string) bool
+	check = func(expr expression.Expression, cmpColl string) bool {
+		switch x := expr.(type) {
+		case *expression.Column:
+			tp := x.GetType(evalCtx)
+			return !schema.Contains(x) || tp.EvalType() != types.ETString ||
+				tp.GetCollate() == charset.CollationBin || tp.GetCollate() == cmpColl
+		case *expression.ScalarFunction:
+			args := x.GetArgs()
+			argColl := ""
+			if _, isCmp := expression.CompareOpMap[x.FuncName.L]; (isCmp || x.FuncName.L == ast.In) && allStringArgs(evalCtx, args) {
+				ec, err := expression.CheckAndDeriveCollationFromExprs(ctx, x.FuncName.L, types.ETInt, args...)
+				if err != nil {
+					return false
+				}
+				argColl = ec.Collation
+			}
+			for _, arg := range args {
+				if !check(arg, argColl) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	for _, cond := range conds {
+		if !check(cond, "") {
+			return false
+		}
+	}
+	return true
+}
+
+func allStringArgs(ctx expression.EvalContext, args []expression.Expression) bool {
+	for _, arg := range args {
+		if arg.GetType(ctx).EvalType() != types.ETString {
+			return false
+		}
+	}
+	return true
 }
 
 func (*AggregationPushDownSolver) getDefaultValues(agg *logicalop.LogicalAggregation) ([]types.Datum, bool) {
