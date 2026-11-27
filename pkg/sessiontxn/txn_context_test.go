@@ -1070,6 +1070,45 @@ func TestTSOCmdCountForTextSql(t *testing.T) {
 	require.Equal(t, uint64(99), count)
 }
 
+func TestTSOCmdCountForSetCommitRollback(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/requestTsoFromPD", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/requestTsoFromPD"))
+	}()
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	sctx := tk.Session()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, v int, k int, key(k))")
+	tk.MustExec("insert into t values (1, 1, 1)")
+
+	tsoRequests := func(sqls ...string) uint64 {
+		sctx.SetValue(sessiontxn.TsoRequestCount, uint64(0))
+		for _, sql := range sqls {
+			if strings.HasPrefix(sql, "select") {
+				tk.MustQuery(sql)
+			} else {
+				tk.MustExec(sql)
+			}
+		}
+		count, _ := sctx.Value(sessiontxn.TsoRequestCount).(uint64)
+		return count
+	}
+
+	for isolation, explicitTxnRequests := range map[string]uint64{"REPEATABLE-READ": 1, "READ-COMMITTED": 2} {
+		tk.MustExec(fmt.Sprintf("set transaction_isolation = '%s'", isolation))
+		require.Zero(t, tsoRequests("set autocommit = 1", "set session transaction read write", "set @a = 1"), isolation)
+		require.Equal(t, uint64(1), tsoRequests("set @a = (select v from t where k = 1)"), isolation)
+		require.Equal(t, uint64(1), tsoRequests(
+			"set autocommit = 0", "select v from t where k = 1", "commit", "set autocommit = 1"), isolation)
+		require.Equal(t, uint64(1), tsoRequests(
+			"set autocommit = 0", "select v from t where k = 1", "rollback", "set autocommit = 1"), isolation)
+		require.Equal(t, explicitTxnRequests, tsoRequests("begin", "select v from t where k = 1", "commit"), isolation)
+		require.Equal(t, explicitTxnRequests, tsoRequests("begin", "select v from t where k = 1", "rollback"), isolation)
+	}
+}
+
 func TestStaleReadTxnWithAutocommitOff(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
