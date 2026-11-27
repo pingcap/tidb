@@ -6771,7 +6771,6 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 	hasAccessKey := false
 	hasSecretAccessKey := false
 	hasRoleARN := false
-	isNativeTOS := strings.EqualFold(u.Scheme, "tos")
 	for k, vs := range values {
 		normalizedK := objstore.NormalizeQueryParameterKey(k)
 		switch normalizedK {
@@ -6789,18 +6788,12 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 			hasSecretAccessKey = hasSecretAccessKey || values.Get(k) != ""
 		case s3like.S3RoleARN:
 			hasRoleARN = hasRoleARN || values.Get(k) != ""
-		case "provider":
-			for _, v := range vs {
-				if strings.EqualFold(v, s3like.TOSProvider) {
-					isNativeTOS = true
-				}
-			}
 		}
 	}
 
 	// Volcengine STS AssumeRole does not accept an ExternalId parameter, so
 	// tenant-isolated role-arn authentication is unsupported for TOS under SEM.
-	if isNativeTOS && hasRoleARN {
+	if strings.EqualFold(u.Scheme, "tos") && hasRoleARN {
 		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from TOS with role ARN")
 	}
 
