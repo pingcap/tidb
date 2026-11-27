@@ -176,3 +176,15 @@ set @@group_concat_max_len = 18446744073709551616;
 set @@group_concat_max_len='hello';
 set global group_concat_max_len = default;
 set @@session.group_concat_max_len = default;
+
+# Both numeric and boolean spellings must update the instance plan-recording switch.
+set @saved_record_plan = @@global.tidb_record_plan_in_slow_log;
+set global tidb_record_plan_in_slow_log = 0;
+select @@global.tidb_record_plan_in_slow_log;
+set global tidb_record_plan_in_slow_log = ON;
+select @@global.tidb_record_plan_in_slow_log;
+set tidb_record_plan_in_slow_log = OFF;
+select @@tidb_record_plan_in_slow_log;
+set global tidb_record_plan_in_slow_log = 1;
+select @@global.tidb_record_plan_in_slow_log;
+set global tidb_record_plan_in_slow_log = @saved_record_plan;
