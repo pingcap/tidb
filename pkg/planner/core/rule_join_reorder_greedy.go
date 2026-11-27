@@ -39,8 +39,7 @@ type joinReorderGreedySolver struct {
 //
 // cumulative join cost = CumCount(lhs) + CumCount(rhs) + RowCount(join)
 //
-//	For base node, its CumCount equals to the sum of the count of its subtree.
-//	See baseNodeCumCost for more details.
+//	For a leaf of the join group, CumCount is the sum of its subtree's estimated row counts.
 //
 // TODO: this formula can be changed to real physical cost in future.
 //
@@ -48,7 +47,7 @@ type joinReorderGreedySolver struct {
 // connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan) (base.LogicalPlan, error) {
 	var err error
-	s.curJoinGroup, err = s.generateJoinOrderNode(joinNodePlans)
+	s.curJoinGroup, err = generateJoinOrderNode(joinNodePlans)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +55,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan) (base.
 	if s.leadingJoinGroup != nil {
 		// We have a leading hint to let some tables join first. The result is stored in the s.leadingJoinGroup.
 		// We generate jrNode separately for it.
-		leadingJoinNodes, err = s.generateJoinOrderNode([]base.LogicalPlan{s.leadingJoinGroup})
+		leadingJoinNodes, err = generateJoinOrderNode([]base.LogicalPlan{s.leadingJoinGroup})
 		if err != nil {
 			return nil, err
 		}

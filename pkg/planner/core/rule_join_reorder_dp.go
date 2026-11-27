@@ -122,7 +122,7 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan) (base.LogicalP
 	}
 
 	// Now derive stats/costs for the (possibly Selection-wrapped) join group nodes.
-	joinGroupNodes, err := s.generateJoinOrderNode(joinGroup)
+	joinGroupNodes, err := generateJoinOrderNode(joinGroup)
 	if err != nil {
 		return nil, err
 	}

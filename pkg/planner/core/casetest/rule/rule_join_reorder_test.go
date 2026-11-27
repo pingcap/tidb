@@ -15,9 +15,13 @@
 package rule
 
 import (
+	"fmt"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -240,5 +244,136 @@ func TestJoinReorderSuite(t *testing.T) {
 				runJoinReorderTestData(t, testKit, "TestJoinOrderHint4NestedLeadingPK", cascades)
 			})
 		})
+	})
+}
+func TestGreedyOutputRowsAlternativeRound(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_opt_enable_advanced_join_reorder = on")
+	tk.MustExec("set tidb_opt_join_reorder_threshold = 0")
+	tk.MustExec("set tidb_enable_cascades_planner = off")
+
+	columnID := regexp.MustCompile(`Column#\d+`)
+	explain := func(query string) string {
+		rows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format='plan_tree' " + query).Rows())
+		return columnID.ReplaceAllString(strings.Join(rows, "\n"), "Column#")
+	}
+	plan := func(alternative, query string) string {
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = " + alternative)
+		return explain(query)
+	}
+	// roundRuns reports whether optimizing query attempts the greedy-output-rows round.
+	roundRuns := func(t *testing.T, query string) (runs bool) {
+		t.Run("round", func(t *testing.T) {
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/failIfAlternativeLogicalPlanRoundTriggered",
+				fmt.Sprintf("return(%q)", "greedy-output-rows:"+query))
+			err := tk.ExecToErr(query)
+			if err != nil {
+				require.ErrorContains(t, err, "unexpected alternative logical plan round")
+			}
+			runs = err != nil
+		})
+		return runs
+	}
+
+	t.Run("aggregation over a large join drives index lookups", func(t *testing.T) {
+		tk.MustExec("create database jr_inflate")
+		tk.MustExec("use jr_inflate")
+		tk.MustExec("create table members (id bigint primary key, v int not null)")
+		tk.MustExec("create table memberships (id bigint primary key, group_id bigint not null, member_id bigint not null, " +
+			"member_type varchar(32) not null, key idx_group(group_id, member_id, member_type))")
+		tk.MustExec("create table principals (id bigint primary key, owner_type varchar(32) not null, owner_id bigint not null, " +
+			"key idx_owner(owner_type, owner_id))")
+		tk.MustExec("create table roles (id bigint primary key, principal_type varchar(32) not null, principal_id bigint not null, " +
+			"key idx_principal(principal_id, principal_type))")
+		for _, name := range []string{"members", "memberships", "principals", "roles"} {
+			require.NoError(t, testkit.LoadTableStats("inflate_"+name+".json", dom))
+		}
+		query := func(group int) string {
+			return fmt.Sprintf("select r.id from roles r join principals p on r.principal_id = p.id "+
+				"join (select distinct m.id from members m join memberships g on m.id = g.member_id "+
+				"where g.group_id = %d and g.member_type = 'M') x on p.owner_id = x.id "+
+				"where r.principal_type = 'P' and p.owner_type = 'M'", group)
+		}
+
+		// Group 12345 has 10 members, but by default its aggregation is costed with
+		// the 1,000,000 member rows below it, so it is joined last and roles is scanned.
+		small := query(12345)
+		original := plan("off", small)
+		require.Contains(t, original, "TableFullScan")
+		alternative := plan("on", small)
+		require.NotContains(t, alternative, "TableFullScan")
+		require.Contains(t, alternative, "table:r, index:idx_principal(principal_id, principal_type)")
+		require.True(t, roundRuns(t, small))
+		// A LEADING hint that leaves one other input fixes the order, so the round is skipped.
+		require.False(t, roundRuns(t, strings.Replace(small, "select ", "select /*+ leading(r, p) */ ", 1)))
+		// A SET_VAR hint, which a binding can carry, enables the round for one statement.
+		hinted := strings.Replace(small, "select ", "select /*+ SET_VAR(tidb_opt_enable_alternative_logical_plans=ON) */ ", 1)
+		require.Equal(t, alternative, plan("off", hinted))
+
+		// Group 0 has 50,000 members, so members is read in full in either order.
+		big := query(0)
+		for _, alternative := range []string{"off", "on"} {
+			require.Contains(t, plan(alternative, big), "TableFullScan cop[tikv] table:m keep order:true")
+		}
+
+		// Only greedy join reorder of the advanced implementation arms the round.
+		tk.MustExec("set tidb_opt_join_reorder_threshold = 10")
+		require.False(t, roundRuns(t, small))
+		tk.MustExec("set tidb_opt_join_reorder_threshold = 0")
+		tk.MustExec("set tidb_opt_enable_advanced_join_reorder = off")
+		require.False(t, roundRuns(t, small))
+		tk.MustExec("set tidb_opt_enable_advanced_join_reorder = on")
+	})
+
+	t.Run("aggregation over a large table drives index probes", func(t *testing.T) {
+		tk.MustExec("create database jr_repro")
+		tk.MustExec("use jr_repro")
+		tk.MustExec("create table anchors (k int primary key, v int not null)")
+		tk.MustExec("create table fanout (id int primary key, k int not null, v int not null, index ix_k(k))")
+		tk.MustExec("create table agg_input (id int primary key, k int not null, v int not null)")
+		for _, name := range []string{"anchors", "fanout", "agg_input"} {
+			require.NoError(t, testkit.LoadTableStats("greedy_"+name+".json", dom))
+		}
+		query := "select sum(a.v + b.v + x.mx) from anchors a join fanout b on a.k = b.k " +
+			"join (select k, max(v) as mx from agg_input group by k) x on x.k = a.k"
+		original := plan("off", query)
+		alternative := plan("on", query)
+		require.NotEqual(t, original, alternative)
+		require.Contains(t, alternative, "table:b, index:ix_k(k)")
+		// Base tables cost the same either way, so the round is skipped.
+		require.False(t, roundRuns(t, "select sum(a.v + b.v + c.v) from anchors a join fanout b on a.k = b.k "+
+			"join agg_input c on c.k = a.k"))
+		// These aggregations are costed above their output rows, so the round runs.
+		// They rank the same way under both costings, so the round builds the same
+		// plan, and the plan of round 1 is kept.
+		aggs := "select count(*) from (select k, max(v) as mx from agg_input group by k) x " +
+			"join (select k, max(v) as mx from agg_input group by k) y on x.k = y.k " +
+			"join (select k, max(v) as mx from agg_input group by k) z on y.k = z.k"
+		require.True(t, roundRuns(t, aggs))
+		require.Equal(t, plan("off", aggs), plan("on", aggs))
+		// The round raises the same join hint conflicts, and only the warnings of
+		// the chosen plan are kept.
+		hinted := "select /*+ hash_join(x) merge_join(y) */ count(*) from (select k, max(v) as mx from agg_input group by k) x " +
+			"join (select k, max(v) as mx from agg_input group by k) y on x.k = y.k " +
+			"join (select k, max(v) as mx from agg_input group by k) z on y.k = z.k"
+		offPlan := plan("off", hinted)
+		offWarnings := tk.MustQuery("show warnings").Rows()
+		require.NotEmpty(t, offWarnings)
+		require.Equal(t, offPlan, plan("on", hinted))
+		require.Equal(t, offWarnings, tk.MustQuery("show warnings").Rows())
+
+		// A cached plan is only reused under the setting it was built with.
+		tk.MustExec("prepare st from '" + query + "'")
+		for _, alternative := range []string{"off", "on", "off"} {
+			tk.MustExec("set tidb_opt_enable_alternative_logical_plans = " + alternative)
+			tk.MustExec("execute st")
+			tk.MustExec("execute st")
+			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache, alternative)
+			process := tk.Session().ShowProcess()
+			tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*sessmgr.ProcessInfo{process}})
+			cached := testdata.ConvertRowsToStrings(tk.MustQuery(fmt.Sprintf("explain for connection %d", process.ID)).Rows())
+			require.Equal(t, alternative == "on", strings.Contains(strings.Join(cached, "\n"), "table:b, index:ix_k(k)"), alternative)
+		}
 	})
 }

@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -364,7 +366,7 @@ func (j *joinOrderDP) optimize() (base.LogicalPlan, error) {
 	}
 
 	detector := newConflictDetector(j.ctx)
-	nodes, err := detector.Build(j.group)
+	nodes, err := detector.Build(j.group, LegacyLeafCost)
 	if err != nil {
 		return nil, err
 	}
@@ -557,17 +559,48 @@ func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan 
 	return checkResult, newNode, nil
 }
 
+// armGreedyOutputRowsRound makes the greedy-output-rows alternative round
+// eligible when a group of at least three inputs has an input costed above its
+// output rows, as LegacyLeafCost also counts the rows below it. Otherwise both
+// costings rank the inputs the same way and build the same order, and with only
+// two inputs the physical optimizer already tries both sides of the join.
+func armGreedyOutputRowsRound(ctx base.PlanContext, nodes []*Node) {
+	if len(nodes) < 3 {
+		return
+	}
+	for _, node := range nodes {
+		if node.cumCost > outputRowsLeafCost(node.p) {
+			vars := ctx.GetSessionVars()
+			vars.RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+			if vars.EnableAlternativeLogicalPlans {
+				vars.StmtCtx.MarkAlternativeLogicalPlanGreedyOutputRows()
+			}
+			return
+		}
+	}
+}
+
 func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	group := j.group
 	detector := newConflictDetector(j.ctx)
-	nodes, err := detector.Build(group)
+	outputRows := j.ctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanGreedyOutputRows == stmtctx.AlternativeRoundActive
+	costLeaf := LegacyLeafCost
+	if outputRows {
+		costLeaf = outputRowsLeafCost
+	}
+	nodes, err := detector.Build(group, costLeaf)
 	if err != nil {
 		return nil, err
 	}
-	nodeWithHint, nodes, err := j.buildJoinByHint(detector, nodes)
+	nodeWithHint, rest, err := j.buildJoinByHint(detector, nodes)
 	if err != nil {
 		return nil, err
 	}
+	// A LEADING hint that leaves at most one other input fixes the order.
+	if !outputRows && (nodeWithHint == nil || len(rest) >= 2) {
+		armGreedyOutputRowsRound(j.ctx, nodes)
+	}
+	nodes = rest
 	if len(nodes) < 1 {
 		return nodeWithHint.p, nil
 	}

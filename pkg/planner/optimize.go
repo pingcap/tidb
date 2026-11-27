@@ -641,6 +641,11 @@ func shouldTrySemiJoinRewriteRound(sessVars *variable.SessionVars) bool {
 		!sessVars.EnableSemiJoinRewrite
 }
 
+func shouldTryGreedyOutputRowsRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanGreedyOutputRows == stmtctx.AlternativeRoundEligible
+}
+
 // shouldTryEngineRestrictedRounds holds the gates shared by the tikv-only and
 // tiflash-only rounds. They fire only when round 1's plan actually mixes TiKV
 // and TiFlash reads (a homogeneous plan was never costed as a whole), never
@@ -688,6 +693,21 @@ var alternativeRounds = [...]alternativeRound{
 		name:       "order-aware-reorder",
 		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
 		enabled:    shouldTryOrderAwareReorderRound,
+	},
+	{
+		// greedy-output-rows: rebuild with greedy join reorder costing each join
+		// group input by its estimated output rows. By default an input also
+		// counts the rows below it, so a small aggregation over a large join is
+		// joined last even when it could drive index lookups into the other
+		// inputs. Round 1 arms this round when a greedy group of at least three
+		// inputs has an input costed above its output rows.
+		name:    "greedy-output-rows",
+		enabled: shouldTryGreedyOutputRowsRound,
+		setup: func(sv *variable.SessionVars) func() {
+			sv.StmtCtx.AlternativeLogicalPlanGreedyOutputRows = stmtctx.AlternativeRoundActive
+			// This round is enabled only when round 1 made it eligible.
+			return func() { sv.StmtCtx.AlternativeLogicalPlanGreedyOutputRows = stmtctx.AlternativeRoundEligible }
+		},
 	},
 	{
 		name:       "correlate",
