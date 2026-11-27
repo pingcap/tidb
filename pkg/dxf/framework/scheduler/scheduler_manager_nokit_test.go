@@ -728,12 +728,18 @@ func TestSchedulerCleanFinishedTasks(t *testing.T) {
 
 func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 	// the tests make sure allocatedSlots correct.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/exitScheduler", "return()"))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/exitScheduler", "return()")
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	taskMgr := mock.NewMockTaskManager(ctrl)
 	mgr := NewManager(context.Background(), &storeWithKS{}, taskMgr, "1", proto.NodeResourceForTest)
+	// Keep schedulers registered until their slot allocation has been checked.
+	assertionsDone := make(chan struct{})
+	defer func() {
+		close(assertionsDone)
+		mgr.schedulerWG.Wait()
+	}()
 	expectRuntimeFromNewSession(ctrl, taskMgr, newRuntimeWithStore(t, ctrl, mgr.store))
 	RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param Param) Scheduler {
@@ -764,7 +770,9 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 	}
 	for i := 1; i <= 3; i++ {
 		taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(i)).Return(&proto.Task{TaskBase: *tasks[i-1]}, nil)
-		taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), int64(i)).Return(tasks[i-1], nil)
+		taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), int64(i)).Do(func(context.Context, int64) {
+			<-assertionsDone
+		}).Return(tasks[i-1], nil)
 	}
 
 	require.NoError(t, mgr.startSchedulers(tasks))
@@ -772,10 +780,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 	require.Equal(t, 3, len(schs))
 	for _, sch := range schs {
 		require.Equal(t, false, sch.(*BaseScheduler).allocatedSlots)
-		<-mgr.finishCh
 	}
-	mgr.schedulerWG.Wait()
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/exitScheduler"))
 }
 
 type crossKeyspaceStartCase struct {
