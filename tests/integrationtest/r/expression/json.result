@@ -922,3 +922,25 @@ NULL
 112844655
 select json_sum_crc32(j AS double ARRAY) from charTable;
 Error 1105 (HY000): Invalid JSON value for CAST to type double
+select tidb_json_keep_keys('{"cells":{"c1":1,"c2":2,"c3":3},"x":1}', '$.cells', '["c1","c3","c9"]');
+tidb_json_keep_keys('{"cells":{"c1":1,"c2":2,"c3":3},"x":1}', '$.cells', '["c1","c3","c9"]')
+{"cells": {"c1": 1, "c3": 3}, "x": 1}
+select tidb_json_keep_keys('{"x":1}', '$.cells', '["c1"]'), tidb_json_keep_keys('{"cells":[1]}', '$.cells', '["c1"]');
+tidb_json_keep_keys('{"x":1}', '$.cells', '["c1"]')	tidb_json_keep_keys('{"cells":[1]}', '$.cells', '["c1"]')
+{"x": 1}	{"cells": [1]}
+select tidb_json_keep_keys(null, '$.cells', '["c1"]'), tidb_json_keep_keys('{}', '$.cells', null);
+tidb_json_keep_keys(null, '$.cells', '["c1"]')	tidb_json_keep_keys('{}', '$.cells', null)
+NULL	NULL
+select tidb_json_keep_keys('{"cells":{}}', '$.*', '["c1"]');
+Error 3149 (42000): In this situation, path expressions may not contain the * and ** tokens or an array range.
+select tidb_json_keep_keys('{"cells":{}}', '$.cells', '["c1", 2]');
+Error 1210 (HY000): Incorrect arguments to tidb_json_keep_keys
+drop table if exists wb;
+create table wb (id bigint primary key, price int, meta json);
+insert into wb values (1, 10, '{"cells":{"price":{"state":"results"},"old_col":{"state":"error"},"total":{"state":"results"}}}'), (2, 5, '{"other":1}');
+update wb set price = 12, meta = tidb_json_keep_keys(json_set(meta, '$.cells.total.state', 'stale'), '$.cells', '["price","qty","total"]') where id in (1, 2);
+select id, price, meta from wb order by id;
+id	price	meta
+1	12	{"cells": {"price": {"state": "results"}, "total": {"state": "stale"}}}
+2	12	{"other": 1}
+drop table wb;

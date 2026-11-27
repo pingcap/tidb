@@ -64,6 +64,7 @@ var (
 	_ functionClass = &jsonStorageSizeFunctionClass{}
 	_ functionClass = &jsonDepthFunctionClass{}
 	_ functionClass = &jsonKeysFunctionClass{}
+	_ functionClass = &tidbJSONKeepKeysFunctionClass{}
 	_ functionClass = &jsonLengthFunctionClass{}
 
 	_ builtinFunc = &builtinJSONTypeSig{}
@@ -89,6 +90,7 @@ var (
 	_ builtinFunc = &builtinJSONSearchSig{}
 	_ builtinFunc = &builtinJSONKeysSig{}
 	_ builtinFunc = &builtinJSONKeys2ArgsSig{}
+	_ builtinFunc = &builtinTiDBJSONKeepKeysSig{}
 	_ builtinFunc = &builtinJSONLengthSig{}
 	_ builtinFunc = &builtinJSONValidJSONSig{}
 	_ builtinFunc = &builtinJSONValidStringSig{}
@@ -1935,6 +1937,84 @@ func (b *builtinJSONKeys2ArgsSig) evalJSON(ctx EvalContext, row chunk.Row) (res 
 	}
 
 	return res.GetKeys(), false, nil
+}
+
+type tidbJSONKeepKeysFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbJSONKeepKeysFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	return verifyJSONArgsType(ctx, c.funcName, true, args, 0, 2)
+}
+
+func (c *tidbJSONKeepKeysFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, types.ETJson, types.ETString, types.ETJson)
+	if err != nil {
+		return nil, err
+	}
+	// Evaluated in TiDB only: no pb code, so it is never pushed down.
+	sig := &builtinTiDBJSONKeepKeysSig{bf}
+	return sig, nil
+}
+
+// builtinTiDBJSONKeepKeysSig implements TIDB_JSON_KEEP_KEYS(json_doc, path, keys), which returns json_doc with the
+// object at path reduced to the keys listed in the JSON array of strings keys. json_doc is returned unchanged if
+// path doesn't exist or doesn't hold an object. See BinaryJSON.KeepObjectKeys.
+type builtinTiDBJSONKeepKeysSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinTiDBJSONKeepKeysSig) Clone() builtinFunc {
+	newSig := &builtinTiDBJSONKeepKeysSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTiDBJSONKeepKeysSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+	doc, isNull, err := b.args[0].EvalJSON(ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	path, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	keys, isNull, err := b.args[2].EvalJSON(ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	pathExpr, err := types.ParseJSONPathExpr(path)
+	if err != nil {
+		return res, true, err
+	}
+	if pathExpr.CouldMatchMultipleValues() {
+		return res, true, types.ErrInvalidJSONPathMultipleSelection
+	}
+	if keys.TypeCode != types.JSONTypeCodeArray {
+		return res, true, errIncorrectArgs.GenWithStackByArgs(ast.TiDBJSONKeepKeys)
+	}
+	keep := make(map[string]struct{}, keys.GetElemCount())
+	for i := range keys.GetElemCount() {
+		key := keys.ArrayGetElem(i)
+		if key.TypeCode != types.JSONTypeCodeString {
+			return res, true, errIncorrectArgs.GenWithStackByArgs(ast.TiDBJSONKeepKeys)
+		}
+		keep[string(key.GetString())] = struct{}{}
+	}
+	res, err = doc.KeepObjectKeys(pathExpr, keep)
+	if err != nil {
+		return res, true, err
+	}
+	return res, false, nil
 }
 
 type jsonLengthFunctionClass struct {

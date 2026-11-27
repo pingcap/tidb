@@ -614,3 +614,19 @@ insert into charTable values (2, '["a"]'), (4, null), (3, '["c"]');
 select json_sum_crc32(j AS char(10) ARRAY) from charTable;
 -- error 1105
 select json_sum_crc32(j AS double ARRAY) from charTable;
+
+# TestTiDBJSONKeepKeys
+select tidb_json_keep_keys('{"cells":{"c1":1,"c2":2,"c3":3},"x":1}', '$.cells', '["c1","c3","c9"]');
+select tidb_json_keep_keys('{"x":1}', '$.cells', '["c1"]'), tidb_json_keep_keys('{"cells":[1]}', '$.cells', '["c1"]');
+select tidb_json_keep_keys(null, '$.cells', '["c1"]'), tidb_json_keep_keys('{}', '$.cells', null);
+-- error 3149
+select tidb_json_keep_keys('{"cells":{}}', '$.*', '["c1"]');
+-- error 1210
+select tidb_json_keep_keys('{"cells":{}}', '$.cells', '["c1", 2]');
+# Lazy cleanup: each update also drops metadata for columns that no longer exist.
+drop table if exists wb;
+create table wb (id bigint primary key, price int, meta json);
+insert into wb values (1, 10, '{"cells":{"price":{"state":"results"},"old_col":{"state":"error"},"total":{"state":"results"}}}'), (2, 5, '{"other":1}');
+update wb set price = 12, meta = tidb_json_keep_keys(json_set(meta, '$.cells.total.state', 'stale'), '$.cells', '["price","qty","total"]') where id in (1, 2);
+select id, price, meta from wb order by id;
+drop table wb;
