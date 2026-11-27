@@ -303,14 +303,39 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
+		countAfterIndex := max(path.CountAfterAccess*selectivity, jointCountAfterIndex(ds, path))
 		if isIm {
-			path.CountAfterIndex = path.CountAfterAccess * selectivity
+			path.CountAfterIndex = countAfterIndex
 		} else {
-			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.StatsInfo().RowCount)
+			path.CountAfterIndex = math.Max(countAfterIndex, ds.StatsInfo().RowCount)
 		}
 	} else {
 		path.CountAfterIndex = path.CountAfterAccess
 	}
+}
+
+// jointCountAfterIndex estimates the rows an index path keeps after its access
+// conditions and index filters together, or 0 when it has no estimate.
+//
+// The filters' selectivity alone is taken over the whole table and multiplied
+// into CountAfterAccess, as if the filtered columns were independent of the
+// accessed ones. When a filtered value occurs only under some access keys, say
+// a type that belongs to one tenant, that undercounts the rows kept by as much
+// as the access conditions' own selectivity. Estimated together, the
+// conditions can use the statistics of an index that covers both, which see
+// the correlation. The estimate never exceeds CountAfterAccess.
+func jointCountAfterIndex(ds *logicalop.DataSource, path *util.AccessPath) float64 {
+	if len(path.AccessConds) == 0 || ds.StatisticTable.Pseudo {
+		return 0
+	}
+	conds := make([]expression.Expression, 0, len(path.AccessConds)+len(path.IndexFilters))
+	conds = append(conds, path.AccessConds...)
+	conds = append(conds, path.IndexFilters...)
+	selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, conds, nil)
+	if err != nil {
+		return 0
+	}
+	return min(path.CountAfterAccess, selectivity*ds.TableStats.RowCount)
 }
 
 // deriveTablePathStats will fulfill the information that the AccessPath need.
