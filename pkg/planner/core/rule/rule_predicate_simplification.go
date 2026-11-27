@@ -223,6 +223,7 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 		}
 	}
 	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
+	simplifiedPredicate = simplifyNullSafeEqualPredicates(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
@@ -548,6 +549,118 @@ func shortCircuitLogicalConstants(sctx base.PlanContext, predicates []expression
 	}
 
 	return finalResult
+}
+
+func simplifyNullSafeEqualPredicates(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+	for i, predicate := range predicates {
+		predicates[i] = simplifyNullSafeEqualPredicate(sctx, predicate)
+	}
+	return predicates
+}
+
+func simplifyNullSafeEqualPredicate(sctx base.PlanContext, predicate expression.Expression) expression.Expression {
+	sf, ok := predicate.(*expression.ScalarFunction)
+	if !ok {
+		return predicate
+	}
+
+	switch sf.FuncName.L {
+	case ast.LogicOr:
+		nullSafeEqual, rewritten := buildNullSafeEqualFromOR(sctx, sf)
+		if !rewritten {
+			return predicate
+		}
+		if expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), predicate) {
+			sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("null-safe equality predicate simplification is triggered")
+		}
+		return nullSafeEqual
+	case ast.LogicAnd:
+		cnfItems := expression.SplitCNFItems(sf)
+		rewritten := false
+		evalCtx := sctx.GetExprCtx().GetEvalCtx()
+		for i, item := range cnfItems {
+			newItem := simplifyNullSafeEqualPredicate(sctx, item)
+			if !newItem.Equal(evalCtx, item) {
+				cnfItems[i] = newItem
+				rewritten = true
+			}
+		}
+		if rewritten {
+			return expression.ComposeCNFCondition(sctx.GetExprCtx(), cnfItems...)
+		}
+	}
+
+	return predicate
+}
+
+func buildNullSafeEqualFromOR(sctx base.PlanContext, orFunc *expression.ScalarFunction) (expression.Expression, bool) {
+	dnfItems := expression.SplitDNFItems(orFunc)
+	if len(dnfItems) != 2 {
+		return nil, false
+	}
+
+	if nullSafeEqual, ok := buildNullSafeEqualFromItems(sctx, dnfItems[0], dnfItems[1]); ok {
+		return nullSafeEqual, true
+	}
+	return buildNullSafeEqualFromItems(sctx, dnfItems[1], dnfItems[0])
+}
+
+func buildNullSafeEqualFromItems(sctx base.PlanContext, equalItem, nullItem expression.Expression) (expression.Expression, bool) {
+	equalFunc, ok := equalItem.(*expression.ScalarFunction)
+	if !ok || equalFunc.FuncName.L != ast.EQ {
+		return nil, false
+	}
+	args := equalFunc.GetArgs()
+	if len(args) != 2 || expression.IsMutableEffectsExpr(args[0]) || expression.IsMutableEffectsExpr(args[1]) {
+		return nil, false
+	}
+	if _, ok := args[0].(*expression.Column); !ok {
+		return nil, false
+	}
+	if _, ok := args[1].(*expression.Column); !ok {
+		return nil, false
+	}
+
+	nullArgs, ok := extractIsNullArgs(nullItem)
+	if !ok {
+		return nil, false
+	}
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	matched := args[0].Equal(evalCtx, nullArgs[0]) && args[1].Equal(evalCtx, nullArgs[1])
+	matched = matched || args[0].Equal(evalCtx, nullArgs[1]) && args[1].Equal(evalCtx, nullArgs[0])
+	if !matched {
+		return nil, false
+	}
+
+	nullSafeEqual, err := expression.NewFunction(sctx.GetExprCtx(), ast.NullEQ, types.NewFieldType(mysql.TypeTiny), args...)
+	if err != nil {
+		return nil, false
+	}
+	return nullSafeEqual, true
+}
+
+func extractIsNullArgs(nullItem expression.Expression) ([2]expression.Expression, bool) {
+	cnfItems := expression.SplitCNFItems(nullItem)
+	var nullArgs [2]expression.Expression
+	if len(cnfItems) != len(nullArgs) {
+		return nullArgs, false
+	}
+
+	for i, item := range cnfItems {
+		isNullFunc, ok := item.(*expression.ScalarFunction)
+		if !ok || isNullFunc.FuncName.L != ast.IsNull || len(isNullFunc.GetArgs()) != 1 {
+			return nullArgs, false
+		}
+		nullArg := isNullFunc.GetArgs()[0]
+		if expression.IsMutableEffectsExpr(nullArg) {
+			return nullArgs, false
+		}
+		if _, ok := nullArg.(*expression.Column); !ok {
+			return nullArgs, false
+		}
+		nullArgs[i] = nullArg
+	}
+	return nullArgs, true
 }
 
 // removeRedundantORBranch recursively iterates over a list of predicates, try to find OR lists and remove redundant in
