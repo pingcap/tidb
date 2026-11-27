@@ -635,7 +635,12 @@ func TestGCSShouldRetry(t *testing.T) {
 }
 
 func TestCtxUsage(t *testing.T) {
-	httpSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	httpSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_request","error_description":"subject_token must be nonempty."}`))
+		}
+	}))
 	defer httpSvr.Close()
 
 	ctx := context.Background()
@@ -650,7 +655,8 @@ func TestCtxUsage(t *testing.T) {
 	"type":"external_account",
 	"audience":"//iam.googleapis.com/projects/1234567890123/locations/global/workloadIdentityPools/my-pool/providers/my-provider",
 	"subject_token_type":"urn:ietf:params:oauth:token-type:access_token",
-	"credential_source":{"url":"%s"}
+	"token_url":"%[1]s/token",
+	"credential_source":{"url":"%[1]s"}
 }`, httpSvr.URL),
 	}
 	stg, err := NewGCSStorage(ctx, gcs, &storeapi.Options{})
