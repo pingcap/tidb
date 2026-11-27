@@ -6630,6 +6630,10 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 			if len(spec.PartDefinitions) > 0 {
 				numParts = uint64(len(meta.Partition.Definitions)) + uint64(len(spec.PartDefinitions))
 			} else {
+				// Check spec.Num on its own first so the sum below can't overflow.
+				if spec.Num > uint64(mysql.PartitionCountLimit) {
+					return nil, errors.Trace(dbterror.ErrTooManyPartitions)
+				}
 				numParts = uint64(len(meta.Partition.Definitions)) + spec.Num
 			}
 		}
