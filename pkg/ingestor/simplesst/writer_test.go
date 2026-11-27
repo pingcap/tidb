@@ -324,8 +324,6 @@ func TestWriterKeyHints(t *testing.T) {
 					expectedSize += uint64(len(key)*2 + len("value:"))
 				}
 				require.Equal(t, tc.prefix, string(writer.commonPrefix))
-				// A failed flush may be followed by another flush during cleanup.
-				require.Equal(t, tc.exactHints, writer.updateKeyHints())
 				require.Equal(t, tc.exactHints, writer.updateKeyHints())
 				require.NoError(t, writer.flushKVs(ctx, false))
 				require.Empty(t, writer.commonPrefix)
@@ -399,6 +397,144 @@ func TestWriterKeyHints(t *testing.T) {
 		require.NoError(t, recWriter.Close(ctx))
 		require.EqualValues(t, 3, summary.TotalCnt)
 		require.EqualValues(t, 1, summary.ConflictInfo.Count)
+	})
+
+	t.Run("fallback-hint-collision-duplicate-modes", func(t *testing.T) {
+		ctx := context.Background()
+		// Keys share the 8-byte hint "01234567" beyond "prefix/" (exactHints == false)
+		// while also containing a true duplicate ("prefix/01234567a").
+		dupKeys := []string{
+			"prefix/01234567z",
+			"prefix/01234567a",
+			"prefix/z",
+			"prefix/01234567a",
+		}
+
+		// OnDuplicateKeyError: fallback comparison must detect the true duplicate
+		// and return its key/value (and survive a cleanup Close re-entering flushKVs).
+		errWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyError).
+			Build(objstore.NewMemStorage(), "/fallback-dup-err", "0")
+		for _, key := range dupKeys {
+			require.NoError(t, errWriter.WriteRow(ctx, []byte(key), []byte("v:"+key), nil))
+		}
+		require.False(t, errWriter.updateKeyHints())
+		err := errWriter.flushKVs(ctx, false)
+		require.ErrorIs(t, err, common.ErrFoundDuplicateKeys)
+		require.Contains(t, err.Error(), fmt.Sprintf("%x", "prefix/01234567a"))
+		require.Contains(t, err.Error(), fmt.Sprintf("%x", "v:prefix/01234567a"))
+		require.ErrorIs(t, errWriter.Close(ctx), common.ErrFoundDuplicateKeys)
+
+		// OnDuplicateKeyRemove: removes all occurrences of the duplicate key while
+		// keeping colliding distinct keys sorted.
+		var summary *WriterSummary
+		rmStore := objstore.NewMemStorage()
+		rmWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyRemove).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(rmStore, "/fallback-dup-rm", "0")
+		for _, key := range dupKeys {
+			require.NoError(t, rmWriter.WriteRow(ctx, []byte(key), []byte("v:"+key), nil))
+		}
+		require.False(t, rmWriter.updateKeyHints())
+		require.NoError(t, rmWriter.Close(ctx))
+		require.EqualValues(t, 2, summary.TotalCnt)
+		require.Equal(t, []KVPair{
+			{Key: []byte("prefix/01234567z"), Value: []byte("v:prefix/01234567z")},
+			{Key: []byte("prefix/z"), Value: []byte("v:prefix/z")},
+		}, readKVFile(t, rmStore, summary.MultipleFilesStats[0].Filenames[0][0]))
+
+		// OnDuplicateKeyRecord: keeps 2 copies of the 3x duplicate in the main file
+		// and writes the 3rd copy into the conflict file.
+		recStore := objstore.NewMemStorage()
+		recWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyRecord).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(recStore, "/fallback-dup-rec", "0")
+		for _, key := range append(slices.Clone(dupKeys), "prefix/01234567a") {
+			require.NoError(t, recWriter.WriteRow(ctx, []byte(key), []byte("v:"+key), nil))
+		}
+		require.False(t, recWriter.updateKeyHints())
+		require.NoError(t, recWriter.Close(ctx))
+		require.EqualValues(t, 4, summary.TotalCnt)
+		require.EqualValues(t, 1, summary.ConflictInfo.Count)
+		require.Len(t, summary.ConflictInfo.Files, 1)
+		require.Equal(t, []KVPair{
+			{Key: []byte("prefix/01234567a"), Value: []byte("v:prefix/01234567a")},
+			{Key: []byte("prefix/01234567a"), Value: []byte("v:prefix/01234567a")},
+			{Key: []byte("prefix/01234567z"), Value: []byte("v:prefix/01234567z")},
+			{Key: []byte("prefix/z"), Value: []byte("v:prefix/z")},
+		}, readKVFile(t, recStore, summary.MultipleFilesStats[0].Filenames[0][0]))
+		require.Equal(t, []KVPair{
+			{Key: []byte("prefix/01234567a"), Value: []byte("v:prefix/01234567a")},
+		}, readKVFile(t, recStore, summary.ConflictInfo.Files[0]))
+
+		// OnDuplicateKeyIgnore: preserves all keys in sorted order.
+		ignStore := objstore.NewMemStorage()
+		ignWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyIgnore).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(ignStore, "/fallback-dup-ign", "0")
+		for _, key := range dupKeys {
+			require.NoError(t, ignWriter.WriteRow(ctx, []byte(key), []byte("v:"+key), nil))
+		}
+		require.False(t, ignWriter.updateKeyHints())
+		require.NoError(t, ignWriter.Close(ctx))
+		require.EqualValues(t, 4, summary.TotalCnt)
+		require.Equal(t, []KVPair{
+			{Key: []byte("prefix/01234567a"), Value: []byte("v:prefix/01234567a")},
+			{Key: []byte("prefix/01234567a"), Value: []byte("v:prefix/01234567a")},
+			{Key: []byte("prefix/01234567z"), Value: []byte("v:prefix/01234567z")},
+			{Key: []byte("prefix/z"), Value: []byte("v:prefix/z")},
+		}, readKVFile(t, ignStore, summary.MultipleFilesStats[0].Filenames[0][0]))
+	})
+
+	t.Run("reenter-flush-after-flush-error", func(t *testing.T) {
+		ctx := context.Background()
+		store := &writerFailNCloseStorage{
+			Storage:       objstore.NewMemStorage(),
+			failRemaining: flushKVsRetryTimes,
+		}
+		var summary *WriterSummary
+		writer := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyError).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(store, "/reenter-flush", "0")
+
+		keys := []string{
+			"prefix/01234567z",
+			"prefix/01234567a",
+			"prefix/z",
+			"prefix/01234567m",
+		}
+		for _, key := range keys {
+			require.NoError(t, writer.WriteRow(ctx, []byte(key), []byte("v:"+key), nil))
+		}
+
+		// Exhaust all internal retries so flushKVs returns an error with buffered KVs intact.
+		require.ErrorContains(t, writer.flushKVs(ctx, false), "injected close fail")
+		require.Zero(t, store.failRemaining)
+		require.Len(t, writer.kvLocations, len(keys))
+
+		// Subsequent Close re-enters flushKVs -> sortKVs -> updateKeyHints and succeeds.
+		require.NoError(t, writer.Close(ctx))
+		require.EqualValues(t, len(keys), summary.TotalCnt)
+		require.Equal(t, []KVPair{
+			{Key: []byte("prefix/01234567a"), Value: []byte("v:prefix/01234567a")},
+			{Key: []byte("prefix/01234567m"), Value: []byte("v:prefix/01234567m")},
+			{Key: []byte("prefix/01234567z"), Value: []byte("v:prefix/01234567z")},
+			{Key: []byte("prefix/z"), Value: []byte("v:prefix/z")},
+		}, readKVFile(t, store.Storage, summary.MultipleFilesStats[0].Filenames[0][0]))
 	})
 }
 
@@ -949,6 +1085,39 @@ func (w *firstCloseFailWriter) Close(ctx context.Context) error {
 	if *w.shouldFail {
 		*w.shouldFail = false
 		return fmt.Errorf("first close fail")
+	}
+	return w.Writer.Close(ctx)
+}
+
+type writerFailNCloseStorage struct {
+	storeapi.Storage
+	failRemaining int
+}
+
+func (s *writerFailNCloseStorage) Create(
+	ctx context.Context,
+	path string,
+	option *storeapi.WriterOption,
+) (objectio.Writer, error) {
+	w, err := s.Storage.Create(ctx, path, option)
+	if err != nil {
+		return nil, err
+	}
+	if strings.Contains(path, statSuffix) {
+		return &failNCloseWriter{Writer: w, failRemaining: &s.failRemaining}, nil
+	}
+	return w, nil
+}
+
+type failNCloseWriter struct {
+	objectio.Writer
+	failRemaining *int
+}
+
+func (w *failNCloseWriter) Close(ctx context.Context) error {
+	if *w.failRemaining > 0 {
+		*w.failRemaining--
+		return fmt.Errorf("injected close fail")
 	}
 	return w.Writer.Close(ctx)
 }

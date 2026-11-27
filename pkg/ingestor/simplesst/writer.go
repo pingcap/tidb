@@ -530,8 +530,6 @@ func (w *Writer) updateKeyHints() (exactHints bool) {
 	firstKeyLen := -1
 	exactHints = true
 	for i, loc := range w.kvLocations {
-		// Read the length from the encoded KV so recomputing hints after a
-		// failed flush does not interpret a previous hint as a key length.
 		key := w.getKeyByLoc(&loc)
 		if firstKeyLen == -1 {
 			firstKeyLen = len(key)
