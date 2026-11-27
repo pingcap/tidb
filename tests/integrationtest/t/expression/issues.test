@@ -768,6 +768,13 @@ insert into t values (1);
 insert into t select values(a) from t;
 select * from t;
 
+# TestBitTypeCaseVecEvalString
+drop table if exists t48;
+create table t48 (c1 BIT);
+insert into t48 values (b'1');
+select AES_ENCRYPT(COT(-9749), CASE -65 WHEN c1 THEN c1 END) FROM t48;
+select HEX(AES_ENCRYPT('test', CASE 1 WHEN c1 THEN c1 END)) FROM t48;
+
 # TestIssue20730
 DROP TABLE IF EXISTS tmp;
 CREATE TABLE tmp (id int(11) NOT NULL,value int(1) NOT NULL,PRIMARY KEY (id));
