@@ -799,7 +799,9 @@ func TestMVServiceMaybeGCMVHistoryReportsMetrics(t *testing.T) {
 		svc.maybeGCOperationHistory(startAt)
 		require.Equal(t, int32(0), helper.historyGCCalls.Load())
 		require.Eventually(t, func() bool {
-			return helper.runEventCount(mvRunEventGetTSOErr) > 0
+			// The error metric is recorded before the GC worker clears its running flag.
+			// Wait for completion so the retry below is not skipped as overlapping GC.
+			return helper.runEventCount(mvRunEventGetTSOErr) > 0 && !svc.historyGCRunning.Load()
 		}, testEventuallyWait, testEventuallyTick)
 
 		helper.currentTSOErr = nil
