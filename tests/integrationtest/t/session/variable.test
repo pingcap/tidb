@@ -176,3 +176,15 @@ set @@group_concat_max_len = 18446744073709551616;
 set @@group_concat_max_len='hello';
 set global group_concat_max_len = default;
 set @@session.group_concat_max_len = default;
+
+# sql_log_off uses boolean validation rather than a no-op string variable.
+SET SESSION sql_log_off = 1;
+SELECT @@SESSION.sql_log_off;
+SET SESSION sql_log_off = 0;
+SELECT @@SESSION.sql_log_off;
+SET SESSION sql_log_off = ON;
+SELECT @@SESSION.sql_log_off;
+SET SESSION sql_log_off = OFF;
+SELECT @@SESSION.sql_log_off;
+--error 1231
+SET SESSION sql_log_off = 2;
