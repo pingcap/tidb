@@ -556,8 +556,27 @@ func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 }
 
 // DecodeHandleToDatumMap decodes a handle into datum map.
+// Columns that need restored data are skipped, since the handle only holds
+// their sort keys and the original values are in the row value.
 func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	return decodeHandleToDatumMap(handle, handleColIDs, cols, loc, row, false)
+}
+
+// DecodeKeyHandleToDatumMap is like DecodeHandleToDatumMap, but for callers that
+// only have the key and no row value. It also decodes varchar columns with a
+// _bin collation from the handle. Their sort key is the original string with
+// trailing spaces removed (these collations are PAD SPACE; the number of removed
+// spaces is kept in the row value), so the decoded value equals the original
+// under the column's collation but may lack its trailing spaces. Index keys
+// decoded without their value behave the same way.
+func DecodeKeyHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
+	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	return decodeHandleToDatumMap(handle, handleColIDs, cols, loc, row, true)
+}
+
+func decodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
+	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum, decodeBinVarchar bool) (map[int64]types.Datum, error) {
 	if handle == nil || len(handleColIDs) == 0 {
 		return row, nil
 	}
@@ -569,7 +588,8 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 		if !ok {
 			continue
 		}
-		if types.NeedRestoredData(ft) {
+		if types.NeedRestoredData(ft) &&
+			!(decodeBinVarchar && types.IsTypeVarchar(ft.GetType()) && collate.IsBinCollation(ft.GetCollate())) {
 			continue
 		}
 		d, err := decodeHandleToDatum(handle, ft, idx)
