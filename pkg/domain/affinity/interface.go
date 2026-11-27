@@ -53,10 +53,56 @@ func CreateGroupsIfNotExists(ctx context.Context, groups map[string][]pdhttp.Aff
 	if len(groups) == 0 {
 		return nil
 	}
+<<<<<<< HEAD
 	return manager.CreateAffinityGroupsIfNotExists(ctx, groups)
+=======
+	return retryTransientError(ctx, func(reqCtx context.Context) error {
+		return manager.CreateAffinityGroupsIfNotExists(reqCtx, groups)
+	}, isRetryableError)
 }
 
-// DeleteGroups removes affinity groups in PD with force=true.
+// retryTransientError retries idempotent PD requests without holding up a
+// cancelled job step. maxRetryTimes counts retries after the first request.
+func retryTransientError(ctx context.Context, operation func(context.Context) error, isRetryable func(error) bool) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for i := 0; ; i++ {
+		if err := ctx.Err(); err != nil {
+			return errors.Trace(err)
+		}
+		err := operation(ctx)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
+		if !isRetryable(err) || i == maxRetryTimes {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Trace(ctx.Err())
+		case <-time.After(retryInterval):
+		}
+	}
+}
+
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if _, ok := err.(*affinityGroupCreateConflict); ok {
+		return true
+	}
+	code, ok := extractPDHTTPStatusCode(err)
+	return !ok || code >= http.StatusInternalServerError
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
+}
+
+// DeleteGroups removes affinity groups in PD with force=true. It succeeds if
+// the groups are already absent or PD does not support affinity groups.
 func DeleteGroups(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil

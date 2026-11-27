@@ -335,17 +335,38 @@ func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model
 		return ver, nil
 	}
 	pi := tblInfo.Partition
+<<<<<<< HEAD
+=======
+	args, argsErr := model.GetTruncateTableArgs(job)
+	if tblInfo.Affinity != nil && tblInfo.Affinity.Level == ast.TableAffinityLevelPartition {
+		// PD may have created groups before the replacement IDs reached table metadata.
+		deleteErr := argsErr
+		if deleteErr == nil && args != nil && len(args.NewPartitionIDs) != 0 {
+			deleteErr = deleteTableAffinityGroupsWithTimeout(jobCtx, tblInfo, partitionDefinitionsFromIDs(args.NewPartitionIDs))
+		}
+		if deleteErr != nil {
+			logutil.DDLLogger().Warn("failed to delete replacement partition affinity groups during rollback", zap.Error(deleteErr), zap.Int64("tableID", tblInfo.ID))
+		}
+	}
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
 	if len(pi.NewPartitionIDs) != 0 || pi.DDLAction != model.ActionNone || pi.DDLState != model.StateNone {
 		// Rollback the changes, note that no new partitions has been used yet!
 		// so only metadata rollback and we can cancel the DDL
 		tblInfo.Partition.NewPartitionIDs = nil
 		tblInfo.Partition.DDLAction = model.ActionNone
 		tblInfo.Partition.DDLState = model.StateNone
+		// Transitioning into JobStateRollingback makes runOneJobStep re-encode job
+		// arguments, so refill the decoded args first to keep V1/V2 partition IDs intact.
+		if argsErr == nil && args != nil {
+			jobCtx.jobArgs = args
+			job.FillArgs(args)
+		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		return ver, nil
+		job.State = model.JobStateRollingback
+		return ver, errors.Trace(otherwiseErr)
 	}
 	// No change yet, just cancel the job.
 	job.State = model.JobStateCancelled
