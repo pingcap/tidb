@@ -568,7 +568,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
 			path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
 				util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 			// If index columns can cover all the needed columns, we can use a IndexGather + IndexScan.
-			if ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens) {
+			if ds.IsSingleScan(path.Index, path.FullIdxCols, path.FullIdxColLens) {
 				gathers = append(gathers, ds.buildIndexGather(path))
 			}
 			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
@@ -752,21 +752,107 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 }
 
 // IsSingleScan checks whether all the needed columns and conditions can be covered by the index.
-func (ds *DataSource) IsSingleScan(indexColumns []*expression.Column, idxColLens []int) bool {
-	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || ds.ColsRequiringFullLen == nil {
+// The conditions that are true for every row of index when it's a partial index are not
+// evaluated when reading from it (see RemoveConditionsGuaranteedByIndex), so they don't need
+// to be covered. index can be nil.
+func (ds *DataSource) IsSingleScan(index *model.IndexInfo, indexColumns []*expression.Column, idxColLens []int) bool {
+	if !ds.isIndexCoveringNeededColumns(index, indexColumns, idxColLens) {
+		return false
+	}
+	// When every schema column is used only by guaranteed conditions, for example
+	// `select 1 ... where j is not null` on an index `where j is not null`, the index
+	// scan would output no column, but the operators above still reference one of them.
+	// Read the table instead.
+	return ds.SingleScanSchema(index, indexColumns, idxColLens).Len() > 0
+}
+
+func (ds *DataSource) isIndexCoveringNeededColumns(index *model.IndexInfo, indexColumns []*expression.Column, idxColLens []int) bool {
+	if ds.ColsRequiringFullLen == nil {
 		// ds.ColsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
 		// and ds.ColsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
 		return ds.IsIndexCoveringColumns(ds.Schema().Columns, indexColumns, idxColLens)
 	}
+	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan {
+		// Every column in the schema must be fully covered, except the columns that only
+		// conditions guaranteed by the partial index use.
+		return ds.IsIndexCoveringColumns(ds.columnsExceptGuaranteedOnly(index), indexColumns, idxColLens)
+	}
 	if !ds.IsIndexCoveringColumns(ds.ColsRequiringFullLen, indexColumns, idxColLens) {
 		return false
 	}
+	indexConds := ds.PartialIndexConds(index)
 	for _, cond := range ds.AllConds {
+		if ds.isGuaranteedByIndexConds(indexConds, cond) {
+			continue
+		}
 		if !ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens) {
 			return false
 		}
 	}
 	return true
+}
+
+// columnsExceptGuaranteedOnly returns the schema columns without the ones that only the
+// conditions guaranteed by the partial index use: columns that are not output and are not
+// used by any other condition.
+func (ds *DataSource) columnsExceptGuaranteedOnly(index *model.IndexInfo) []*expression.Column {
+	columns := ds.Schema().Columns
+	indexConds := ds.PartialIndexConds(index)
+	if len(indexConds) == 0 {
+		return columns
+	}
+	var guaranteedConds, otherConds []expression.Expression
+	for _, cond := range ds.AllConds {
+		if ds.isGuaranteedByIndexConds(indexConds, cond) {
+			guaranteedConds = append(guaranteedConds, cond)
+		} else {
+			otherConds = append(otherConds, cond)
+		}
+	}
+	if len(guaranteedConds) == 0 {
+		return columns
+	}
+	guaranteedCols := expression.NewSchema(expression.ExtractColumnsFromExpressions(guaranteedConds, nil)...)
+	otherCols := expression.NewSchema(expression.ExtractColumnsFromExpressions(otherConds, nil)...)
+	outputCols := expression.NewSchema(ds.ColsRequiringFullLen...)
+	needed := make([]*expression.Column, 0, len(columns))
+	for _, col := range columns {
+		if guaranteedCols.Contains(col) && !otherCols.Contains(col) && !outputCols.Contains(col) {
+			continue
+		}
+		needed = append(needed, col)
+	}
+	return needed
+}
+
+// SingleScanSchema returns the schema that a scan reading only the index (no table lookup)
+// should output. The data source schema still has the columns that conditions use, but
+// IsSingleScan does not require the columns of conditions that a partial index guarantees
+// to be in the index. Nothing above the scan reads them, because those conditions are not
+// evaluated, so they are left out here. Otherwise the reader would output a column that
+// the index does not have.
+func (ds *DataSource) SingleScanSchema(index *model.IndexInfo, indexColumns []*expression.Column, idxColLens []int) *expression.Schema {
+	schema := ds.Schema()
+	if index == nil || index.ConditionExprString == "" {
+		return schema
+	}
+	var kept []*expression.Column
+	for i, col := range schema.Columns {
+		if ds.indexCoveringColumn(col, indexColumns, idxColLens, true) {
+			if kept != nil {
+				kept = append(kept, col)
+			}
+			continue
+		}
+		if kept == nil {
+			kept = make([]*expression.Column, 0, schema.Len()-1)
+			kept = append(kept, schema.Columns[:i]...)
+		}
+	}
+	if kept == nil {
+		return schema
+	}
+	return expression.NewSchema(kept...)
 }
 
 // IsIndexCoveringColumns checks whether all the needed columns can be covered by the index.
@@ -864,13 +950,74 @@ func (ds *DataSource) AppendTableCol(col *expression.Column) {
 	ds.TblColsByID[col.ID] = col
 }
 
+// PartialIndexConds returns the CNF items of the WHERE condition of a partial index, built on
+// the columns of ds. It returns nil if index is not a partial index, or if the condition can't
+// be built on ds, e.g. because the columns it references were pruned.
+func (ds *DataSource) PartialIndexConds(index *model.IndexInfo) []expression.Expression {
+	if index == nil || index.ConditionExprString == "" {
+		return nil
+	}
+	columnNames := make(types.NameSlice, 0, ds.schema.Len())
+	for i := range ds.Schema().Columns {
+		columnNames = append(columnNames, &types.FieldName{
+			TblName: ds.TableInfo.Name,
+			ColName: ds.Columns[i].Name,
+		})
+	}
+	expr, err := expression.ParseSimpleExpr(ds.SCtx().GetExprCtx(), index.ConditionExprString, expression.WithInputSchemaAndNames(ds.schema, columnNames, ds.TableInfo))
+	if err != nil {
+		return nil
+	}
+	return expression.SplitCNFItems(expr)
+}
+
+// isGuaranteedByIndexConds returns whether cond is true for every row of an index whose
+// WHERE condition has the CNF items indexConds, because cond is one of them. A cond with
+// constants that may change between executions of a cached plan is never guaranteed, since
+// the index condition only guarantees the values in its definition.
+func (ds *DataSource) isGuaranteedByIndexConds(indexConds []expression.Expression, cond expression.Expression) bool {
+	for _, indexCond := range indexConds {
+		if partidx.IsSameCondition(ds.SCtx().GetExprCtx(), cond, indexCond) {
+			return true
+		}
+	}
+	return false
+}
+
+// RemoveConditionsGuaranteedByIndex returns conds without the conditions that are true for
+// every row of the partial index, see isGuaranteedByIndexConds. Such conditions don't need to
+// be evaluated when reading from the index, so the columns they reference don't need to be
+// covered by it. conds is not modified. It returns conds itself if nothing is removed.
+func (ds *DataSource) RemoveConditionsGuaranteedByIndex(index *model.IndexInfo, conds []expression.Expression) []expression.Expression {
+	indexConds := ds.PartialIndexConds(index)
+	if len(indexConds) == 0 {
+		return conds
+	}
+	var remained []expression.Expression
+	for i, cond := range conds {
+		if !ds.isGuaranteedByIndexConds(indexConds, cond) {
+			if remained != nil {
+				remained = append(remained, cond)
+			}
+			continue
+		}
+		if remained == nil {
+			remained = make([]expression.Expression, 0, len(conds)-1)
+			remained = append(remained, conds[:i]...)
+		}
+	}
+	if remained == nil {
+		return conds
+	}
+	return remained
+}
+
 // CheckPartialIndexes checks and removes the partial indexes that cannot be used according to the pushed down conditions.
 // It will go through each partial index to see whether it's condition constraints are all satisfied by the pushed down conditions.
 // Detailed checking can be found in the comment of `CheckConstraints`.
 // And we specially implement a `AlwaysMeetConstraints` function for IS NOT NULL constraint to make it suitable for plan cache.
 // It's a special handler now, and it's not easy to extend to other constraints.
 func (ds *DataSource) CheckPartialIndexes() {
-	var columnNames types.NameSlice
 	var removedPaths map[int64]struct{}
 	partialIndexUsedHint, hasPartialIndex := false, false
 	for _, path := range ds.PossibleAccessPaths {
@@ -880,19 +1027,8 @@ func (ds *DataSource) CheckPartialIndexes() {
 			continue
 		}
 		hasPartialIndex = true
-		if columnNames == nil {
-			columnNames = make(types.NameSlice, 0, ds.schema.Len())
-			for i := range ds.Schema().Columns {
-				columnNames = append(columnNames, &types.FieldName{
-					TblName: ds.TableInfo.Name,
-					ColName: ds.Columns[i].Name,
-				})
-			}
-		}
-		// Convert the raw string expression to Expression.
-		expr, err := expression.ParseSimpleExpr(ds.SCtx().GetExprCtx(), path.Index.ConditionExprString, expression.WithInputSchemaAndNames(ds.schema, columnNames, ds.TableInfo))
-		cnfExprs := expression.SplitCNFItems(expr)
-		if err != nil || !partidx.CheckConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds) {
+		cnfExprs := ds.PartialIndexConds(path.Index)
+		if len(cnfExprs) == 0 || !partidx.CheckConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds) {
 			if removedPaths == nil {
 				removedPaths = make(map[int64]struct{})
 			}

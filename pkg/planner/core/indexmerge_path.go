@@ -389,6 +389,12 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), partialFilters...) {
 		dedupedFinalFilters = append(dedupedFinalFilters, partialFilters...)
 	}
+	// Every row of the intersection is a row of each partial path's index, so a filter that
+	// a partial index guarantees is true for all of them. This also drops such a filter after
+	// it was added back above; filters with mutable constants are never guaranteed.
+	for _, path := range partialPaths {
+		dedupedFinalFilters = ds.RemoveConditionsGuaranteedByIndex(path.Index, dedupedFinalFilters)
+	}
 
 	// 3. Estimate the row count after partial paths.
 	sel, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, partialFilters, nil)
@@ -693,7 +699,7 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 	condInIdxFilter := make(map[string]struct{}, len(remainedCNFs))
 	// try to derive index filters for each path
 	for _, path := range combinedPartialPaths {
-		idxFilters, _ := splitIndexFilterConditions(ds, remainedCNFs, path.FullIdxCols, path.FullIdxColLens)
+		idxFilters, _ := splitIndexFilterConditions(ds, remainedCNFs, path.Index, path.FullIdxCols, path.FullIdxColLens)
 		idxFilters = util.CloneExprs(idxFilters)
 		path.IndexFilters = append(path.IndexFilters, idxFilters...)
 		for _, idxFilter := range idxFilters {
@@ -709,6 +715,11 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 		if _, ok := condInIdxFilter[string(CNFItem.HashCode())]; !ok {
 			tableFilters = append(tableFilters, CNFItem)
 		}
+	}
+	// Every row of the intersection is a row of each partial path's index, so a filter that
+	// a partial index guarantees is true for all of them.
+	for _, path := range combinedPartialPaths {
+		tableFilters = ds.RemoveConditionsGuaranteedByIndex(path.Index, tableFilters)
 	}
 
 	mvp := buildPartialPathUp4MVIndex(combinedPartialPaths, true, tableFilters, ds.TableStats.HistColl)
@@ -772,6 +783,7 @@ func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, 
 		idxFilters, tableFilters := splitIndexFilterConditions(
 			ds,
 			remainingFilters,
+			firstPath.Index,
 			firstPath.FullIdxCols,
 			firstPath.FullIdxColLens,
 		)

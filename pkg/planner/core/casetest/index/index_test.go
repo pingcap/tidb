@@ -933,3 +933,155 @@ func TestPartialIndexInvalidTimestampRange(t *testing.T) {
 		tk.MustQuery("explain select k from t_invalid_timestamp force index (idx) where ts < '0000-00-00 12:00:00'").CheckContain("index:idx")
 	})
 }
+
+// TestPartialIndexCoversItsCondition checks that a filter which is the same as the partial index
+// condition is not re-evaluated on the table, so the partial index can be read in a single scan
+// even when the condition's columns are not index columns.
+func TestPartialIndexCoversItsCondition(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(`create table t (tenant_id bigint not null, sheet_id bigint not null, row_id bigint not null, col_id bigint not null,
+value_json json, c int,
+primary key (tenant_id, sheet_id, row_id, col_id) clustered,
+key idx_json (tenant_id, sheet_id, col_id, row_id) where value_json is not null,
+key idx_c (tenant_id, col_id) where c > 10)`)
+		tk.MustExec(`insert into t values (1, 1, 1, 1, '{"a": 1}', 1), (1, 1, 2, 1, null, 20), (1, 1, 3, 1, 'null', 30),
+(1, 1, 4, 2, '"x"', 5), (2, 1, 1, 1, '[1]', 40)`)
+		for _, tc := range []struct {
+			sql        string
+			singleScan bool
+			result     []string
+		}{
+			// The filter is the index condition: index-only.
+			{"select /*+ use_index(t, idx_json) */ count(*) from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null", true, []string{"2"}},
+			{"select /*+ use_index(t, idx_json) */ row_id from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null order by row_id", true, []string{"1", "3"}},
+			// With a Limit or TopN the index scan is directly under the reader, so the reader
+			// must not output value_json, which the index does not have.
+			{"select /*+ use_index(t, idx_json) */ row_id from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null limit 5", true, []string{"1", "3"}},
+			{"select /*+ use_index(t, idx_json) */ row_id from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null order by row_id desc limit 1", true, []string{"3"}},
+			{"select /*+ use_index(t, idx_c) */ col_id from t where tenant_id = 1 and col_id = 1 and c > 10 order by col_id limit 5", true, []string{"1", "1"}},
+			// Other filters on non-index columns still need the table.
+			{"select /*+ use_index(t, idx_json) */ count(*) from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null and json_type(value_json) = 'OBJECT'", false, []string{"1"}},
+			// The filter only implies the index condition, it is not guaranteed by the index.
+			{"select /*+ use_index(t, idx_c) */ count(*) from t where tenant_id = 1 and col_id = 1 and c > 20", false, []string{"1"}},
+			{"select /*+ use_index(t, idx_c) */ count(*) from t where tenant_id = 1 and col_id = 1 and c > 10", true, []string{"2"}},
+			// No index column is needed: an index-only scan would output no column, so read
+			// the table rather than return no rows or fail to resolve the Limit's column.
+			{"select /*+ use_index(t, idx_json) */ 1 from t where value_json is not null", false, []string{"1", "1", "1", "1"}},
+			{"select /*+ use_index(t, idx_json) */ 1 from t where value_json is not null limit 2", false, []string{"1", "1"}},
+			{"select /*+ use_index(t, idx_json) */ count(*) from t where value_json is not null", false, []string{"4"}},
+		} {
+			plan := fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+tc.sql).Rows())
+			if tc.singleScan {
+				require.NotContains(t, plan, "IndexLookUp", tc.sql)
+				require.Contains(t, plan, "IndexReader", tc.sql)
+			} else {
+				require.Contains(t, plan, "IndexLookUp", tc.sql)
+			}
+			tk.MustQuery(tc.sql).Check(testkit.Rows(tc.result...))
+		}
+		// The partial index on the inner side of joins.
+		tk.MustExec("drop table if exists k")
+		tk.MustExec("create table k (row_id bigint primary key)")
+		tk.MustExec("insert into k values (1), (2), (3), (4)")
+		for _, hint := range []string{"inl_join(t)", "hash_join(t)", "merge_join(t)"} {
+			q := "select /*+ " + hint + " use_index(t, idx_json) */ k.row_id from k join t on t.row_id = k.row_id where t.tenant_id = 1 and t.sheet_id = 1 and t.col_id = 1 and t.value_json is not null order by k.row_id"
+			tk.MustQuery(q).Check(testkit.Rows("1", "3"))
+			tk.MustQuery(q + " limit 1").Check(testkit.Rows("1"))
+		}
+		// The partial index guarantees its condition only with the same collation: a filter
+		// with a different collation is Equal to it but still has to be evaluated.
+		tk.MustExec("drop table if exists tc")
+		tk.MustExec("create table tc (a int, v varchar(10) collate utf8mb4_general_ci, key idx_v(a) where v = 'a')")
+		tk.MustExec("insert into tc values (1, 'a'), (1, 'A'), (1, 'b')")
+		plan := fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' select /*+ use_index(tc, idx_v) */ count(*) from tc where a = 1 and v = 'a'").Rows())
+		require.NotContains(t, plan, "IndexLookUp")
+		tk.MustQuery("select /*+ use_index(tc, idx_v) */ count(*) from tc where a = 1 and v = 'a'").Check(testkit.Rows("2"))
+		plan = fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' select /*+ use_index(tc, idx_v) */ count(*) from tc where a = 1 and v = 'a' collate utf8mb4_bin").Rows())
+		require.Contains(t, plan, "IndexLookUp")
+		tk.MustQuery("select /*+ use_index(tc, idx_v) */ count(*) from tc where a = 1 and v = 'a' collate utf8mb4_bin").Check(testkit.Rows("1"))
+		// An AND index merge only returns rows of each partial index it reads, so the
+		// condition of a partial index used there is not evaluated on the table either.
+		tk.MustExec("drop table if exists tm")
+		tk.MustExec("create table tm (a int, b int, j json, v json, key ia(a) where v is not null, key mv((cast(j as signed array))))")
+		tk.MustExec(`insert into tm values (1, 1, '[1,2]', '1'), (1, 1, '[1]', null), (1, 2, '[3]', '2'), (2, 1, '[1]', '3')`)
+		mergeQuery := "select /*+ use_index_merge(tm, ia, mv) */ count(*) from tm where a = 1 and 1 member of (j) and v is not null"
+		plan = fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+mergeQuery).Rows())
+		require.Contains(t, plan, "intersection")
+		require.NotContains(t, plan, "Selection")
+		tk.MustQuery(mergeQuery).Check(testkit.Rows("1"))
+		// The same holds for an AND index merge of normal indexes: idx ia guarantees c > 10,
+		// so it is not evaluated on the table for the rows found through ib.
+		tk.MustExec("drop table if exists tn")
+		tk.MustExec("create table tn (a int, b int, c int, d int, key ia(a) where c > 10, key ib(b), key ic(c))")
+		tk.MustExec("insert into tn values (1, 1, 20, 1), (1, 1, 5, 1), (1, 2, 30, 1), (2, 1, 40, 1)")
+		mergeQuery = "select /*+ use_index_merge(tn, ia, ib) */ count(*) from tn where a = 1 and b = 1 and c > 10"
+		plan = fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+mergeQuery).Rows())
+		require.Contains(t, plan, "intersection")
+		require.NotContains(t, plan, "Selection")
+		tk.MustQuery(mergeQuery).Check(testkit.Rows("1"))
+		// With a parameter, the index access conditions are also kept as table filters for
+		// safety, but c > 10, which ia guarantees, is still not one of them.
+		tk.MustExec("prepare stn from 'select /*+ use_index_merge(tn, ia, ic) */ count(*) from tn where a = ? and c > 10'")
+		tk.MustExec("set @a = 1")
+		tk.MustQuery("execute stn using @a").Check(testkit.Rows("2"))
+		tkProcess := tk.Session().ShowProcess()
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*sessmgr.ProcessInfo{tkProcess}})
+		plan = fmt.Sprintf("%v", tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows())
+		require.Contains(t, plan, "intersection")
+		require.Contains(t, plan, "eq(test.tn.a, 1)")
+		require.NotContains(t, plan, "gt(test.tn.c, 10)")
+		tk.MustExec("set @a = 2")
+		tk.MustQuery("execute stn using @a").Check(testkit.Rows("1"))
+		tk.MustExec("set @a = 3")
+		tk.MustQuery("execute stn using @a").Check(testkit.Rows("0"))
+		// A comparison on a TIMESTAMP column depends on the time zone, and the index keeps the
+		// rows that met the condition when they were written, so the filter is still evaluated.
+		tk.MustExec("drop table if exists tz")
+		tk.MustExec("set @@time_zone = '+00:00'")
+		tk.MustExec("create table tz (a int, ts timestamp, key idx_ts(a) where ts > '2026-01-01 00:00:00')")
+		tk.MustExec("insert into tz values (1, '2026-01-01 01:00:00')")
+		tk.MustExec("set @@time_zone = '-02:00'")
+		tzQuery := "select /*+ use_index(tz, idx_ts) */ count(*) from tz where a = 1 and ts > '2026-01-01 00:00:00'"
+		plan = fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+tzQuery).Rows())
+		require.Contains(t, plan, "IndexLookUp")
+		tk.MustQuery(tzQuery).Check(testkit.Rows("0"))
+		tk.MustExec("set @@time_zone = default")
+		// The guaranteed condition is also skipped when prefix index single scan is off.
+		tk.MustExec("set @@tidb_opt_prefix_index_single_scan = 0")
+		offQuery := "select /*+ use_index(t, idx_json) */ count(*) from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null"
+		plan = fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+offQuery).Rows())
+		require.NotContains(t, plan, "IndexLookUp")
+		tk.MustQuery(offQuery).Check(testkit.Rows("2"))
+		tk.MustExec("set @@tidb_opt_prefix_index_single_scan = default")
+		// Without a hint, index pruning must also see that idx_json can be read in a single
+		// scan, otherwise it can be pruned before costing.
+		noHint := "select count(*) from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null"
+		for _, threshold := range []string{"100", "0"} {
+			tk.MustExec("set @@tidb_opt_index_prune_threshold = " + threshold)
+			plan := fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+noHint).Rows())
+			require.Contains(t, plan, "index:idx_json", threshold)
+			require.NotContains(t, plan, "IndexLookUp", threshold)
+			tk.MustQuery(noHint).Check(testkit.Rows("2"))
+		}
+		tk.MustExec("set @@tidb_opt_index_prune_threshold = default")
+		// A covered condition with a parameter must not be skipped in a cached plan, since the
+		// next execution can use a value that the index condition does not guarantee.
+		tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
+		tk.MustExec("prepare stmt from 'select /*+ use_index(t, idx_c) */ count(*) from t where tenant_id = 1 and col_id = 1 and c > ?'")
+		tk.MustExec("set @v = 10")
+		tk.MustQuery("execute stmt using @v").Check(testkit.Rows("2"))
+		tk.MustExec("set @v = 20")
+		tk.MustQuery("execute stmt using @v").Check(testkit.Rows("1"))
+		tk.MustExec("set @v = 10")
+		tk.MustQuery("execute stmt using @v").Check(testkit.Rows("2"))
+		// The IS NOT NULL condition has no parameter, so the plan stays cacheable and index-only.
+		tk.MustExec("prepare stmt2 from 'select /*+ use_index(t, idx_json) */ count(*) from t where tenant_id = ? and sheet_id = 1 and col_id = 1 and value_json is not null'")
+		tk.MustExec("set @v = 1")
+		tk.MustQuery("execute stmt2 using @v").Check(testkit.Rows("2"))
+		tk.MustExec("set @v = 2")
+		tk.MustQuery("execute stmt2 using @v").Check(testkit.Rows("1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	})
+}

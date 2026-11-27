@@ -291,7 +291,7 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 		}
 	}
 	var indexFilters []expression.Expression
-	indexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
+	indexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.Index, path.FullIdxCols, path.FullIdxColLens)
 	path.IndexFilters = append(path.IndexFilters, indexFilters...)
 	if !isIm {
 		// Check if we need to apply a lower bound to CountAfterAccess
@@ -700,7 +700,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
 			// Reevaluate path.IsSingleScan because it may have been set incorrectly
 			// in the pruning logic.
-			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+			path.IsSingleScan = ds.IsSingleScan(path.Index, path.FullIdxCols, path.FullIdxColLens)
 		}
 		// step: 3
 		// Try some heuristic rules to select access path.

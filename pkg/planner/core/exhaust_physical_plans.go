@@ -1112,6 +1112,10 @@ func constructDS2IndexScanTask(
 	if keepOrder && ds.TableInfo.GetPartitionInfo() != nil {
 		return nil
 	}
+	dsSchema := ds.Schema()
+	if path.IsSingleScan {
+		dsSchema = ds.SingleScanSchema(path.Index, path.FullIdxCols, path.FullIdxColLens)
+	}
 	is := physicalop.PhysicalIndexScan{
 		Table:            ds.TableInfo,
 		TableAsName:      ds.TableAsName,
@@ -1120,7 +1124,7 @@ func constructDS2IndexScanTask(
 		Index:            path.Index,
 		IdxCols:          path.IdxCols,
 		IdxColLens:       path.IdxColLens,
-		DataSourceSchema: ds.Schema(),
+		DataSourceSchema: dsSchema,
 		KeepOrder:        keepOrder,
 		Ranges:           ranges,
 		RangeInfo:        rangeInfo,
@@ -1187,7 +1191,7 @@ func constructDS2IndexScanTask(
 		cop.CommonHandleCols = ds.CommonHandleCols
 	}
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.TablePlan != nil)
-	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
+	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.Index, path.FullIdxCols, path.FullIdxColLens)
 	// Only apply this gate to residual filters (not range builders) for IndexJoin probe side.
 	// Range-deriving predicates are decided earlier and remain unchanged.
 	pushDownIndexConds, rootTaskIndexConds := splitLargeInListFiltersForIndexJoinProbe(indexConds, indexJoinProbeSideLargeInNotInThreshold)

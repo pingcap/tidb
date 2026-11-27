@@ -17,6 +17,7 @@ package partidx
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -146,6 +147,67 @@ func implIsNotNull(rangerctx *context.RangerContext, targetCol *expression.Colum
 	return true
 }
 
+// IsSameCondition reports whether filter is the same condition as the partial index condition
+// indexCond, so that it is true for every row of the index. Expression.Equal does not compare
+// collations: `v = 'a' COLLATE utf8mb4_bin` is Equal to `v = 'a'` on a utf8mb4_general_ci
+// column, but it rejects rows with 'A' that the index has. So the collation and coercibility
+// of every sub-expression must also match. A filter with constants that may change between
+// executions of a cached plan is never the same condition.
+// A comparison on a TIMESTAMP column depends on the session time zone, and the index keeps the
+// rows that met the condition in the time zone used when each row was written, so such a
+// condition is never the same condition either. `IS [NOT] NULL` does not depend on it.
+func IsSameCondition(ctx expression.BuildContext, filter, indexCond expression.Expression) bool {
+	evalCtx := ctx.GetEvalCtx()
+	return filter.Equal(evalCtx, indexCond) &&
+		sameCollations(evalCtx, filter, indexCond) &&
+		!dependsOnTimeZone(evalCtx, indexCond) &&
+		!expression.MaybeOverOptimized4PlanCache(ctx, filter)
+}
+
+func dependsOnTimeZone(evalCtx expression.EvalContext, expr expression.Expression) bool {
+	switch x := expr.(type) {
+	case *expression.Column:
+		return x.GetType(evalCtx).GetType() == mysql.TypeTimestamp
+	case *expression.ScalarFunction:
+		if x.FuncName.L == ast.IsNull {
+			return false
+		}
+		for _, arg := range x.GetArgs() {
+			if dependsOnTimeZone(evalCtx, arg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sameCollations(evalCtx expression.EvalContext, a, b expression.Expression) bool {
+	charsetA, collationA := a.CharsetAndCollation()
+	charsetB, collationB := b.CharsetAndCollation()
+	if charsetA != charsetB || collationA != collationB || a.Coercibility() != b.Coercibility() ||
+		a.GetType(evalCtx).GetCollate() != b.GetType(evalCtx).GetCollate() {
+		return false
+	}
+	sfA, okA := a.(*expression.ScalarFunction)
+	sfB, okB := b.(*expression.ScalarFunction)
+	if okA != okB {
+		return false
+	}
+	if !okA {
+		return true
+	}
+	argsA, argsB := sfA.GetArgs(), sfB.GetArgs()
+	if len(argsA) != len(argsB) {
+		return false
+	}
+	for i := range argsA {
+		if !sameCollations(evalCtx, argsA[i], argsB[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // AlwaysMeetConstraints checks whether the filters always meet the constraints from the predefined predicates in index meta.
 // This check is only applied to the pre condition that is single IS NOT NULL.
 // e.g. for partial index idx(b) where a IS NOT NULL, if the filter is b = ? and a is not null/a > 10, then we can guarantee that a IS NOT NULL is always true.
@@ -154,6 +216,14 @@ func implIsNotNull(rangerctx *context.RangerContext, targetCol *expression.Colum
 func AlwaysMeetConstraints(sctx planctx.PlanContext, prePredicates, filters []expression.Expression) bool {
 	if len(prePredicates) != 1 {
 		return false
+	}
+	// A filter that is the same as the index condition and has no constants that may change
+	// between executions meets the condition for any parameters, e.g. `j IS NOT NULL` on a
+	// JSON column, which is `not(isnull(cast(j)))` and is not handled by the check below.
+	for _, filter := range filters {
+		if IsSameCondition(sctx.GetExprCtx(), filter, prePredicates[0]) {
+			return true
+		}
 	}
 	sf, ok := prePredicates[0].(*expression.ScalarFunction)
 	if !ok || sf.FuncName.L != ast.UnaryNot {

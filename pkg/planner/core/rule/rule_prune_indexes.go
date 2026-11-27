@@ -168,7 +168,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		idxScore := scoreIndexPath(ds, path, req, tableColumns)
 
 		if path.FullIdxCols != nil {
-			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+			path.IsSingleScan = ds.IsSingleScan(path.Index, path.FullIdxCols, path.FullIdxColLens)
 		}
 
 		// Check if this index is specified in IndexMerge hints

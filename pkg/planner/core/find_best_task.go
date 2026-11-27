@@ -1845,7 +1845,7 @@ func buildPrunedRangeAccessPath(ds *logicalop.DataSource, originalPath *util.Acc
 	}
 
 	// Split remaining conditions into index filters and table filters.
-	indexFilters, tableFilters := splitIndexFilterConditions(ds, prunedPath.TableFilters, prunedPath.FullIdxCols, prunedPath.FullIdxColLens)
+	indexFilters, tableFilters := splitIndexFilterConditions(ds, prunedPath.TableFilters, prunedPath.Index, prunedPath.FullIdxCols, prunedPath.FullIdxColLens)
 	prunedPath.IndexFilters = indexFilters
 	prunedPath.TableFilters = tableFilters
 
@@ -3109,10 +3109,14 @@ func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, 
 	return nil
 }
 
-func splitIndexFilterConditions(ds *logicalop.DataSource, conditions []expression.Expression, indexColumns []*expression.Column,
-	idxColLens []int) (indexConds, tableConds []expression.Expression) {
+// splitIndexFilterConditions splits the conditions to be evaluated when reading from index into
+// the ones that can be evaluated on the index and the ones that need the table. The conditions
+// that are true for every row of index when it's a partial index are dropped, see
+// DataSource.RemoveConditionsGuaranteedByIndex. index can be nil.
+func splitIndexFilterConditions(ds *logicalop.DataSource, conditions []expression.Expression, index *model.IndexInfo,
+	indexColumns []*expression.Column, idxColLens []int) (indexConds, tableConds []expression.Expression) {
 	var indexConditions, tableConditions []expression.Expression
-	for _, cond := range conditions {
+	for _, cond := range ds.RemoveConditionsGuaranteedByIndex(index, conditions) {
 		var covered bool
 		if ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan {
 			covered = ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens)
