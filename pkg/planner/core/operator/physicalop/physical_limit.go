@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -193,6 +194,11 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalLimit(p, tasks...)
+}
+
+// GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns a CostVer2 object.
+func (p *PhysicalLimit) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+	return utilfuncp.GetPlanCostVer24PhysicalLimit(p, taskType, option, isChildOfINL...)
 }
 
 func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
