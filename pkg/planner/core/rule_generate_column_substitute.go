@@ -80,7 +80,9 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.Schema().Columns
 				col := expression.ColInfo2Col(s, colInfo)
-				if col != nil && col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
+				// VirtualExpr is nil when buildDataSource skipped it because the
+				// statement mentions neither the column nor anything it depends on.
+				if col != nil && col.VirtualExpr != nil && col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
 					// Replacing a literal with a generated column that is itself a pure constant is not
 					// semantically neutral across outer joins, because null-augmentation can turn the
 					// generated column into NULL while the original literal stays constant.
