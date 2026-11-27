@@ -1903,6 +1903,37 @@ mod tests {
         }
     }
 
+    /// Go `TestOutOfRangeRowCountZeroTimestampLowerBound` (8c6cb106410): a
+    /// bucket whose lower bound is a zero TIMESTAMP (scalar -1) still yields
+    /// a finite out-of-range estimate.
+    #[test]
+    fn test_out_of_range_row_count_zero_timestamp_lower_bound() {
+        let timestamp = |core: tidb_datatype::CoreTime| {
+            Datum::Time(tidb_datatype::Time::new(core, tidb_datatype::TimeType::Timestamp, 0).unwrap())
+        };
+        let zero = timestamp(tidb_datatype::CoreTime::from_date(0, 0, 0, 0, 0, 0, 0));
+        let upper = timestamp(tidb_datatype::CoreTime::from_date(1970, 1, 1, 0, 0, 3, 0));
+        let right = timestamp(tidb_datatype::CoreTime::from_date(1970, 1, 1, 0, 0, 4, 0));
+        let mut hg = Histogram::new(0, 0, 0, 0, &FieldType::new(tidb_datatype::FieldTypeCode::Timestamp), 1, 0);
+        hg.append_bucket(zero, upper.clone(), 2, 1);
+        let estimate = hg.out_of_range_row_count(
+            &upper,
+            &right,
+            OutOfRangeContext {
+                realtime_row_count: 100,
+                modify_count: 100,
+                hist_ndv: 2,
+                unsigned: false,
+                allow_use_modify_count: true,
+                skew_ratio: 0.5,
+            },
+        );
+        const EPS: f64 = 1e-9;
+        assert!((estimate.est - 45.937499984687506).abs() < EPS, "{estimate:?}");
+        assert!((estimate.min_est - 18.374999993875).abs() < EPS, "{estimate:?}");
+        assert!((estimate.max_est - 73.4999999755).abs() < EPS, "{estimate:?}");
+    }
+
     #[test]
     fn calc_fraction_matches_edge_cases() {
         assert_eq!(calc_fraction(0.0, 0.0, 5.0), 0.5);

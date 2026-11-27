@@ -109,9 +109,30 @@ fn seconds_of_day(core: CoreTime) -> i64 {
     i64::from(core.hour()) * 3_600 + i64::from(core.minute()) * 60 + i64::from(core.second())
 }
 
+/// Go `convertMysqlTimeToScalar`: the duration from the type's minimum bound
+/// (MinDatetime for date/datetime, MinTimestamp for timestamp). TIMESTAMP
+/// values outside the legal range are clamped just outside the valid scalar
+/// range so estimates stay finite and ordered.
 fn time_to_scalar(value: Time) -> f64 {
     let core = value.core_time();
     if value.kind() == TimeType::Timestamp {
+        // Go `types.MinTimestamp` / `types.MaxTimestamp`.
+        const MIN_TIMESTAMP: CoreTime = CoreTime::from_date(1970, 1, 1, 0, 0, 1, 0);
+        const MAX_TIMESTAMP: CoreTime = CoreTime::from_date(2038, 1, 19, 3, 14, 7, 999_999);
+        if core.compare(MIN_TIMESTAMP).is_lt() {
+            // Relaxed SQL modes can leave zero TIMESTAMP values in stats;
+            // subtracting MinTimestamp from one saturates to an artificial
+            // huge distance that would skew fraction and out-of-range
+            // estimates. All before-min values collapse to -1, just before
+            // the legal range (calcFraction treats value <= lower as 0).
+            return -1.0;
+        }
+        if core.compare(MAX_TIMESTAMP).is_gt() {
+            // Above-max bounds go one ULP after the legal maximum: at this
+            // magnitude maxScalar + 1 rounds back to maxScalar, collapsing a
+            // [MaxTimestamp, after-max] bucket into a zero-width interval.
+            return (timestamp_nanoseconds(MAX_TIMESTAMP) as f64).next_up();
+        }
         return timestamp_nanoseconds(core) as f64;
     }
 
@@ -260,6 +281,44 @@ pub fn calc_fraction_from_datums(lower: &Datum, upper: &Datum, value: &Datum) ->
 #[cfg(test)]
 mod tests {
     use super::{CoreTime, timestamp_nanoseconds};
+
+    fn timestamp(core: CoreTime) -> tidb_datatype::Datum {
+        tidb_datatype::Datum::Time(
+            tidb_datatype::Time::new(core, tidb_datatype::TimeType::Timestamp, 0).unwrap(),
+        )
+    }
+
+    /// Go `TestConvertMysqlTimeToScalarTimestampBounds` (8c6cb106410): zero
+    /// and before-min TIMESTAMP values clamp to -1, MinTimestamp is 0, and an
+    /// above-max value lands just after MaxTimestamp.
+    #[test]
+    fn test_convert_mysql_time_to_scalar_timestamp_bounds() {
+        let zero = timestamp(CoreTime::from_date(0, 0, 0, 0, 0, 0, 0));
+        assert_eq!(super::convert_datum_to_scalar(&zero, 0), -1.0);
+        let min = timestamp(CoreTime::from_date(1970, 1, 1, 0, 0, 1, 0));
+        assert_eq!(super::convert_datum_to_scalar(&min, 0), 0.0);
+        let max = timestamp(CoreTime::from_date(2038, 1, 19, 3, 14, 7, 999_999));
+        let after_max = timestamp(CoreTime::from_date(9999, 12, 31, 23, 59, 59, 0));
+        assert!(super::convert_datum_to_scalar(&after_max, 0) > super::convert_datum_to_scalar(&max, 0));
+        // Every above-max value sits one ULP after the legal maximum, so a
+        // [MaxTimestamp, after-max] bucket keeps a non-zero width.
+        let just_after_max = timestamp(CoreTime::from_date(2038, 1, 19, 3, 14, 8, 0));
+        let max_scalar = super::convert_datum_to_scalar(&max, 0);
+        assert_eq!(super::convert_datum_to_scalar(&just_after_max, 0), max_scalar.next_up());
+        assert_eq!(super::convert_datum_to_scalar(&after_max, 0), max_scalar.next_up());
+    }
+
+    /// Go `TestCalcFraction`'s TIMESTAMP rows from 8c6cb106410.
+    #[test]
+    fn test_calc_fraction_timestamp_bounds() {
+        let zero = timestamp(CoreTime::from_date(0, 0, 0, 0, 0, 0, 0));
+        let lower_value = timestamp(CoreTime::from_date(1970, 1, 1, 0, 0, 2, 0));
+        let upper = timestamp(CoreTime::from_date(1970, 1, 1, 0, 0, 3, 0));
+        assert!((super::calc_fraction_from_datums(&zero, &upper, &lower_value) - 0.5).abs() < 1e-9);
+        let max = timestamp(CoreTime::from_date(2038, 1, 19, 3, 14, 7, 999_999));
+        let after_max = timestamp(CoreTime::from_date(9999, 12, 31, 23, 59, 59, 0));
+        assert!((super::calc_fraction_from_datums(&max, &after_max, &after_max) - 1.0).abs() < 1e-9);
+    }
 
     #[test]
     fn timestamp_scalar_saturates_after_adding_microseconds() {
