@@ -3866,20 +3866,33 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	// If we have ShowPredicateExtractor, we do not buildSelection with Pattern
 	if show.Pattern != nil && buildPattern {
 		patternColumn := p.OutputNames()[0].ColName
+		foldCase := false
 		switch show.Tp {
 		case ast.ShowStorageClassTransitions:
 			patternColumn = ast.NewCIStr("TABLE_NAME")
 		case ast.ShowMaterializedViews:
 			// The first column is mview_id, LIKE matches the name.
 			patternColumn = ast.NewCIStr("mview_name")
+			foldCase = true
 		case ast.ShowMaterializedViewLogs:
 			// The first column is mlog_id, LIKE matches the name.
 			patternColumn = ast.NewCIStr("mlog_name")
+			foldCase = true
 		}
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: patternColumn},
 		}
-		np, err = b.buildSelection(ctx, np, show.Pattern, nil)
+		pattern := show.Pattern
+		if foldCase {
+			// The extractor matches a literal pattern in lower case against the
+			// lowercased name, so this pattern ignores case too. It is lowered in a
+			// copy, so that planning the statement again doesn't lower it twice.
+			folded := *show.Pattern
+			folded.Expr = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.Lower), Args: []ast.ExprNode{show.Pattern.Expr}}
+			folded.Pattern = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.Lower), Args: []ast.ExprNode{show.Pattern.Pattern}}
+			pattern = &folded
+		}
+		np, err = b.buildSelection(ctx, np, pattern, nil)
 		if err != nil {
 			return nil, err
 		}
