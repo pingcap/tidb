@@ -115,6 +115,11 @@ func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 	bc.unregisterMu.Lock()
 	defer bc.unregisterMu.Unlock()
 
+	if opt&OptCleanData != 0 {
+		if cm, ok := bc.checkpointMgr.(*CheckpointManager); ok && cm != nil {
+			cm.ResetLocalCheckpoint()
+		}
+	}
 	if len(bc.engines) == 0 {
 		return nil
 	}

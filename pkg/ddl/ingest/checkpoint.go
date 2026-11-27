@@ -15,11 +15,14 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -30,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -475,6 +479,42 @@ func (s *CheckpointManager) GetImportTS() uint64 {
 	return s.ts
 }
 
+// ResetLocalCheckpoint discards un-imported local flush progress after local
+// engine data is removed, rolling the watermark back to the last imported key.
+func (s *CheckpointManager) ResetLocalCheckpoint() {
+	s.mu.Lock()
+	hadUnimportedLocal := s.localDataIsValid ||
+		!bytes.Equal(s.flushedKeyLowWatermark, s.importedKeyLowWatermark) ||
+		s.flushedKeyCnt != s.importedKeyCnt ||
+		len(s.checkpoints) > 0
+	s.localDataIsValid = false
+	clear(s.checkpoints)
+	s.flushedKeyLowWatermark = slices.Clone(s.importedKeyLowWatermark)
+	s.flushedKeyCnt = s.importedKeyCnt
+	if hadUnimportedLocal {
+		s.dirty = true
+	}
+	s.mu.Unlock()
+	if hadUnimportedLocal {
+		if err := s.updateCheckpoint(); err != nil {
+			s.logger.Warn("reset local checkpoint failed", zap.Error(err))
+		}
+	}
+}
+
+func hasLocalEngineData(path string) bool {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.Name() != ingestctrl.DuplicateDBName {
+			return true
+		}
+	}
+	return false
+}
+
 // JobReorgMeta is the metadata for a reorg job.
 type JobReorgMeta struct {
 	Checkpoint *ReorgCheckpoint `json:"reorg_checkpoint"`
@@ -518,7 +558,7 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 		s.importedKeyLowWatermark = cp.GlobalSyncKey
 		s.importedKeyCnt = cp.GlobalKeyCount
 		s.ts = cp.TS
-		folderNotEmpty := util.FolderNotEmpty(s.localStoreDir)
+		folderNotEmpty := hasLocalEngineData(s.localStoreDir)
 		if folderNotEmpty &&
 			(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */) {
 			s.localDataIsValid = true

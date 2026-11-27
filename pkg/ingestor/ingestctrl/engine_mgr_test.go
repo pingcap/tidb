@@ -150,5 +150,28 @@ func TestCleanupAllLocalEnginesLogsErrorOnly(t *testing.T) {
 	require.Len(t, logEntries, 1)
 	require.Contains(t, logEntries[0].ContextMap()["error"], "injected finishWrite error")
 
+	// Partial open failure (e.g. PD GetTS error) rolls back the engine and releases
+	// the Pebble lock without blocking CleanupAllLocalEngines or subsequent retries.
+	partialID := uuid.New()
+	healthyID := uuid.New()
+	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
+	require.NoError(t, em.openEngine(ctx, &backend.EngineConfig{KeepSortDir: true}, healthyID))
+	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), errors.New("pd get ts failed"))
+	require.ErrorContains(t, em.openEngine(ctx, &backend.EngineConfig{KeepSortDir: true}, partialID), "pd get ts failed")
+	_, ok = em.engines.Load(partialID)
+	require.False(t, ok)
+
+	em.cleanupAllLocalEngines(ctx)
+	require.Empty(t, em.engineFileSizes())
+
+	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
+	require.NoError(t, em.openEngine(ctx, &backend.EngineConfig{KeepSortDir: true}, partialID))
+	em.cleanupAllLocalEngines(ctx)
+	require.Empty(t, em.engineFileSizes())
+
+	var nilBackend *Backend
+	nilBackend.CleanupAllLocalEngines(ctx)
+	(&Backend{}).CleanupAllLocalEngines(ctx)
+
 	em.close()
 }
