@@ -382,9 +382,34 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
 	failpoint.Inject("ConsumeVolcanoOptimizePanic", nil)
+	alternative, _ := ctx.Value(lateMaterializationContextKey{}).(*LateMaterializationAlternative)
+	if alternative != nil && alternative.Enabled {
+		logic, err = alternative.apply(logic)
+		defer func() { sctx.GetSessionVars().StmtCtx.LateMaterializationMergeJoins = nil }()
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		failpoint.Inject("lateMaterializationAlternativeError", func() { err = errors.New("injected late materialization alternative error") })
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	}
 	physical, cost, err := physicalOptimize(logic)
 	if err != nil {
 		return nil, nil, 0, err
+	}
+	if alternative != nil {
+		if alternative.Enabled {
+			failpoint.Inject("lateMaterializationAlternativeWarning", func() {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("injected late materialization warning"))
+			})
+			if err := alternative.checkWarnings(logic); err != nil {
+				return nil, nil, 0, err
+			}
+			failpoint.Inject("lateMaterializationAlternativeCost", func(value failpoint.Value) { cost = float64(value.(int)) })
+		} else if !alternative.recorded {
+			alternative.record(logic, physical)
+		}
 	}
 	finalPlan := postOptimize(ctx, sctx, physical)
 	return logic, finalPlan, cost, nil
