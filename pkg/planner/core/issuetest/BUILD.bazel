@@ -4,6 +4,7 @@ go_test(
     name = "issuetest_test",
     timeout = "moderate",
     srcs = [
+        "issue69874_test.go",
         "main_test.go",
         "panicrisk_tier2_test.go",
         "planner_issue_test.go",
