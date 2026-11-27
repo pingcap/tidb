@@ -52,6 +52,11 @@ func (s *builtinIntervalRealSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinNullEQDurationStringSig) SafeToShareAcrossSession() bool {
+	return false
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinInternalFromBinarySig) SafeToShareAcrossSession() bool {
 	return false
 }
