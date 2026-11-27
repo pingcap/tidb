@@ -78,16 +78,7 @@ func TestCheckClusterVersion(t *testing.T) {
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
 		require.Error(t, err)
-		require.Regexp(t, `^TiKV .* version mismatch when use PiTR v6.2.0\+, please `, err.Error())
-	}
-
-	{
-		// Default value of `pitrSupportBatchKVFiles` should be `false`.
-		build.ReleaseVersion = "v6.5.0"
-		mock.getAllStores = func() []*metapb.Store {
-			return []*metapb.Store{{Version: `v6.2.0`}}
-		}
-		require.Equal(t, CheckPITRSupportBatchKVFiles(), false)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
 	}
 
 	{
@@ -96,30 +87,27 @@ func TestCheckClusterVersion(t *testing.T) {
 			return []*metapb.Store{{Version: `v6.2.0`}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
-		require.NoError(t, err)
-		require.Equal(t, CheckPITRSupportBatchKVFiles(), false)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
 	}
 
 	{
-		pitrSupportBatchKVFiles = true
 		build.ReleaseVersion = "v6.2.0"
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: `v6.4.0`}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
-		require.NoError(t, err)
-		require.Equal(t, CheckPITRSupportBatchKVFiles(), false)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
 	}
 
 	{
-		pitrSupportBatchKVFiles = true
 		build.ReleaseVersion = "v6.2.0"
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: `v6.5.0`}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
 		require.NoError(t, err)
-		require.Equal(t, CheckPITRSupportBatchKVFiles(), true)
 	}
 
 	{
@@ -138,13 +126,24 @@ func TestCheckClusterVersion(t *testing.T) {
 			return []*metapb.Store{{Version: `v6.1.0`}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
-		require.NoError(t, err)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
 	}
 
 	{
 		build.ReleaseVersion = "v6.1.0"
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: `v6.2.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
+	}
+
+	{
+		build.ReleaseVersion = "v6.1.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.5.0`}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
 		require.Error(t, err)

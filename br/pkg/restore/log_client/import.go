@@ -103,7 +103,6 @@ func (importer *LogFileImporter) ImportKVFiles(
 	shiftStartTS uint64,
 	startTS uint64,
 	restoreTS uint64,
-	supportBatch bool,
 	cipherInfo *backuppb.CipherInfo,
 	masterKeys []*encryptionpb.MasterKey,
 ) error {
@@ -114,10 +113,6 @@ func (importer *LogFileImporter) ImportKVFiles(
 		err      error
 	)
 
-	if !supportBatch && len(files) > 1 {
-		return errors.Annotatef(berrors.ErrInvalidArgument,
-			"do not support batch apply, file count: %v > 1", len(files))
-	}
 	log.Debug("import kv files", zap.Int("batch file count", len(files)))
 
 	for i, f := range files {
@@ -161,8 +156,7 @@ func (importer *LogFileImporter) ImportKVFiles(
 		if len(subfiles) == 0 {
 			return RPCResultOK()
 		}
-		return importer.importKVFileForRegion(ctx, subfiles, rule, shiftStartTS, startTS, restoreTS, r, supportBatch,
-			cipherInfo, masterKeys)
+		return importer.importKVFileForRegion(ctx, subfiles, rule, shiftStartTS, startTS, restoreTS, r, cipherInfo, masterKeys)
 	})
 	metrics.KVApplyBatchRegions.Observe(float64(numRegions))
 	return errors.Trace(err)
@@ -203,12 +197,11 @@ func (importer *LogFileImporter) importKVFileForRegion(
 	startTS uint64,
 	restoreTS uint64,
 	info *split.RegionInfo,
-	supportBatch bool,
 	cipherInfo *backuppb.CipherInfo,
 	masterKeys []*encryptionpb.MasterKey,
 ) RPCResult {
 	// Try to download file.
-	result := importer.downloadAndApplyKVFile(ctx, files, rule, info, shiftStartTS, startTS, restoreTS, supportBatch, cipherInfo, masterKeys)
+	result := importer.downloadAndApplyKVFile(ctx, files, rule, info, shiftStartTS, startTS, restoreTS, cipherInfo, masterKeys)
 	if !result.OK() {
 		errDownload := result.Err
 		for _, e := range multierr.Errors(errDownload) {
@@ -237,7 +230,6 @@ func (importer *LogFileImporter) downloadAndApplyKVFile(
 	shiftStartTS uint64,
 	startTS uint64,
 	restoreTS uint64,
-	supportBatch bool,
 	cipherInfo *backuppb.CipherInfo,
 	masterKeys []*encryptionpb.MasterKey) RPCResult {
 	leader := regionInfo.Leader
@@ -292,27 +284,14 @@ func (importer *LogFileImporter) downloadAndApplyKVFile(
 		Peer:        leader,
 	}
 
-	var req *import_sstpb.ApplyRequest
-	if supportBatch {
-		req = &import_sstpb.ApplyRequest{
-			Metas:          metas,
-			StorageBackend: importer.backend,
-			RewriteRules:   rewriteRules,
-			Context:        reqCtx,
-			StorageCacheId: importer.cacheKey,
-			CipherInfo:     cipherInfo,
-			MasterKeys:     masterKeys,
-		}
-	} else {
-		req = &import_sstpb.ApplyRequest{
-			Meta:           metas[0],
-			StorageBackend: importer.backend,
-			RewriteRule:    *rewriteRules[0],
-			Context:        reqCtx,
-			StorageCacheId: importer.cacheKey,
-			CipherInfo:     cipherInfo,
-			MasterKeys:     masterKeys,
-		}
+	req := &import_sstpb.ApplyRequest{
+		Metas:          metas,
+		StorageBackend: importer.backend,
+		RewriteRules:   rewriteRules,
+		Context:        reqCtx,
+		StorageCacheId: importer.cacheKey,
+		CipherInfo:     cipherInfo,
+		MasterKeys:     masterKeys,
 	}
 
 	log.Debug("applying kv file", logutil.Leader(leader))
