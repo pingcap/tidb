@@ -823,21 +823,39 @@ func locateStringWithCollator(str, substr string, collator collate.Collator) int
 	subStrKey := collator.KeyWithoutTrimRightSpace(substr)
 
 	index := bytes.Index(strKey, subStrKey)
-	if index == -1 || index == 0 {
+	if index == -1 || len(subStrKey) == 0 {
 		return int64(index + 1)
 	}
 
-	// todo: we can use binary search to make it faster.
 	count := int64(0)
-	for {
+	for len(str) > 0 {
 		r, size := utf8.DecodeRuneInString(str)
-		count++
-		index -= len(collator.KeyWithoutTrimRightSpace(string(r)))
-		if index <= 0 {
-			return count + 1
+		keyLen := len(collator.KeyWithoutTrimRightSpace(string(r)))
+		if index == 0 {
+			if keyLen != 0 {
+				return count + 1
+			}
+			// Ignorable runes still occupy character positions. Include them
+			// in the match only when the substring also starts with one.
+			subRune, _ := utf8.DecodeRuneInString(substr)
+			if len(collator.KeyWithoutTrimRightSpace(string(subRune))) == 0 {
+				return count + 1
+			}
 		}
+		count++
+		index -= keyLen
+		strKey = strKey[keyLen:]
 		str = str[size:]
+		if index < 0 {
+			// Reject matches inside a character's key and continue searching
+			// from the next character boundary.
+			index = bytes.Index(strKey, subStrKey)
+			if index == -1 {
+				return 0
+			}
+		}
 	}
+	return 0
 }
 
 // timeZone2Duration converts timezone whose format should satisfy the regular condition
