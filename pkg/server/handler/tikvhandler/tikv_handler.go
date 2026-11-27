@@ -601,9 +601,47 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			config.StoreGlobalConfig(cfg)
 			txninfo.Recorder.SetMinDuration(time.Duration(duration) * time.Millisecond)
 		}
+		if tikvWorkerURL := req.Form.Get("tikv_worker_url"); tikvWorkerURL != "" {
+			if !isValidTiKVWorkerURL(tikvWorkerURL) {
+				// Do not echo the value: a malformed address may embed credentials.
+				handler.WriteError(w, errors.New("illegal tikv_worker_url, should be host:port or http(s)://host:port"))
+				return
+			}
+			// Ingest backends read this value when they are created, so only
+			// backends created after the update use the new address.
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.TiKVWorkerURL = tikvWorkerURL
+			})
+		}
 	} else {
 		handler.WriteData(w, config.GetGlobalConfig())
 	}
+}
+
+// isValidTiKVWorkerURL accepts the forms ingestcli.NewClient supports: an
+// address with an http(s) scheme, or host[:port] whose scheme is chosen by
+// cluster TLS.
+func isValidTiKVWorkerURL(addr string) bool {
+	if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
+		if strings.Contains(addr, "://") {
+			return false
+		}
+		addr = "http://" + addr
+	}
+	u, err := url.Parse(addr)
+	// The write client appends "/write_sst?..." directly, so no path, query or
+	// fragment is allowed.
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Path != "" ||
+		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return false
+	}
+	if port := u.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return false
+		}
+	}
+	return true
 }
 
 // TableFlashReplicaInfo is the replica information of a table.

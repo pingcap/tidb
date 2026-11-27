@@ -198,6 +198,42 @@ func TestPostSettings(t *testing.T) {
 	require.Equal(t, 400, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
+	// test tikv_worker_url
+	originalWorkerURL := config.GetGlobalConfig().TiKVWorkerURL
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVWorkerURL = originalWorkerURL
+	})
+	for _, addr := range []string{"127.0.0.1:19000", "http://worker-1:19000", "https://worker-2"} {
+		form = make(url.Values)
+		form.Set("tikv_worker_url", addr)
+		resp, err = ts.FormStatus("/settings", form)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+		require.Equal(t, addr, config.GetGlobalConfig().TiKVWorkerURL)
+	}
+	for _, addr := range []string{
+		"grpc://worker:19000",
+		"http://user:secret-pass@worker:19000",
+		"worker:19000/write_sst",
+		"worker:19000/",
+		"worker:19000?a=b",
+		"worker:0",
+		"worker:abc",
+		":19000",
+	} {
+		form = make(url.Values)
+		form.Set("tikv_worker_url", addr)
+		resp, err = ts.FormStatus("/settings", form)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode, addr)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		require.NotContains(t, string(body), "secret-pass")
+		require.Equal(t, "https://worker-2", config.GetGlobalConfig().TiKVWorkerURL, addr)
+	}
+
 	// restore original value.
 	config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(true)
 }
