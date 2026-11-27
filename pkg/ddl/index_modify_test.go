@@ -2036,3 +2036,35 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	tk.MustExec("alter table t add unique index i2(col2) /*T![global_index] GLOBAL */")
 	tk.MustExec("admin check table t")
 }
+
+func TestAddIndexPrefixLengthOverflow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// A prefix length of 2^63 overflows to a negative int when the parser
+	// converts the uint64 length (parser.y: `int($2.(uint64))`). It must be
+	// rejected with ERROR 1089 like any other over-long prefix length,
+	// instead of being persisted into the table metadata and panicking later
+	// in TruncateIndexValue. See https://github.com/pingcap/tidb/issues/73552
+	tk.MustExec("create table t (a int, b varchar(20))")
+	tk.MustExec("insert into t values (1, 'x')")
+	err := tk.ExecToErr("alter table t add index ib (b(9223372036854775808))")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, dbterror.ErrIncorrectPrefixKey), "err: %v", err)
+	err = tk.ExecToErr("alter table t add unique index iub (b(9223372036854775808))")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, dbterror.ErrIncorrectPrefixKey), "err: %v", err)
+	err = tk.ExecToErr("create table n1 (a int, b varchar(20), key k (b(9223372036854775808)))")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, dbterror.ErrIncorrectPrefixKey), "err: %v", err)
+
+	// Control: 2^63-1 stays positive and is rejected the same way.
+	err = tk.ExecToErr("create table ctrl (a int, b varchar(20), key k (b(9223372036854775807)))")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, dbterror.ErrIncorrectPrefixKey), "err: %v", err)
+
+	// Positive control: an ordinary prefix length still works.
+	tk.MustExec("alter table t add index ib10 (b(10))")
+	tk.MustExec("drop index ib10 on t")
+}

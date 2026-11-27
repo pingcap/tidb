@@ -277,6 +277,17 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLong
 		return errors.Trace(dbterror.ErrIncorrectPrefixKey)
 	}
 
+	// A huge prefix length such as 2^63 overflows to a negative int when the
+	// parser converts the uint64 length (parser.y: `int($2.(uint64))`).
+	// A negative length would otherwise pass every check below (e.g.
+	// `col.GetFlen() < indexColumnLen` is false for a negative length) and be
+	// persisted into the table metadata, where it later panics in
+	// TruncateIndexValue. Reject it here with the same error as an
+	// over-long prefix length.
+	if indexColumnLen != types.UnspecifiedLength && indexColumnLen < 0 {
+		return errors.Trace(dbterror.ErrIncorrectPrefixKey)
+	}
+
 	// Key length must be shorter or equal to the column length.
 	if indexColumnLen != types.UnspecifiedLength &&
 		types.IsTypeChar(col.FieldType.GetType()) {
