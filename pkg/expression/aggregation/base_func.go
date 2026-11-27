@@ -166,6 +166,15 @@ func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
+	if (a.Name == ast.AggFuncSum || a.Name == ast.AggFuncAvg) && a.Args[0].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeBit {
+		// MySQL treats BIT as an unsigned integer, so the aggregate computes exact
+		// decimal arithmetic. Cast the argument here, while the plan is still being
+		// built: the later WrapCastForAggArgs pass runs after pushdown decisions, so
+		// a raw BIT argument would otherwise reach the coprocessor together with a
+		// DECIMAL result type and be decoded incorrectly. The return type above is
+		// inferred from the original BIT width before this cast replaces the argument.
+		a.Args[0] = expression.WrapWithCastAsDecimal(ctx, a.Args[0])
+	}
 	if (a.Name == ast.AggFuncSum || a.Name == ast.AggFuncAvg) && expression.IsBinaryLiteral(a.Args[0]) {
 		// Preserve numeric literal semantics before pushdown encodes binary
 		// literals as strings. Other aggregates may need the original bytes.
@@ -231,7 +240,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx expression.EvalContext) er
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Sum(ctx expression.EvalContext) {
 	switch a.Args[0].GetType(ctx).GetType() {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeBit:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.SetFlenUnderLimit(a.Args[0].GetType(ctx).GetFlen() + 21)
 		a.RetTp.SetDecimal(0)
@@ -308,7 +317,7 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx expression.EvalContext) {
 		a.RetTp.SetDecimalUnderLimit(divPrecIncre)
 		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType(ctx).GetType())
 		a.RetTp.SetFlenUnderLimit(flen + divPrecIncre)
-	case mysql.TypeYear, mysql.TypeNewDecimal:
+	case mysql.TypeYear, mysql.TypeNewDecimal, mysql.TypeBit:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(ctx), divPrecIncre, divPrecIncre)
 	case mysql.TypeDouble, mysql.TypeFloat:
