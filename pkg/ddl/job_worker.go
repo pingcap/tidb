@@ -675,9 +675,13 @@ func (w *worker) transitOneJobStep(
 	}
 	jobCtx.addUnSynced(job.ID)
 
-	// If error is non-retryable, we can ignore the sleep.
-	if runJobErr != nil && isRetryableJobError(runJobErr, job.ErrorCount) {
+	// If error is non-retryable, we can ignore the sleep unless the job is in a
+	// non-rollbackable state and must keep retrying to roll forward.
+	retryableErr := runJobErr != nil && isRetryableJobError(runJobErr, job.ErrorCount)
+	if retryableErr {
 		metrics.RetryableErrorCount.WithLabelValues(runJobErr.Error()).Inc()
+	}
+	if retryableErr || (runJobErr != nil && job.State == model.JobStateRunning && !job.IsRollbackable()) {
 		jobCtx.logger.Info("run DDL job failed, sleeps a while then retries it.",
 			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 		// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,

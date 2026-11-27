@@ -374,10 +374,24 @@ func TestMergeContinuousKeyRanges(t *testing.T) {
 func TestDetectAndUpdateJobVersion(t *testing.T) {
 	d := &ddl{ddlCtx: &ddlCtx{ctx: context.Background()}}
 
+<<<<<<< HEAD
+=======
+	originalJobVersion := model.GetJobVerInUse()
+	originalGlobalIndexV1 := model.GetGlobalIndexV1Supported()
+	originalDisabled := vardef.IsLegacyECDSASessionTokenDisabled()
+	t.Cleanup(func() {
+		model.SetJobVerInUse(originalJobVersion)
+		model.SetGlobalIndexV1Supported(originalGlobalIndexV1)
+		vardef.SetLegacyECDSASessionTokenDisabled(originalDisabled)
+	})
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
 	reset := func() {
 		model.SetJobVerInUse(model.JobVersion1)
 	}
+<<<<<<< HEAD
 	t.Cleanup(reset)
+=======
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
 	// other ut in the same address space might change it
 	reset()
 	require.Equal(t, model.JobVersion1, model.GetJobVerInUse())

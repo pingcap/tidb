@@ -95,7 +95,11 @@ go_test(
     ],
     embed = [":infoschema"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 29,
+=======
+    shard_count = 50,
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
     deps = [
         "//pkg/ddl/placement",
         "//pkg/domain",

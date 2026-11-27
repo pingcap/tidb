@@ -23,3 +23,15 @@ var (
 	// ErrHTTPServiceError means we got a http response with a status code which is not '2xx'
 	ErrHTTPServiceError = dbterror.ClassDomain.NewStd(errno.ErrHTTPServiceError)
 )
+
+type pdHTTPStatusError struct {
+	error
+	statusCode int
+}
+
+func (err *pdHTTPStatusError) HTTPStatusCode() int { return err.statusCode }
+
+func (err *pdHTTPStatusError) Unwrap() error { return err.error }
+
+// Cause preserves ErrHTTPServiceError.Equal for callers using pingcap/errors.
+func (err *pdHTTPStatusError) Cause() error { return err.error }
