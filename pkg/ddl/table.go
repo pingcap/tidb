@@ -1345,7 +1345,7 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 	infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job,
 	fkh *foreignKeyHelper, tblInfo *model.TableInfo,
 	oldSchemaName, oldTableName, newTableName ast.CIStr, newSchemaID int64) error {
-	if !vardef.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
+	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}
 	is := infoCache.GetLatest()
