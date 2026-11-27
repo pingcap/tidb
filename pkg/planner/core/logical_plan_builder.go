@@ -5924,6 +5924,9 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 	}
 	joinPlan.SetChildren(outerPlan, innerPlan)
 	joinPlan.AttachOnConds(onCondition)
+	// A semi join outputs only the outer side, so the outer side's USING/NATURAL
+	// names stay visible to the query block above it.
+	joinPlan.FullSchema, joinPlan.FullNames = findJoinFullSchema(outerPlan)
 	joinPlan.SetOutputNames(make([]*types.FieldName, outerPlan.Schema().Len(), outerPlan.Schema().Len()+innerPlan.Schema().Len()+1))
 	copy(joinPlan.OutputNames(), outerPlan.OutputNames())
 	if asScalar {

@@ -1764,10 +1764,10 @@ func TestNameResolver(t *testing.T) {
 		},
 		{
 			// The EXISTS subquery builds its own wide projection, which indexes its
-			// own input names; the outer index is restored after it.
+			// own input names; the outer index is restored after it. The semi apply
+			// keeps the outer join's names, so the fields after it still use the index.
 			sql:     "select t1.*, t2.*, exists (select s1.*, s2.*, s3.* from t s1, t s2, t s3 where s1.a = t1.a), t3.* from t t1, t t2, t t3",
-			indexed: map[string]int{"t1": 12, "t2": 12, "s1": 12, "s2": 12, "s3": 12},
-			scanned: map[string]int{"t3": 12},
+			indexed: map[string]int{"t1": 12, "t2": 12, "t3": 12, "s1": 12, "s2": 12, "s3": 12},
 		},
 		{
 			sql:     "select t1.*, t2.*, t3.*, a from t t1, t t2, t t3",
