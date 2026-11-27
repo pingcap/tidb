@@ -27,6 +27,9 @@ const (
 	dbKey        = "db"
 	tableKey     = "table"
 	partitionKey = "partition"
+
+	regionPolicyKey       = "region_policy"
+	regionPolicyExclusive = "exclusive"
 )
 
 // AttributesCompatibility is the return type of CompatibleWith.
@@ -128,6 +131,9 @@ func RestoreRegionLabels(labels *[]pd.RegionLabel) string {
 func Add(labels *[]pd.RegionLabel, label pd.RegionLabel) error {
 	for i := range *labels {
 		l := (*labels)[i]
+		if label.Key == regionPolicyKey && l.Key == regionPolicyKey {
+			return fmt.Errorf("duplicated attribute '%s'", regionPolicyKey)
+		}
 		res := CompatibleWith(&label, &l)
 		if res == AttributesCompatible {
 			continue
@@ -141,5 +147,32 @@ func Add(labels *[]pd.RegionLabel, label pd.RegionLabel) error {
 	}
 
 	*labels = append(*labels, label)
+	return nil
+}
+
+// ValidateRegionPolicy validates the reserved table region policy attribute.
+func ValidateRegionPolicy(labels []pd.RegionLabel) error {
+	found := false
+	for i := range labels {
+		if labels[i].Key != regionPolicyKey {
+			continue
+		}
+		if found {
+			return fmt.Errorf("duplicated attribute '%s'", regionPolicyKey)
+		}
+
+		normalized := strings.ToLower(labels[i].Value)
+		if normalized != regionPolicyExclusive {
+			return fmt.Errorf(
+				"invalid region policy attribute '%s=%s', expected '%s=%s'",
+				regionPolicyKey,
+				labels[i].Value,
+				regionPolicyKey,
+				regionPolicyExclusive,
+			)
+		}
+		labels[i].Value = normalized
+		found = true
+	}
 	return nil
 }
