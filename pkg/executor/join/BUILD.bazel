@@ -83,6 +83,7 @@ go_test(
         "anti_semi_join_probe_test.go",
         "bench_test.go",
         "concurrent_map_test.go",
+        "hash_join_v1_null_aware_test.go",
         "hash_table_v1_test.go",
         "hash_table_v2_test.go",
         "index_lookup_join_test.go",
