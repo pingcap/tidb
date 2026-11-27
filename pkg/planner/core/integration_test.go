@@ -2994,6 +2994,32 @@ func TestIssue72090(t *testing.T) {
 	})
 }
 
+func TestIssue72925(t *testing.T) {
+	// The BIT branch of a UNION must not narrow the result length to its bytes.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_bit(b bit(8))")
+	tk.MustExec("create table t_blob(v longblob)")
+	tk.MustExec("create table t_dec(d decimal(10, 0))")
+	tk.MustExec("insert into t_blob values('abcdef')")
+	tk.MustExec("insert into t_dec values(10)")
+
+	for _, op := range []string{"union", "union all"} {
+		query := "select b as x from t_bit " + op + " select v from t_blob"
+		rs, err := tk.Exec(query)
+		require.NoError(t, err)
+		require.Equal(t, mysql.MaxLongBlobWidth, rs.Fields()[0].Column.GetFlen())
+		require.NoError(t, rs.Close())
+		tk.MustQuery(query).Check(testkit.Rows("abcdef"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select count(*) from (" + query + ") q where x = 'abcdef'").Check(testkit.Rows("1"))
+	}
+	tk.MustQuery("select x from (select b as x from t_bit union select d from t_dec) q union select v from t_blob").
+		Sort().Check(testkit.Rows("10", "abcdef"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
 func TestUnionAllCorrelatedQuantifiedPredicate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

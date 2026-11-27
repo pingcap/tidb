@@ -2639,10 +2639,13 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	case types.ETVectorFloat32:
 		fc = &castAsVectorFloat32FunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETString:
-		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, isExplicitCharset}
 		if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeBit {
+			// Clone it since `tp` may be shared with others, e.g. the union result
+			// type, which must not be narrowed to the length of the BIT argument.
+			tp = tp.Clone()
 			tp.SetFlen((expr.GetType(ctx.GetEvalCtx()).GetFlen() + 7) / 8)
 		}
+		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, isExplicitCharset}
 	default:
 		return nil, errors.Errorf("cannot cast from %s", tp.EvalType())
 	}
