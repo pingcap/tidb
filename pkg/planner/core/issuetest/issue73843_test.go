@@ -15,9 +15,12 @@
 package issuetest
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIssue73843(t *testing.T) {
@@ -38,9 +41,16 @@ func TestIssue73843(t *testing.T) {
 
 	streamAggQuery := "select /*+ STREAM_AGG() */ id, hex(min(b'101010')), hex(min(x'00002A')) " +
 		"from (select * from binary_agg order by id limit 3) as t group by id order by id"
-	plan := tk.MustQuery("explain format='brief' " + streamAggQuery)
-	plan.CheckContain("StreamAgg")
+	plan := tk.MustQuery("explain format='plan_tree' " + streamAggQuery)
 	plan.CheckNotContain("HashAgg")
+	rootStreamAgg := false
+	for _, row := range plan.Rows() {
+		if strings.Contains(fmt.Sprint(row[0]), "StreamAgg") && fmt.Sprint(row[1]) == "root" {
+			rootStreamAgg = true
+			break
+		}
+	}
+	require.True(t, rootStreamAgg, "expected root StreamAgg, got %v", plan.Rows())
 	tk.MustQuery(streamAggQuery).
 		Check(testkit.Rows("1 2A 00002A", "2 2A 00002A", "3 2A 00002A"))
 
