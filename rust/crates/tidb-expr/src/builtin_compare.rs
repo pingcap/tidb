@@ -398,9 +398,9 @@ fn skip_plan_cache_for_comparison(ctx: &dyn Columns, constant: &Constant, target
     ctx.set_skip_plan_cache(&format!("'{text}' may be converted to {target}"));
 }
 
-// Go allowCmpArgsRefining4PlanCache: only the three value-dependent
-// conversions may refine a mutable operand, and they must disable caching.
-fn allow_comparison_refinement(ctx: &dyn Columns, args: &[Expression]) -> Result<bool, EvalError> {
+// Go allowCmpArgsRefining4PlanCache: only the value-dependent conversions
+// may refine a mutable operand, and they must disable caching.
+fn allow_comparison_refinement(ctx: &dyn Columns, args: &[Expression], op: &str) -> Result<bool, EvalError> {
     if !crate::expr_util::maybe_over_optimized_4_plan_cache(ctx.use_plan_cache(), args) {
         return Ok(true);
     }
@@ -417,14 +417,28 @@ fn allow_comparison_refinement(ctx: &dyn Columns, args: &[Expression]) -> Result
             continue;
         };
         let constant_type = constant.get_type(ctx)?.eval_type();
-        let target = if other_type.code() == FieldTypeCode::Year
+        if other_type.code() == FieldTypeCode::Year
             || (other_type.eval_type() == EvalType::Int
                 && matches!(
                     constant_type,
                     EvalType::String | EvalType::Real | EvalType::Decimal
-                )) {
-            "INT"
-        } else if !matches!(other, Expression::Constant(_))
+                ))
+        {
+            skip_plan_cache_for_comparison(ctx, constant, "INT");
+            return Ok(true);
+        }
+        // Case 4: an invalid non-NULL value must not match a NULL duration.
+        // This requires value-dependent refinement, which cannot be skipped
+        // for cached plans.
+        if op == "nulleq"
+            && !matches!(other, Expression::Constant(_))
+            && other_type.eval_type() == EvalType::Duration
+            && constant_type != EvalType::Duration
+        {
+            ctx.set_skip_plan_cache("NULL-safe duration comparison requires value-dependent refinement");
+            return Ok(true);
+        }
+        let target = if !matches!(other, Expression::Constant(_))
             && matches!(
                 other_type.code(),
                 FieldTypeCode::Datetime | FieldTypeCode::Timestamp
@@ -2046,7 +2060,7 @@ impl CompareFunctionClass {
             refine_integer_comparison_for_rewrite(name, args);
             return Ok(());
         };
-        if !allow_comparison_refinement(columns, args)? {
+        if !allow_comparison_refinement(columns, args, name)? {
             return Ok(());
         }
         crate::expr_util::remove_mutable_const(args, columns)?;

@@ -2997,3 +2997,33 @@ fn point_plans_carry_output_names() {
         assert_eq!(spelled(&session), expected("d"));
     }
 }
+
+/// Go `TestNullSafeDurationPlanCache` (239252b4e97): `time_col <=> ?` needs
+/// the value-dependent refinement of an invalid TIME parameter (an invalid
+/// non-NULL value must not match a NULL), so it never caches; ordinary TIME
+/// equality still does.
+#[test]
+fn test_null_safe_duration_plan_cache() {
+    let mut tk = Session::new();
+    tk.run("create table t(tm time null)").unwrap();
+    tk.run("insert into t values (null),('12:00:00')").unwrap();
+    let cell = |tk: &mut Session, sql: &str| crate::tests_support::row_text(tk.run(sql)).remove(0).remove(0);
+    for enabled in ["1", "0"] {
+        tk.run(&format!("set tidb_enable_prepared_plan_cache={enabled}")).unwrap();
+        for predicate in ["tm <=> ?", "? <=> tm"] {
+            tk.run(&format!("prepare s from 'select count(*) from t where {predicate}'")).unwrap();
+            for (value, count) in [("'12:00:00'", "1"), ("'not-a-time'", "0"), ("NULL", "1"), ("'00:00:00'", "0"), ("'12:00:00'", "1")] {
+                tk.run(&format!("set @p={value}")).unwrap();
+                assert_eq!(cell(&mut tk, "execute s using @p"), count, "cache={enabled} {predicate} {value}");
+            }
+            assert_eq!(cell(&mut tk, "select @@last_plan_from_cache"), "0", "cache={enabled} {predicate}");
+        }
+        // Ordinary TIME equality must remain cacheable.
+        tk.run("prepare s from 'select count(*) from t where tm = ?'").unwrap();
+        tk.run("set @p='12:00:00'").unwrap();
+        assert_eq!(cell(&mut tk, "execute s using @p"), "1");
+        tk.run("set @p='13:00:00'").unwrap();
+        assert_eq!(cell(&mut tk, "execute s using @p"), "0");
+        assert_eq!(cell(&mut tk, "select @@last_plan_from_cache"), enabled);
+    }
+}
