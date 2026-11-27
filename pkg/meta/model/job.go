@@ -917,6 +917,13 @@ func (job *Job) IsRollbackable() bool {
 		if job.SchemaState == StatePublic {
 			return false
 		}
+	case ActionCreateTable:
+		// A table with foreign keys is persisted in StateDeleteOnly by the first step and made
+		// public by the second. Nothing removes it in between, so only a job that has not run
+		// yet can be cancelled. Like the other non-rollbackable states (DROP INDEX in
+		// StateDeleteOnly, for example), the job then rolls forward: the error count limit
+		// does not cancel it, and it retries until the publish step succeeds.
+		return job.SchemaState == StateNone
 	case ActionCreateMaterializedView:
 		return job.SchemaState == StateNone || job.SchemaState == StateWriteReorganization
 	case ActionAddTablePartition:

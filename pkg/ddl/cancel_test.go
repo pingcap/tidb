@@ -107,6 +107,9 @@ var allTestCase = []testCancelJob{
 	// Create table.
 	{"create table test_create_table(a int)", true, model.StateNone, true, false, nil},
 	{"create table test_create_table(a int)", false, model.StatePublic, false, true, nil},
+	// Create table with a foreign key: the first step persists the table in StateDeleteOnly, which cannot be cancelled.
+	{"create table test_create_fk_table(a int, foreign key (a) references test_fk_parent(a))", true, model.StateNone, true, false, []string{"create table if not exists test_fk_parent(a int primary key)", "drop table if exists test_create_fk_table"}},
+	{"create table test_create_fk_table(a int, foreign key (a) references test_fk_parent(a))", false, model.StateDeleteOnly, true, true, []string{"create table if not exists test_fk_parent(a int primary key)", "drop table if exists test_create_fk_table"}},
 	// Drop table.
 	{"drop table test_create_table", true, model.StatePublic, true, false, nil},
 	{"drop table test_create_table", false, model.StateWriteOnly, true, true, []string{"create table if not exists test_create_table(a int)"}},
