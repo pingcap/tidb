@@ -1483,9 +1483,11 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 				}
 				// If there is condition which is always false, return dual plan directly.
 				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-				if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
-					dual.SetOutputNames(join.FullNames)
-					dual.SetSchema(join.FullSchema)
+				// Keep the redundant USING/NATURAL JOIN columns so later clauses like ORDER BY can still
+				// resolve them. The join may be wrapped in a LogicalSelection built from an ON condition.
+				if fullSchema, fullNames := findJoinFullSchema(p); fullSchema != nil {
+					dual.SetOutputNames(fullNames)
+					dual.SetSchema(fullSchema)
 				} else {
 					dual.SetOutputNames(p.OutputNames())
 					dual.SetSchema(p.Schema())
