@@ -1029,6 +1029,65 @@ func TestVirtualColumnEstimatedFromBaseColumn(t *testing.T) {
 		require.GreaterOrEqual(t, estRows, tc.min, tc.cond)
 		require.LessOrEqual(t, estRows, tc.max, tc.cond)
 	}
+
+	// Many case variants of one value: all 1024 letter-case variants of
+	// 'abcdefghij' (one row each) and 1024 distinct other values. Every bucket
+	// bound among the variants matches, so the point-count cap must not apply:
+	// it would estimate about 1 row instead of 1024.
+	tk.MustExec("set @@cte_max_recursion_depth = 2048")
+	tk.MustExec(`create table t3(id int primary key, c varchar(16) collate utf8mb4_bin,
+		lc varchar(16) collate utf8mb4_bin as (lower(c)) virtual)`)
+	tk.MustExec(`insert into t3(id, c)
+		select x.a, case when x.a < 1024 then concat(
+				if(x.a & 1, 'A', 'a'), if(x.a & 2, 'B', 'b'), if(x.a & 4, 'C', 'c'), if(x.a & 8, 'D', 'd'), if(x.a & 16, 'E', 'e'),
+				if(x.a & 32, 'F', 'f'), if(x.a & 64, 'G', 'g'), if(x.a & 128, 'H', 'h'), if(x.a & 256, 'I', 'i'), if(x.a & 512, 'J', 'j'))
+			else concat('z-', x.a) end
+		from (with recursive x as (select 0 as a union all select a + 1 from x where a < 2047) select a from x) as x`)
+	tk.MustExec("analyze table t3 all columns with 64 buckets, 0 topn")
+	estRows = getTableReaderEstRows(t, tk, "select * from t3 where lc = 'abcdefghij'")
+	require.GreaterOrEqual(t, estRows, 700.0)
+	require.LessOrEqual(t, estRows, 1400.0)
+
+	// Only index statistics on the base column: their histogram bounds are
+	// encoded index keys, not values of c's type, so they must not be evaluated
+	// (all of them would fail lower(c) = 'alpha'). lc keeps the default
+	// selectivity. Selectivity is called directly because the table path drops
+	// the unusable index ic before estimating.
+	tk.MustExec(`create table t4(id int, c varchar(32) collate utf8mb4_bin,
+		lc varchar(32) collate utf8mb4_bin as (lower(c)) virtual, index ic(c))`)
+	tk.MustExec(`insert into t4(id, c)
+		select x.a, if(x.a <= 300, 'Alpha', concat('Item-', x.a))
+		from (with recursive x as (select 1 as a union all select a + 1 from x where a < 1000) select a from x) as x`)
+	tk.MustExec("analyze table t4 index ic with 64 buckets, 0 topn")
+	// ANALYZE also collects the column statistics of c; remove them.
+	tbl4, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t4"))
+	require.NoError(t, err)
+	tid, cid := tbl4.Meta().ID, tbl4.Meta().FindPublicColumnByName("c").ID
+	for _, sysTbl := range []string{"stats_histograms", "stats_buckets", "stats_top_n"} {
+		tk.MustExec(fmt.Sprintf("delete from mysql.%s where table_id = %d and is_index = 0 and hist_id = %d", sysTbl, tid, cid))
+	}
+	h.ClearForTest()
+	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
+	// Load the index statistics.
+	tk.MustQuery("select * from t4 use index(ic) where c = 'Alpha'")
+	statsTbl := h.GetPhysicalTableStats(tid, tbl4.Meta())
+	require.Nil(t, statsTbl.GetCol(cid))
+	require.True(t, statsTbl.GetIdx(tbl4.Meta().FindIndexByName("ic").ID).IsFullLoad())
+
+	sctx := tk.Session().(sessionctx.Context)
+	stmts, err := session.Parse(sctx, "select * from t4 where lc = 'alpha'")
+	require.NoError(t, err)
+	ret := &plannercore.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmts[0])
+	require.NoError(t, plannercore.Preprocess(context.Background(), sctx, nodeW, plannercore.WithPreprocessorReturn(ret)))
+	p, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, nodeW, ret.InfoSchema)
+	require.NoError(t, err)
+	sel := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
+	ds := sel.Children()[0].(*logicalop.DataSource)
+	histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo, ds.Schema().Columns)
+	ratio, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
+	require.NoError(t, err)
+	require.InDelta(t, 0.8, ratio, 1e-9)
 }
 
 func TestNewIndexWithColumnStats(t *testing.T) {

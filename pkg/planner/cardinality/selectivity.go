@@ -921,11 +921,12 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 }
 
 // getSelectivityByFilter is GetSelectivityByFilter with one extra input: when
-// histPoints > 0, the filter is known to select at most histPoints distinct
+// histPoints > 0, the filter is expected to select about histPoints distinct
 // values outside the TopN, so the histogram part is capped at histPoints values
 // of average size. Evaluating the bucket bounds samples the histogram at only
 // 2 * buckets points, which can't estimate a few rare values: one matching
-// bound already counts as a whole bucket.
+// bound already counts as a whole bucket. The cap doesn't apply when more
+// bounds match than there are points.
 func getSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters expression.Expression, histPoints int) (ok bool, selectivity float64, err error) {
 	// 1. Make sure the expressions
 	//   (1) are safe to be evaluated here,
@@ -1042,7 +1043,7 @@ func getSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 		if err != nil {
 			return false, 0, err
 		}
-		var bucketRepeatTotalCnt, bucketRepeatSelectedCnt, lowerBoundMatchCnt int64
+		var bucketRepeatTotalCnt, bucketRepeatSelectedCnt, lowerBoundMatchCnt, upperBoundMatchCnt int64
 		for i := range hist.Buckets {
 			bucketRepeatTotalCnt += hist.Buckets[i].Repeat
 			if len(selected) < 2*i {
@@ -1053,6 +1054,7 @@ func getSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 				lowerBoundMatchCnt++
 			}
 			if selected[2*i+1] {
+				upperBoundMatchCnt++
 				bucketRepeatSelectedCnt += hist.Buckets[i].Repeat
 			}
 		}
@@ -1064,7 +1066,10 @@ func getSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 		}
 		lowerBoundsSel = float64(lowerBoundMatchCnt) / float64(histBucketsLen)
 		histSel = lowerBoundsSel*lowerBoundsRatio + upperBoundsSel*upperBoundsRatio
-		if histPoints > 0 && hist.NDV > 0 {
+		// Cap at histPoints values of average frequency, unless more bounds match
+		// than there are points: the bounds are distinct values, so then several
+		// values map to one point and the sampled estimate stands.
+		if histPoints > 0 && hist.NDV > 0 && lowerBoundMatchCnt+upperBoundMatchCnt <= int64(histPoints) {
 			histSel = min(histSel, float64(histPoints)/float64(hist.NDV))
 		}
 		histSel *= histTotalCnt / totalCnt

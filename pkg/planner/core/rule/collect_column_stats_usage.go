@@ -150,7 +150,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 		c.colMap[col.UniqueID] = map[model.TableItemID]struct{}{tblColID: {}}
 		// A virtual generated column has no statistics of its own. Conditions on
 		// one that reads a single stored column are estimated from that column's
-		// statistics (see cardinality.estimateVirtualColumnConds), so load them too.
+		// statistics (see cardinality.VirtualColumnBaseColumn), so load them too.
 		if base := cardinality.VirtualColumnBaseColumn(col); base != nil && base.ID > 0 {
 			c.colMap[col.UniqueID][model.TableItemID{TableID: tblID, ID: base.ID, IsIndex: false}] = struct{}{}
 		}

@@ -25,9 +25,11 @@ import (
 )
 
 // VirtualColumnBaseColumn returns the only stored column that the generation
-// expression of the virtual generated column col reads, or nil when col isn't
-// such a column. Hidden columns of expression indexes are excluded because
-// they are estimated with the index statistics.
+// expression of the virtual generated column col reads, when conditions on col
+// can be estimated from that column's statistics. It returns nil otherwise:
+// hidden columns of expression indexes are estimated with the index statistics,
+// and a base column whose statistics values can't be restored for evaluation
+// (see hasRestorableStatsValues) is of no use.
 func VirtualColumnBaseColumn(col *expression.Column) *expression.Column {
 	if col == nil || col.VirtualExpr == nil || col.IsHidden {
 		return nil
@@ -37,7 +39,7 @@ func VirtualColumnBaseColumn(col *expression.Column) *expression.Column {
 		return nil
 	}
 	for _, base := range cols {
-		if base.VirtualExpr != nil {
+		if base.VirtualExpr != nil || !hasRestorableStatsValues(base.RetType) {
 			return nil
 		}
 		return base
@@ -88,7 +90,7 @@ func virtualColumnStatsNode(
 		return nil
 	}
 	histPoints := 0
-	if isCaseMapping(col.VirtualExpr) {
+	if isCaseMapping(col.VirtualExpr) && !shortens(col.RetType, col.VirtualExpr) {
 		histPoints = pointCount(col, conds)
 	}
 	ok, sel, err := getSelectivityByFilter(ctx, coll, filter, histPoints)
@@ -104,10 +106,12 @@ func virtualColumnStatsNode(
 }
 
 // isCaseMapping reports whether expr is LOWER or UPPER of a column, possibly
-// under casts. One value of such an expression comes from only the few case
-// variants of a base value, so a point condition on it selects about as many
-// base values as it has points. That doesn't hold in general: mod(c, 2) = 0
-// selects half of all values.
+// under casts that don't shorten the value. One value of such an expression
+// usually comes from only the few case variants of a base value, so a point
+// condition on it selects about as many base values as it has points. That
+// doesn't hold in general: mod(c, 2) = 0 selects half of all values, and so
+// does CAST(LOWER(c) AS CHAR(1)) = 'a' when half of the values start with 'a'.
+// getSelectivityByFilter still checks the histogram bounds against this.
 func isCaseMapping(expr expression.Expression) bool {
 	for {
 		f, ok := expr.(*expression.ScalarFunction)
@@ -116,7 +120,11 @@ func isCaseMapping(expr expression.Expression) bool {
 		}
 		switch f.FuncName.L {
 		case ast.Cast:
-			expr = f.GetArgs()[0]
+			arg := f.GetArgs()[0]
+			if shortens(f.RetType, arg) {
+				return false
+			}
+			expr = arg
 			continue
 		case ast.Lower, ast.Lcase, ast.Upper, ast.Ucase:
 			_, isCol := f.GetArgs()[0].(*expression.Column)
@@ -124,6 +132,12 @@ func isCaseMapping(expr expression.Expression) bool {
 		}
 		return false
 	}
+}
+
+// shortens reports whether a value of expr can be cut short when held as type tp.
+func shortens(tp *types.FieldType, expr expression.Expression) bool {
+	flen := tp.GetFlen()
+	return flen != types.UnspecifiedLength && flen < expr.GetType(nil).GetFlen()
 }
 
 // pointCount returns how many distinct values of col the conditions can select
@@ -180,7 +194,7 @@ func isColumnAndConstant(col *expression.Column, a, b expression.Expression) boo
 // restored for evaluation.
 func canEstimateFromBaseColumn(ctx planctx.PlanContext, coll *statistics.HistColl, col *expression.Column) bool {
 	base := VirtualColumnBaseColumn(col)
-	if base == nil || !hasRestorableStatsValues(base.RetType) {
+	if base == nil {
 		return false
 	}
 	if colStats := coll.GetCol(col.UniqueID); colStats != nil && colStats.IsFullLoad() &&
@@ -199,10 +213,11 @@ func canEstimateFromBaseColumn(ctx planctx.PlanContext, coll *statistics.HistCol
 // hasRestorableStatsValues reports whether the TopN and histogram values of a
 // column of type tp decode to values of that type, so expressions over the
 // column can be evaluated on them. Temporal values decode as packed integers,
-// and ENUM, SET and BIT as their internal representation.
+// and ENUM, SET and BIT as their internal representation. FLOAT values decode
+// as float64, which a FLOAT chunk column can't hold.
 func hasRestorableStatsValues(tp *types.FieldType) bool {
 	switch tp.GetType() {
-	case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit:
+	case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit, mysql.TypeFloat:
 		return false
 	}
 	switch tp.EvalType() {
