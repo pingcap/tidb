@@ -752,16 +752,42 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			patterns:  []string{"^.*a.*$", "^b"},
 		},
 		{
+			// message is utf8mb4_bin, a PAD SPACE collation, so 'gc ' is equal too.
 			sql:       "select * from information_schema.cluster_log where message='gc'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"^gc *$"},
+		},
+		{
+			sql:       "select * from information_schema.cluster_log where message='gc  '",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"^gc *$"},
+		},
+		{
+			sql:       "select * from information_schema.cluster_log where message='gc' collate utf8mb4_0900_bin",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			patterns:  []string{"^gc$"},
 		},
 		{
+			// LIKE and REGEXP keep trailing spaces, also under PAD SPACE.
+			sql:       "select * from information_schema.cluster_log where message like 'gc '",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"^gc $"},
+		},
+		{
+			sql:       "select * from information_schema.cluster_log where message regexp 'gc '",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"gc "},
+		},
+		{
 			sql:       "select * from information_schema.cluster_log where message='.*txn.*'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{"^" + regexp.QuoteMeta(".*txn.*") + "$"},
+			patterns:  []string{"^" + regexp.QuoteMeta(".*txn.*") + " *$"},
 		},
 		{
 			sql: `select * from information_schema.cluster_log
