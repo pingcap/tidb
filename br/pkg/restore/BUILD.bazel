@@ -63,6 +63,7 @@ go_test(
     shard_count = 22,
     deps = [
         "//br/pkg/conn",
+        "//br/pkg/errors",
         "//br/pkg/mock",
         "//br/pkg/pdutil",
         "//br/pkg/restore/split",
@@ -70,6 +71,8 @@ go_test(
         "//br/pkg/utils",
         "//br/pkg/utils/iter",
         "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/meta/model",
         "//pkg/objstore",
         "//pkg/objstore/storeapi",
         "//pkg/parser/ast",

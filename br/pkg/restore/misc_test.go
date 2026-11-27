@@ -31,12 +31,15 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -157,6 +160,37 @@ func TestGetTableSchema(t *testing.T) {
 	tableInfo, err := restore.GetTableSchema(dom, ast.NewCIStr("mysql"), ast.NewCIStr("tidb"))
 	require.NoError(t, err)
 	require.Equal(t, ast.NewCIStr("tidb"), tableInfo.Name)
+}
+
+func TestAssertNoUserDBsInCluster(t *testing.T) {
+	m, err := mock.NewCluster()
+	require.NoError(t, err)
+	defer m.Stop()
+	dom := m.Domain
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	require.NoError(t, restore.AssertNoUserDBsInCluster(dom))
+
+	// A database the info schema has not loaded, like the ones BR filters out
+	// when it restores some databases.
+	require.NoError(t, kv.RunInNewTxn(ctx, dom.Store(), true, func(_ context.Context, txn kv.Transaction) error {
+		mutator := meta.NewMutator(txn)
+		ids, err := mutator.GenGlobalIDs(2)
+		if err != nil {
+			return err
+		}
+		db := &model.DBInfo{ID: ids[0], Name: ast.NewCIStr("not_loaded"), State: model.StatePublic}
+		if err := mutator.CreateDatabase(db); err != nil {
+			return err
+		}
+		return mutator.CreateTableOrView(db.ID, &model.TableInfo{ID: ids[1], Name: ast.NewCIStr("t"), State: model.StatePublic})
+	}))
+	_, loaded := dom.InfoSchema().SchemaByName(ast.NewCIStr("not_loaded"))
+	require.False(t, loaded)
+	require.NoError(t, restore.AssertUserDBsEmpty(dom))
+
+	err = restore.AssertNoUserDBsInCluster(dom)
+	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(err), "%v", err)
+	require.ErrorContains(t, err, "not_loaded.t")
 }
 
 func TestAssertUserDBsEmpty(t *testing.T) {
