@@ -20,7 +20,7 @@ pub(super) fn compress(
             let encoder = encoder.get_or_insert_with(crate::go_flate::ZlibEncoder::new);
             output.append(crypto::compress_bytes(bytes, encoder));
         }
-        true
+        Ok(true)
     })
 }
 
@@ -33,12 +33,13 @@ pub(super) fn uncompress(
     let mut inflater = None;
     write_rows(function, ctx, input, result, |bytes, output| {
         let inflater = inflater.get_or_insert_with(crypto::ZlibInflater::new);
-        if let Some(decoded) = inflater.decode(bytes, ctx) {
-            output.append(decoded);
-            true
-        } else {
-            false
-        }
+        Ok(match inflater.decode(bytes, ctx)? {
+            Some(decoded) => {
+                output.append(decoded);
+                true
+            }
+            None => false,
+        })
     })
 }
 
@@ -47,7 +48,7 @@ fn write_rows(
     ctx: &dyn Columns,
     input: &Chunk,
     result: &mut Column,
-    mut write: impl FnMut(&[u8], &mut ByteRow<'_>) -> bool,
+    mut write: impl FnMut(&[u8], &mut ByteRow<'_>) -> Result<bool, EvalError>,
 ) -> Result<(), EvalError> {
     vec_eval::with_argument_column(
         &function.args[0],
@@ -73,7 +74,7 @@ fn write_rows(
             result.reserve_string(rows);
             result.try_append_byte_rows(rows, |row, output| {
                 let row = selection.map_or(row, |selection| selection[row]);
-                Ok(!cells.is_null(row) && write(get(row), output))
+                Ok(!cells.is_null(row) && write(get(row), output)?)
             })
         },
     )?

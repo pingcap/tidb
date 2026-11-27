@@ -1347,10 +1347,9 @@ fn test_password() {
 /// TestUncompressRejectsInflatedDataLargerThanDeclaredLength` (payload shape
 /// half) and `:828 TestUncompressTracksInflateMemory`'s inverse frame.
 ///
-/// The memory-tracker assertions (`tracker.BytesConsumed`,
-/// `MaxConsumed <= declaredLength`, the LogOnExceed hook) need a session
-/// memory tracker, which this tier does not model; see
-/// [`uncompress_memory_tracker_gaps`].
+/// The memory-tracker assertions (`tracker.BytesConsumed`, `MaxConsumed`,
+/// the quota action) need a statement memory tracker; the session test
+/// `uncompress_charges_its_declared_length_to_the_statement` covers them.
 #[test]
 fn uncompress_rejects_payload_deeper_than_declared_length() {
     use flate2::write::ZlibEncoder;
@@ -1401,7 +1400,8 @@ impl Columns for WarningSink {
 /// TestUncompressRejectsHandcraftedPayloadLargerThanDeclaredLength`: the
 /// hand-picked hex payload declares 32 bytes but inflates to 1024 'A's --
 /// and the decoder must reject it with the same ZLibZBuf warning. The
-/// inflate-mem tracker check is covered by [`uncompress_memory_tracker_gaps`].
+/// inflate-mem tracker check is covered by the session test
+/// `uncompress_charges_its_declared_length_to_the_statement`.
 #[test]
 fn uncompress_rejects_handcrafted_payload_larger_than_declared_length() {
     let payload = decode_hex("20000000789c73741c05a360148c540000a4780410");

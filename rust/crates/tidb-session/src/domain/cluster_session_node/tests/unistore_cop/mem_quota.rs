@@ -141,3 +141,28 @@ fn ordinary_joins_are_unaffected_by_the_same_quota() {
     assert_eq!(rows(&mut tk, "SELECT t1.a FROM t t1, t t2").len(), 48 * 48);
 }
 
+
+/// Go `TestUncompressTracksInflateMemory` (c6e3cf83998) at the statement:
+/// UNCOMPRESS charges its declared length to the statement while it
+/// inflates, so a payload declaring 64 MiB is Go's 8175 under a 1 MiB quota
+/// with CANCEL (gomaster probe), while LOG and the default quota answer the
+/// value, row by row and vectorized alike.
+#[test]
+fn uncompress_charges_its_declared_length_to_the_statement() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 685);
+    let declared = "select uncompress(concat(unhex('00000004'), substr(compress('hello'), 5)))";
+    let vectorized = "select uncompress(concat(unhex('00000004'), substr(compress(a), 5))) from \
+        (select 'hello' a union all select 'world') t order by 1";
+    assert_eq!(q(&mut tk, declared), [["hello"]]);
+    exec_all(&mut tk, &["SET GLOBAL tidb_mem_oom_action = 'CANCEL'", "SET tidb_mem_quota_query = 1048576"]);
+    assert_eq!(error(&mut tk, declared).code, 8175);
+    assert_eq!(error(&mut tk, vectorized).code, 8175);
+    exec_all(&mut tk, &["SET GLOBAL tidb_mem_oom_action = 'LOG'"]);
+    assert_eq!(q(&mut tk, declared), [["hello"]]);
+    // Go: the charge is held while inflating and released afterwards.
+    let (memory, _) = tk.stmt_ctx_trackers().expect("the statement's trackers");
+    assert!(memory.max_consumed() >= 1 << 26, "max {}", memory.max_consumed());
+    assert!(memory.bytes_consumed() < 1 << 26, "held {}", memory.bytes_consumed());
+    assert_eq!(q(&mut tk, vectorized), [["hello"], ["world"]]);
+}

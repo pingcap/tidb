@@ -118,6 +118,33 @@ pub(crate) struct ZlibInflater {
     decoder: Option<Decompress>,
     output: Vec<u8>,
     chunk: [u8; 8 * 1024],
+    /// Go `builtinUncompressSig.getMemTracker`, read once per inflater.
+    tracker: Option<Option<StmtMemTracker>>,
+}
+
+/// Go `vars.StmtCtx.MemTracker`, with the session's killer that its quota
+/// action signals (Go's action panics out of `Consume`).
+struct StmtMemTracker {
+    tracker: std::sync::Arc<tidb_memory::Tracker>,
+    killer: Option<std::sync::Arc<tidb_sqlkiller::SqlKiller>>,
+}
+
+/// Go `builtinUncompressSig.getMemTracker`: the statement's tracker, when
+/// the evaluation context has session variables.
+fn get_mem_tracker(ctx: &dyn Columns) -> Result<Option<StmtMemTracker>, EvalError> {
+    if ctx
+        .get_optional_prop_provider(tidb_exprctx::OptionalEvalPropKey::SessionVars)
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let vars = tidb_expropt::SessionVarsPropReader
+        .get_session_vars(ctx)
+        .map_err(super::misc::opt_prop_error)?;
+    Ok(vars.stmt_mem_tracker().map(|tracker| StmtMemTracker {
+        tracker,
+        killer: vars.sql_killer(),
+    }))
 }
 
 impl ZlibInflater {
@@ -126,6 +153,7 @@ impl ZlibInflater {
             decoder: None,
             output: Vec::new(),
             chunk: [0; 8 * 1024],
+            tracker: None,
         }
     }
 
@@ -169,16 +197,37 @@ impl ZlibInflater {
         }
     }
 
-    pub(crate) fn decode(&mut self, payload: &[u8], ctx: &dyn Columns) -> Option<&[u8]> {
+    pub(crate) fn decode(&mut self, payload: &[u8], ctx: &dyn Columns) -> Result<Option<&[u8]>, EvalError> {
         if payload.is_empty() {
-            return Some(&[]);
+            return Ok(Some(&[]));
         }
         if payload.len() <= 4 {
             warn_corrupt_zlib(ctx);
-            return None;
+            return Ok(None);
         }
         let length = u32::from_le_bytes(payload[..4].try_into().unwrap()) as usize;
-        match self.inflate(&payload[4..], length) {
+        if self.tracker.is_none() {
+            self.tracker = Some(get_mem_tracker(ctx)?);
+        }
+        // Go `inflate`: the declared length is charged to the statement
+        // while the stream inflates, so a quota cancels a large declaration
+        // before its output is built.
+        let charged = match self.tracker.as_ref().and_then(Option::as_ref) {
+            Some(stmt) if length > 0 => {
+                stmt.tracker.consume(length as i64);
+                if let Some(error) = stmt.killer.as_ref().and_then(|killer| killer.handle_signal()) {
+                    stmt.tracker.consume(-(length as i64));
+                    return Err(EvalError::Conversion(error));
+                }
+                Some(std::sync::Arc::clone(&stmt.tracker))
+            }
+            _ => None,
+        };
+        let inflated = self.inflate(&payload[4..], length);
+        if let Some(tracker) = charged {
+            tracker.consume(-(length as i64));
+        }
+        Ok(match inflated {
             Ok(()) => Some(&self.output),
             Err(InflateError::OutputLimit) => {
                 ctx.append_go_warning(
@@ -191,7 +240,7 @@ impl ZlibInflater {
                 warn_corrupt_zlib(ctx);
                 None
             }
-        }
+        })
     }
 }
 
@@ -212,7 +261,7 @@ pub(crate) fn uncompress(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalEr
         return Ok(Datum::Null);
     };
     let mut inflater = ZlibInflater::new();
-    if inflater.decode(&payload, ctx).is_none() {
+    if inflater.decode(&payload, ctx)?.is_none() {
         return Ok(Datum::Null);
     }
     Ok(Datum::new_string_datum(inflater.output))

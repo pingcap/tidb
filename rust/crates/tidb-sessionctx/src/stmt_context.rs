@@ -774,6 +774,7 @@ struct StmtSessionVars {
     resource_group_name: String,
     user_vars: Option<tidb_variable::user_vars::UserVars>,
     sql_killer: Arc<tidb_sqlkiller::SqlKiller>,
+    stmt_mem_tracker: Arc<tidb_memory::Tracker>,
     has_table_ids: bool,
     in_insert_update_or_delete: bool,
     current_tso: CurrentTso,
@@ -856,6 +857,10 @@ impl tidb_expropt::SessionVars for StmtSessionVars {
 
     fn sql_killer(&self) -> Option<Arc<tidb_sqlkiller::SqlKiller>> {
         Some(Arc::clone(&self.sql_killer))
+    }
+
+    fn stmt_mem_tracker(&self) -> Option<Arc<tidb_memory::Tracker>> {
+        Some(Arc::clone(&self.stmt_mem_tracker))
     }
 
     fn stmt_has_table_ids(&self) -> bool {
@@ -6988,6 +6993,7 @@ impl StmtContext {
             resource_group_name: self.resource_group_name.clone(),
             user_vars: self.user_vars.clone(),
             sql_killer: Arc::clone(self.memory.sql_killer()),
+            stmt_mem_tracker: Arc::clone(self.memory.stmt_tracker()),
             // Go's `StmtCtx.TableIDs` lists the tables the statement reads;
             // the statement's physical table reader is that here.
             has_table_ids: self.has_physical_table_reader.load(Ordering::Relaxed),

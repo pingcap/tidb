@@ -72,6 +72,11 @@ pub trait SessionVars: Any + Send + Sync {
     fn sql_killer(&self) -> Option<Arc<tidb_sqlkiller::SqlKiller>> {
         None
     }
+    /// Go `SessionVars.StmtCtx.MemTracker`, which `UNCOMPRESS` charges with
+    /// the declared length while it inflates.
+    fn stmt_mem_tracker(&self) -> Option<Arc<tidb_memory::Tracker>> {
+        None
+    }
     /// Go `len(SessionVars.StmtCtx.TableIDs) != 0`: the statement reads a
     /// table.
     fn stmt_has_table_ids(&self) -> bool {

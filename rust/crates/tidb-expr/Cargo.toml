@@ -22,6 +22,8 @@ tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-expropt = { path = "../tidb-expropt" }
 tidb-infoschema-context = { path = "../tidb-infoschema-context" }
 tidb-variable = { path = "../tidb-variable" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-errctx = { path = "../tidb-errctx" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
@@ -83,7 +85,6 @@ prost = { workspace = true }
 aws-lc-rs = { version = "1.18", default-features = false, features = ["aws-lc-sys"] }
 
 [dev-dependencies]
-tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-exprstatic = { path = "../tidb-exprstatic" }
 prost = { workspace = true }
 tempfile = { workspace = true }
