@@ -18,7 +18,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - c09f6278deb: needs hypothetical expression indexes, which Rust refuses.
 - c767f6fd8c0: the storage-class transition manager is unported, and with it 56ee5bb2684's transition-completion half and 64e8c4c05ec.
 - 03148cd4adf: the lightning config messages are unchecked (the objstore half is ported).
-- The MPP coordinator sends no coordinator-wide `CancelMPPTasks` on a dispatch or receive error (Go `sendError` -> `cancelMppTasks` to every store running a task); only the root stream's store is cancelled.
 - EXPLAIN ANALYZE of DDL is refused ("not supported yet"); Go runs the DDL.
 - Point get / batch point get have no `singlePartID`: a global-index point read under static pruning does not check the pruned partition.
 - `PointGetPlan.PrunePartitions`' `_tidb_rowid` + one PARTITION arm: Go plans a TableDual when that partition is DDL-ignored; Rust keeps a Point_Get.
