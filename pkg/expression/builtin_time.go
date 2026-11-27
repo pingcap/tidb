@@ -3769,6 +3769,12 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		dateEvalTp = types.ETDatetime
 	} else if dateEvalTp == types.ETJson {
 		dateEvalTp = types.ETString
+	} else if dateEvalTp == types.ETVectorFloat32 {
+		// DATE_ADD and friends build no implicit cast for the first argument, so a
+		// VECTOR argument matches no signature in the switch below and would leave
+		// sig nil, which panics the caller. Report the error the cast to DATETIME
+		// reports in the other date functions instead, see issue #73586.
+		return nil, errors.Errorf("cannot cast from vector to %s", types.TypeStr(mysql.TypeDatetime))
 	}
 
 	intervalEvalTp := args[1].GetType(ctx.GetEvalCtx()).EvalType()

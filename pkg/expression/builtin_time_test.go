@@ -2327,6 +2327,19 @@ func TestDateArithFuncs(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, v.IsNull())
 
+	// A VECTOR first argument matches no signature. The build must fail with the
+	// same error the other date functions report, instead of returning a nil
+	// builtin, see issue #73586.
+	vectorArg := &Constant{
+		Value:   types.NewVectorFloat32Datum(types.MustCreateVectorFloat32([]float32{1, 2, 3})),
+		RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32),
+	}
+	dayArgs := datumsToConstants(types.MakeDatums(1, "DAY"))
+	for _, fc := range []functionClass{fcAdd, fcSub} {
+		_, err = fc.getFunction(ctx, []Expression{vectorArg, dayArgs[0], dayArgs[1]})
+		require.EqualError(t, err, "cannot cast from vector to datetime")
+	}
+
 	// TestIssue11645
 	testHours := []struct {
 		input    string
