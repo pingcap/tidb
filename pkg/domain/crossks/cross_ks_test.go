@@ -16,6 +16,7 @@ package crossks_test
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -30,21 +31,28 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	plannerstats "github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -573,7 +581,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.NoError(t, err)
 		defer pool.Destroy(resource)
 		output := make(chan importer.QueryChunk, 4)
-		err = executor.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output)
+		err = executor.RunImportQuery(ctx, resource.(sessionctx.Context), pool, captured, sql, 1<<20, output)
 		require.NoError(t, err)
 		close(output)
 		result := make(map[int64]int64)
@@ -588,8 +596,9 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		}
 		require.Equal(t, map[int64]int64{1: 2, 2: 1}, result)
 
-		// Verify OnDemandStatsProvider loads target keyspace stats and enables
-		// dynamic partition pruning for cross-keyspace import queries.
+		// Verify RunImportQuery attaches OnDemandStatsProvider for cross-keyspace
+		// sessions, loads target keyspace stats, and enables dynamic partition pruning
+		// even with tidb_skip_missing_partition_stats = off.
 		tk.MustExec(`create table query_part(id bigint, v bigint, key idx_v(v))
 			partition by range (id) (
 				partition p0 values less than (10),
@@ -597,6 +606,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 			)`)
 		tk.MustExec("insert into query_part values (1, 10), (2, 20), (11, 30), (12, 40)")
 		tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+		tk.MustExec("set tidb_skip_missing_partition_stats = off")
 		tk.MustExec("analyze table query_part")
 
 		partSQL := "import into unused_target from select id, v from query_part where id < 10"
@@ -609,28 +619,44 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 			ctx, ast.NewCIStr("test"), ast.NewCIStr("query_part"))
 		require.NoError(t, err)
 
-		partRes, err := pool.Get()
-		require.NoError(t, err)
-		defer pool.Destroy(partRes)
-		partSE := partRes.(sessionctx.Context)
-		partSE.GetSessionVars().StatsProvider = statsstorage.NewOnDemandStatsProvider(pool)
-
 		var observedDynamic bool
 		var observedRowCount int64
 		var observedPseudo bool
+		var observedVersion uint64
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
 			observedDynamic = p.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode
 			tblStats := plannerstats.GetStatsTable(p.SCtx(), partTbl.Meta(), partTbl.Meta().ID)
 			observedPseudo = tblStats.Pseudo
 			observedRowCount = tblStats.RealtimeCount
+			observedVersion = tblStats.Version
 		})
 
+		// Without a session pool (no StatsProvider), dynamic pruning falls back to
+		// static mode because tidb_skip_missing_partition_stats is off.
+		noPoolRes, err := pool.Get()
+		require.NoError(t, err)
+		defer pool.Destroy(noPoolRes)
+		noPoolOut := make(chan importer.QueryChunk, 4)
+		err = executor.RunImportQuery(ctx, noPoolRes.(sessionctx.Context), nil, partCaptured, partSQL, 1<<20, noPoolOut)
+		require.NoError(t, err)
+		close(noPoolOut)
+		require.False(t, observedDynamic)
+		require.True(t, observedPseudo)
+
+		// With the target-keyspace session pool, RunImportQuery wires OnDemandStatsProvider
+		// automatically and keeps dynamic partition pruning enabled.
+		partRes, err := pool.Get()
+		require.NoError(t, err)
+		defer pool.Destroy(partRes)
+		partSE := partRes.(sessionctx.Context)
+
 		partOut := make(chan importer.QueryChunk, 4)
-		err = executor.RunImportQuery(ctx, partSE, partCaptured, partSQL, 1<<20, partOut)
+		err = executor.RunImportQuery(ctx, partSE, pool, partCaptured, partSQL, 1<<20, partOut)
 		require.NoError(t, err)
 		close(partOut)
 		require.True(t, observedDynamic)
 		require.False(t, observedPseudo)
+		require.Greater(t, observedVersion, uint64(0))
 		require.Equal(t, int64(4), observedRowCount)
 
 		partResult := make(map[int64]int64)
@@ -642,6 +668,84 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 			}
 		}
 		require.Equal(t, map[int64]int64{1: 10, 2: 20}, partResult)
+
+		// Verify the production DXF ImportStepQuery path (importStepExecutor.readQuery)
+		// loads target-keyspace stats automatically when given the cross-KS runtime handle.
+		t.Cleanup(config.RestoreFunc())
+		config.UpdateGlobal(func(c *config.Config) { c.TempDir = t.TempDir() })
+		stepSQL := "import into unused_target from (select id, v from query_part where id < 10) with thread=2"
+		nodes, err := tk.Session().Parse(ctx, stepSQL)
+		require.NoError(t, err)
+		require.NoError(t, executor.ResetContextOfStmt(tk.Session(), nodes[0]))
+		require.NoError(t, tk.Session().PrepareTxnCtx(ctx, nodes[0]))
+		compiled, err := (&executor.Compiler{Ctx: tk.Session()}).Compile(ctx, nodes[0])
+		require.NoError(t, err)
+		importPlan := compiled.Plan.(*plannercore.ImportInto)
+		dstTbl, err := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema).TableByName(
+			ctx, importPlan.Table.Schema, importPlan.Table.Name)
+		require.NoError(t, err)
+		plan, err := executor.NewImportPlan(ctx, tk.Session(), importPlan, dstTbl)
+		require.NoError(t, err)
+		sortDir := t.TempDir()
+		plan.CloudStorageURI = sortDir
+		plan.QuerySource, err = importer.CaptureQuerySource(tk.Session(), stepSQL)
+		require.NoError(t, err)
+
+		const taskID = int64(73754)
+		metaBytes, err := json.Marshal(taskinfo.TaskMeta{Plan: *plan, Stmt: stepSQL})
+		require.NoError(t, err)
+		task := &proto.Task{
+			TaskBase: proto.TaskBase{ID: taskID, Type: proto.ImportInto, Step: proto.ImportStepQuery, RequiredSlots: 2},
+			Meta:     metaBytes,
+		}
+		param := taskexecutor.NewParamForTest(nil, nil, nil, ":4000")
+		param.TaskRuntime = handle
+		taskExec := importinto.NewImportExecutor(ctx, task, param)
+		defer taskExec.Close()
+		step, err := taskExec.(interface {
+			GetStepExecutor(*proto.Task) (execute.StepExecutor, error)
+		}).GetStepExecutor(task)
+		require.NoError(t, err)
+		execute.SetFrameworkInfo(step, task, &proto.StepResource{
+			CPU: proto.NewAllocatable(2),
+			Mem: proto.NewAllocatable(64 << 20),
+		}, nil, nil)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/createTableImporterForTest", `return(true)`)
+		require.NoError(t, step.Init(ctx))
+		defer func() { require.NoError(t, step.Cleanup(ctx)) }()
+
+		backend, err := objstore.ParseBackend(sortDir, nil)
+		require.NoError(t, err)
+		sortStore, err := objstore.NewWithDefaultOpt(ctx, backend)
+		require.NoError(t, err)
+		defer sortStore.Close()
+
+		subtaskInput := importinto.ImportStepMeta{
+			ID:           1,
+			ExternalPath: globalsort.PlanMetaPath(taskID, proto.Step2Str(proto.ImportInto, proto.ImportStepQuery), 1),
+		}
+		require.NoError(t, subtaskInput.WriteJSONToExternalStorage(ctx, sortStore, &subtaskInput))
+		subtaskMeta, err := json.Marshal(subtaskInput)
+		require.NoError(t, err)
+		subtask := &proto.Subtask{
+			SubtaskBase: proto.SubtaskBase{ID: 1, TaskID: taskID},
+			Meta:        subtaskMeta,
+		}
+
+		observedDynamic = false
+		observedPseudo = true
+		observedRowCount = 0
+		observedVersion = 0
+		require.NoError(t, step.RunSubtask(ctx, subtask))
+		require.True(t, observedDynamic)
+		require.False(t, observedPseudo)
+		require.Greater(t, observedVersion, uint64(0))
+		require.Equal(t, int64(4), observedRowCount)
+
+		var stepOutput importinto.ImportStepMeta
+		require.NoError(t, json.Unmarshal(subtask.Meta, &stepOutput))
+		require.NoError(t, stepOutput.ReadJSONFromExternalStorage(ctx, sortStore, &stepOutput))
+		require.EqualValues(t, 2, stepOutput.SortedDataMeta.TotalKVCnt)
 	})
 	t.Run("job check and ordinary holder share a runtime", func(t *testing.T) {
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)

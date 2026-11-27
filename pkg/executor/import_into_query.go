@@ -32,19 +32,31 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
+	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 // RunImportQuery runs the SELECT of the IMPORT INTO statement importSQL at q.ReadTS.
 // sctx takes the session states of the submitter, so the caller must destroy it.
+// When sctx is a cross-keyspace session and sessPool is non-nil, RunImportQuery
+// attaches a scoped OnDemandStatsProvider for compilation.
 // It sends the result chunks to output, which the caller closes, and the
 // receiver owns the chunks it gets.
 func RunImportQuery(
-	ctx context.Context, sctx sessionctx.Context,
+	ctx context.Context, sctx sessionctx.Context, sessPool util.DestroyableSessionPool,
 	q *importer.QuerySource, importSQL string, memQuota int64,
 	output chan<- importer.QueryChunk,
 ) (err error) {
+	if sctx.IsCrossKS() && sctx.GetSessionVars().StatsProvider == nil && sessPool != nil {
+		sctx.GetSessionVars().StatsProvider = statsstorage.NewOnDemandStatsProvider(
+			ctx, sessPool, statsstorage.WithSkipColumnDistributions(),
+		)
+		defer func() {
+			sctx.GetSessionVars().StatsProvider = nil
+		}()
+	}
 	e, err := buildImportQueryExecutor(ctx, sctx, q, importSQL, memQuota)
 	if err != nil {
 		return err

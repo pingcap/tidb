@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -440,9 +439,6 @@ func (s *importStepExecutor) readQuery(
 	}
 
 	se := resource.(sessionctx.Context)
-	if se.IsCrossKS() {
-		se.GetSessionVars().StatsProvider = statsstorage.NewOnDemandStatsProvider(pool)
-	}
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 
 	defer func() {
@@ -454,7 +450,7 @@ func (s *importStepExecutor) readQuery(
 	}()
 
 	return executor.RunImportQuery(
-		ctx, se, s.taskMeta.Plan.QuerySource, s.taskMeta.Stmt,
+		ctx, se, pool, s.taskMeta.Plan.QuerySource, s.taskMeta.Stmt,
 		int64(float64(s.GetResource().Mem.Capacity())*queryMemBudgetRatio), selected)
 }
 

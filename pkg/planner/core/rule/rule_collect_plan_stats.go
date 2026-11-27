@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -98,6 +99,9 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	if len(histNeededItems) == 0 {
 		return plan, planChanged, nil
 	}
+	if dom := domain.GetDomain(plan.SCtx()); dom == nil || dom.StatsHandle() == nil {
+		return plan, planChanged, nil
+	}
 	if syncLoadEnabled {
 		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
 		return plan, planChanged, err
@@ -119,10 +123,14 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 	predicateCols map[model.TableItemID]bool,
 	histNeeded bool,
 ) {
-	statsHandle := domain.GetDomain(sctx).StatsHandle()
-	if statsHandle == nil {
-		// If there's no stats handler, it's abnormal status. Return directly.
+	statsProvider := stats.GetStatsProvider(sctx)
+	if statsProvider == nil {
+		// If there's no stats provider, return directly.
 		return
+	}
+	hasDomainStatsHandle := false
+	if dom := domain.GetDomain(sctx); dom != nil && dom.StatsHandle() != nil {
+		hasDomainStatsHandle = true
 	}
 	physTblIDsWithNeededCols := intset.NewFastIntSet()
 	for neededCol, fullLoad := range predicateCols {
@@ -134,7 +142,7 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		if tblInfo == nil {
 			continue
 		}
-		tableStats := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+		tableStats := statsProvider.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 		if tableStats == nil || tableStats.Pseudo {
 			continue
 		}
@@ -156,7 +164,7 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		if physTblIDsWithNeededCols.Has(physicalTblID) {
 			return
 		}
-		tblStats := statsHandle.GetPhysicalTableStats(tbl.ID, tbl)
+		tblStats := statsProvider.GetPhysicalTableStats(tbl.ID, tbl)
 		if tblStats == nil || tblStats.Pseudo {
 			return
 		}
@@ -198,7 +206,7 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		}
 		if histNeeded {
 			predicateCols[*colToTriggerLoad] = true
-		} else {
+		} else if hasDomainStatsHandle {
 			asyncload.AsyncLoadHistogramNeededItems.Insert(*colToTriggerLoad, true)
 		}
 	})
@@ -353,8 +361,12 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 		}
 	})
 	var timeout = time.Duration(syncWait * time.Millisecond.Nanoseconds())
+	dom := domain.GetDomain(ctx)
+	if dom == nil || dom.StatsHandle() == nil {
+		return nil
+	}
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	err := domain.GetDomain(ctx).StatsHandle().SyncLoad().SendLoadRequests(stmtCtx, neededHistItems, timeout)
+	err := dom.StatsHandle().SyncLoad().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if vardef.StatsLoadPseudoTimeout.Load() {
@@ -375,11 +387,15 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	if len(stmtCtx.StatsLoad.NeededItems) <= 0 {
 		return nil
 	}
+	dom := domain.GetDomain(plan.SCtx())
+	if dom == nil || dom.StatsHandle() == nil {
+		return nil
+	}
 	defer func(begin time.Time) {
 		// track the time spent in sync wait stats load, which might take a long time.
 		plan.SCtx().GetSessionVars().DurationOptimizer.StatsSyncWait = time.Since(begin)
 	}(time.Now())
-	err := domain.GetDomain(plan.SCtx()).StatsHandle().SyncLoad().SyncWaitStatsLoad(stmtCtx)
+	err := dom.StatsHandle().SyncLoad().SyncWaitStatsLoad(stmtCtx)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if vardef.StatsLoadPseudoTimeout.Load() {
@@ -485,7 +501,10 @@ func collectSyncIndices(ctx base.PlanContext,
 	keptIndexIDs map[int64]map[int64]struct{},
 ) map[model.TableItemID]struct{} {
 	histNeededIndices := make(map[model.TableItemID]struct{})
-	stats := domain.GetDomain(ctx).StatsHandle()
+	statsProvider := stats.GetStatsProvider(ctx)
+	if statsProvider == nil {
+		return histNeededIndices
+	}
 	for _, column := range histNeededColumns {
 		if column.IsIndex {
 			continue
@@ -513,7 +532,7 @@ func collectSyncIndices(ctx base.PlanContext,
 						}
 					}
 				}
-				tblStats := stats.GetPhysicalTableStats(tbl.ID, tbl)
+				tblStats := statsProvider.GetPhysicalTableStats(tbl.ID, tbl)
 				if tblStats == nil || tblStats.Pseudo {
 					continue
 				}
@@ -555,17 +574,19 @@ func recordTableRuntimeStats(sctx base.PlanContext, tbls map[int64]struct{}) {
 	sctx.GetSessionVars().StmtCtx.TableStats = tblStats
 }
 
-func recordSingleTableRuntimeStats(sctx base.PlanContext, tblID int64) (stats *statistics.Table, skip bool, err error) {
-	dom := domain.GetDomain(sctx)
-	statsHandle := dom.StatsHandle()
+func recordSingleTableRuntimeStats(sctx base.PlanContext, tblID int64) (statsTbl *statistics.Table, skip bool, err error) {
+	statsProvider := stats.GetStatsProvider(sctx)
+	if statsProvider == nil {
+		return nil, true, nil
+	}
 	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := is.TableByID(context.Background(), tblID)
 	if !ok {
 		return nil, false, nil
 	}
 	tableInfo := tbl.Meta()
-	stats = statsHandle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	statsTbl = statsProvider.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// Skip the warning if the table is a temporary table because the temporary table doesn't have stats.
 	skip = tableInfo.TempTableType != model.TempTableNone
-	return stats, skip, nil
+	return statsTbl, skip, nil
 }
