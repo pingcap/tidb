@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
@@ -141,6 +142,55 @@ func findDependedColumnNames(schemaName ast.CIStr, tableName ast.CIStr, colDef *
 		}
 	}
 	return
+}
+
+// checkGeneratedColumnExprs builds new generated expressions against the table's
+// column types before DDL persists them. For non-partitioned tables, TableFromMeta
+// only resolves generated ASTs, so invalid argument types can otherwise persist.
+func checkGeneratedColumnExprs(ctx expression.BuildContext, schemaName ast.CIStr, tblInfo *model.TableInfo, exprs ...ast.ExprNode) error {
+	if len(exprs) == 0 {
+		return nil
+	}
+	if expression.BuildSimpleExpr == nil {
+		// Standalone metadata parsers may not initialize the planner.
+		return nil
+	}
+	if schemaName.L == "" {
+		schemaName = ast.NewCIStr(ctx.GetEvalCtx().CurrentDB())
+	}
+	cols := tblInfo.Cols()
+	exprCols := make([]*expression.Column, 0, len(cols))
+	names := make(types.NameSlice, 0, len(cols))
+	for _, col := range cols {
+		name := &types.FieldName{
+			OrigTblName: tblInfo.Name,
+			OrigColName: col.Name,
+			DBName:      schemaName,
+			TblName:     tblInfo.Name,
+			ColName:     col.Name,
+		}
+		names = append(names, name)
+		exprCols = append(exprCols, &expression.Column{
+			RetType:  col.FieldType.Clone(),
+			ID:       col.ID,
+			UniqueID: ctx.AllocPlanColumnID(),
+			Index:    col.Offset,
+			OrigName: name.String(),
+			IsHidden: col.Hidden,
+		})
+	}
+	// Use a flat schema so an older invalid virtual expression does not block
+	// ALTER TABLE from replacing it with a valid definition.
+	options := []expression.BuildOption{
+		expression.WithInputSchemaAndNames(expression.NewSchema(exprCols...), names, tblInfo),
+		expression.WithAllowCastArray(true),
+	}
+	for _, expr := range exprs {
+		if _, err := expression.BuildSimpleExpr(ctx, expr, options...); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // FindColumnNamesInExpr returns a slice of ast.ColumnName which is referred in expr.
@@ -278,6 +328,9 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName ast.CIStr, t
 
 		// rule 5.
 		if err := checkIndexOrStored(tbl, oldCol, newCol); err != nil {
+			return errors.Trace(err)
+		}
+		if err := checkGeneratedColumnExprs(sctx.GetExprCtx(), schemaName, tbl.Meta(), newCol.GeneratedExpr.Internal()); err != nil {
 			return errors.Trace(err)
 		}
 	}

@@ -1912,6 +1912,48 @@ func TestSqlFunctionsInGeneratedColumns(t *testing.T) {
 	// NOTE (#18150): In creating generated column, row value is not allowed.
 	tk.MustGetErrCode("create table t (a int, b int as ((a, a)))", errno.ErrGeneratedColumnRowValueIsNotAllowed)
 	tk.MustExec("create table t (a int, b int as ((a)))")
+
+	t.Run("reject invalid JSON argument types in CREATE TABLE", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustGetErrCode("create table invalid_json_create (c0 int, c1 int as (json_contains(c0, '1')) virtual)", errno.ErrInvalidTypeForJSON)
+		tk.MustGetErrCode("create table invalid_json_stored (c0 int, c1 int as (json_extract(c0, '$.number')) stored)", errno.ErrInvalidTypeForJSON)
+		tk.MustExec("create table valid_json_generated (c0 json, c1 int as (json_contains(c0, '1')) virtual)")
+		tk.MustExec("insert into valid_json_generated (c0) values ('[1]')")
+		tk.MustQuery("select c1 from valid_json_generated").Check(testkit.Rows("1"))
+	})
+
+	t.Run("reject invalid JSON argument types in ADD COLUMN", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table invalid_json_alter (c0 int)")
+		tk.MustGetErrCode("alter table invalid_json_alter add column c1 int as (json_extract(c0, '$.number')) virtual", errno.ErrInvalidTypeForJSON)
+		tk.MustQuery("select column_name from information_schema.columns where table_schema = 'test' and table_name = 'invalid_json_alter'").Check(testkit.Rows("c0"))
+		tk.MustExec("create table after_invalid_json_generated (id int)")
+		require.NoError(t, domain.GetDomain(tk.Session()).Reload())
+	})
+
+	t.Run("reject invalid JSON argument types in partitioned ADD COLUMN", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table invalid_json_partitioned (c0 int) partition by range (c0) (partition p values less than (10))")
+		tk.MustGetErrCode("alter table invalid_json_partitioned add column c1 int as (json_contains(c0, '1')) virtual", errno.ErrInvalidTypeForJSON)
+		tk.MustQuery("select column_name from information_schema.columns where table_schema = 'test' and table_name = 'invalid_json_partitioned'").Check(testkit.Rows("c0"))
+		tk.MustExec("alter table invalid_json_partitioned add column c2 int")
+		tk.MustExec("insert into invalid_json_partitioned (c0) values (1)")
+		tk.MustQuery("select c0 from invalid_json_partitioned").Check(testkit.Rows("1"))
+		tk.MustExec("create table after_invalid_json_partitioned (id int)")
+		require.NoError(t, domain.GetDomain(tk.Session()).Reload())
+	})
+
+	t.Run("reject invalid JSON argument types in MODIFY COLUMN", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table invalid_json_modify (c0 int, c1 int as (c0 + 1) virtual)")
+		tk.MustGetErrCode("alter table invalid_json_modify modify column c1 int as (json_contains(c0, '1')) virtual", errno.ErrInvalidTypeForJSON)
+		tk.MustExec("insert into invalid_json_modify (c0) values (1)")
+		tk.MustQuery("select c1 from invalid_json_modify").Check(testkit.Rows("2"))
+	})
 }
 
 func TestSchemaNameAndTableNameInGeneratedExpr(t *testing.T) {

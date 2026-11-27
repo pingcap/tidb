@@ -411,6 +411,9 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 			if err := verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
 				return nil, errors.Trace(err)
 			}
+			if err := checkGeneratedColumnExprs(ctx.GetExprCtx(), schema.Name, t.Meta(), option.Expr); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		// Specially, since sequence has been supported, if a newly added column has a
 		// sequence nextval function as it's default value option, it won't fill the

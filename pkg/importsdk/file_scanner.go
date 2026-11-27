@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	_ "github.com/pingcap/tidb/pkg/planner/core" // Initialize expression building for generated columns in size estimates.
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"go.uber.org/zap"
 )
