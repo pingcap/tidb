@@ -347,6 +347,14 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		return err
 	}
 
+	// Like MySQL, a server in offline mode only accepts connections from users with CONNECTION_ADMIN or SUPER.
+	if vardef.EnableOfflineMode.Load() && !cc.hasConnectionAdmin() {
+		if err := cc.writeError(ctx, servererr.ErrServerOfflineMode); err != nil {
+			logutil.Logger(ctx).Debug("writeError failed", zap.Error(err))
+		}
+		return servererr.ErrServerOfflineMode
+	}
+
 	// MySQL supports an "init_connect" query, which can be run on initial connection.
 	// The query must return a non-error or the client is disconnected.
 	if err := cc.initConnect(ctx); err != nil {
@@ -1086,8 +1094,13 @@ func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port stri
 // In 5.7 it is any user with SUPER privilege, but in 8.0 it is:
 // - SUPER or the CONNECTION_ADMIN dynamic privilege.
 // - (additional exception) users with expired passwords (not yet supported)
-// In TiDB CONNECTION_ADMIN is satisfied by SUPER, so we only need to check once.
 func (cc *clientConn) skipInitConnect() bool {
+	return cc.hasConnectionAdmin()
+}
+
+// hasConnectionAdmin reports whether the current user has the CONNECTION_ADMIN dynamic privilege.
+// In TiDB CONNECTION_ADMIN is satisfied by SUPER, so we only need to check once.
+func (cc *clientConn) hasConnectionAdmin() bool {
 	checker := privilege.GetPrivilegeManager(cc.ctx.Session)
 	activeRoles := cc.ctx.GetSessionVars().ActiveRoles
 	return checker != nil && checker.RequestDynamicVerification(activeRoles, "CONNECTION_ADMIN", false)
@@ -1271,6 +1284,18 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if !cc.ctx.GetSessionVars().InTxn() {
 				return
 			}
+		}
+
+		// In offline mode, non-admin connections are closed at their next command outside a transaction,
+		// so a transaction that is already in progress can still commit or roll back.
+		if vardef.EnableOfflineMode.Load() && !cc.ctx.GetSessionVars().InTxn() && !cc.hasConnectionAdmin() {
+			if data[0] != mysql.ComQuit {
+				if err := cc.writeError(ctx, servererr.ErrServerOfflineMode); err != nil {
+					terror.Log(err)
+				}
+			}
+			server_metrics.DisconnectNormal.Inc()
+			return
 		}
 
 		startTime := time.Now()
