@@ -329,7 +329,7 @@ func (b *builtinWeekDaySig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 		if result.IsNull(i) {
 			continue
 		}
-		if ds[i].IsZero() {
+		if ds[i].IsZero() || ds[i].InvalidZero() {
 			if err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 				return err
 			}
@@ -1020,7 +1020,7 @@ func (b *builtinWeekWithModeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 			continue
 		}
 		date := ds[i]
-		if date.IsZero() {
+		if date.IsZero() || date.InvalidZero() {
 			if err := handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
 				return err
 			}
@@ -1386,7 +1386,7 @@ func (b *builtinWeekOfYearSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 		if result.IsNull(i) {
 			continue
 		}
-		if ds[i].IsZero() {
+		if ds[i].IsZero() || ds[i].InvalidZero() {
 			if err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 				return err
 			}
@@ -1591,7 +1591,7 @@ func (b *builtinWeekWithoutModeSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 			continue
 		}
 		date := ds[i]
-		if date.IsZero() {
+		if date.IsZero() || date.InvalidZero() {
 			if err := handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
 				return err
 			}
@@ -2231,7 +2231,7 @@ func (b *builtinYearWeekWithModeSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 			continue
 		}
 		date := ds[i]
-		if date.IsZero() {
+		if date.IsZero() || date.InvalidZero() {
 			if err := handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
 				return err
 			}

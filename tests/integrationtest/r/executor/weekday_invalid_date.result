@@ -1,0 +1,24 @@
+set sql_mode='ALLOW_INVALID_DATES';
+create table week_dates(id int primary key, d date);
+insert into week_dates values (1,'2024-00-15'),(2,'2024-01-00'),(3,'2024-01-15');
+create table week_keys(w int);
+insert into week_keys values (4),(6);
+set sql_mode=default;
+set tidb_enable_vectorized_expression=0;
+delete week_dates from week_dates join week_keys on weekday(week_dates.d)=week_keys.w;
+Error 1292 (22007): Incorrect datetime value: '2024-00-15'
+select id from week_dates order by id;
+id
+1
+2
+3
+set tidb_enable_vectorized_expression=1;
+delete week_dates from week_dates join week_keys on weekday(week_dates.d)=week_keys.w;
+Error 1292 (22007): Incorrect datetime value: '2024-00-15'
+select id from week_dates order by id;
+id
+1
+2
+3
+drop table week_keys, week_dates;
+set tidb_enable_vectorized_expression=default;
