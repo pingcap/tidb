@@ -2158,12 +2158,18 @@ func (w *GCWorker) doGCAffinityGroups(ctx context.Context, se sessionapi.Session
 		}
 		groupIDs = args.OldAffinityGroupIDs
 	case model.ActionMViewRefreshOutOfPlaceCutover:
-		if !historyJob.IsCancelled() {
+		if !historyJob.IsCancelled() && !historyJob.IsRollbackDone() && !historyJob.IsRollingback() {
 			args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(historyJob)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			groupIDs = args.OldAffinityGroupIDs
+			if len(groupIDs) == 0 && args.OldMViewHasAffinity && args.OldMViewID != 0 {
+				// Jobs committed by #73720 before GC-based affinity cleanup only record
+				// OldMViewHasAffinity (V1 slot 12) without OldAffinityGroupIDs. Derive
+				// the retired MV group ID in the current keyspace so GC retries cleanup.
+				groupIDs = []string{ddl.GetTableAffinityGroupID(w.store.GetCodec(), args.OldMViewID)}
+			}
 		}
 	}
 

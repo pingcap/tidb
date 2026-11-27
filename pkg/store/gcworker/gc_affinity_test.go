@@ -340,6 +340,106 @@ func TestDoGCAffinityGroups(t *testing.T) {
 		require.True(t, v.(*gcAffinityJobState).tried)
 		require.NoError(t, v.(*gcAffinityJobState).err)
 	})
+
+	t.Run("legacy #73720 cutover V1 slot 12 compatibility", func(t *testing.T) {
+		oldMVID := int64(3301)
+		shadowID := int64(3302)
+		oldMLogID := int64(3303)
+		oldMVGroup := ddl.GetTableAffinityGroupID(s.store.GetCodec(), oldMVID)
+		shadowGroup := ddl.GetTableAffinityGroupID(s.store.GetCodec(), shadowID)
+		oldMLogGroup := ddl.GetTableAffinityGroupID(s.store.GetCodec(), oldMLogID)
+
+		// Case 1: #73720 V1 12-slot job with OldMViewHasAffinity=true and empty OldAffinityGroupIDs.
+		// Transient PD 503 fails and preserves group; next round deletes ONLY oldMVGroup while
+		// preserving shadowGroup and oldMLogGroup (cannot be inferred from OldMViewHasAffinity).
+		cli.seed(oldMVGroup, shadowGroup, oldMLogGroup)
+		legacyTrue := &model.Job{
+			Version: model.JobVersion1,
+			ID:      109,
+			Type:    model.ActionMViewRefreshOutOfPlaceCutover,
+			State:   model.JobStateDone,
+			TableID: oldMVID,
+		}
+		legacyTrue.FillArgs(&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+			OldMViewID:          oldMVID,
+			ShadowTableID:       shadowID,
+			OldMLogID:           oldMLogID,
+			BuildReadTSO:        1,
+			OldMViewHasAffinity: true,
+		})
+		currentJob = encodeDecodeJob(t, legacyTrue)
+
+		cli.mu.Lock()
+		cli.deleteErr = fmt.Errorf("request pd http api failed with status: '503 Service Unavailable', body: 'busy'")
+		cli.mu.Unlock()
+		var cache1 sync.Map
+		require.Error(t, s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: 109, ElementID: 1}, &cache1))
+		require.True(t, cli.has(oldMVGroup))
+
+		cli.mu.Lock()
+		cli.deleteErr = nil
+		cli.mu.Unlock()
+		var cache2 sync.Map
+		require.NoError(t, s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: 109, ElementID: 1}, &cache2))
+		require.False(t, cli.has(oldMVGroup), "legacy #73720 true job must delete retired MV group")
+		require.True(t, cli.has(shadowGroup), "shadow MV group must be preserved")
+		require.True(t, cli.has(oldMLogGroup), "old MLog group must not be inferred from OldMViewHasAffinity")
+
+		// Case 2: Already-deleted old MV group stays idempotent with no error.
+		var cache3 sync.Map
+		require.NoError(t, s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: 109, ElementID: 1}, &cache3))
+
+		// Case 3: OldMViewHasAffinity=false must NOT issue any PD delete RPC.
+		cli.seed(oldMVGroup)
+		legacyFalse := &model.Job{
+			Version: model.JobVersion1,
+			ID:      110,
+			Type:    model.ActionMViewRefreshOutOfPlaceCutover,
+			State:   model.JobStateDone,
+			TableID: oldMVID,
+		}
+		legacyFalse.FillArgs(&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+			OldMViewID:          oldMVID,
+			ShadowTableID:       shadowID,
+			BuildReadTSO:        1,
+			OldMViewHasAffinity: false,
+		})
+		currentJob = encodeDecodeJob(t, legacyFalse)
+		cli.mu.Lock()
+		callsBeforeFalse := cli.deleteCalls
+		cli.mu.Unlock()
+		var cache4 sync.Map
+		require.NoError(t, s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: 110, ElementID: 1}, &cache4))
+		cli.mu.Lock()
+		require.Equal(t, callsBeforeFalse, cli.deleteCalls)
+		cli.mu.Unlock()
+		require.True(t, cli.has(oldMVGroup))
+
+		// Case 4: Cancelled job with OldMViewHasAffinity=true must NOT issue any PD delete RPC.
+		legacyCancelled := &model.Job{
+			Version: model.JobVersion1,
+			ID:      111,
+			Type:    model.ActionMViewRefreshOutOfPlaceCutover,
+			State:   model.JobStateCancelled,
+			TableID: oldMVID,
+		}
+		legacyCancelled.FillArgs(&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+			OldMViewID:          oldMVID,
+			ShadowTableID:       shadowID,
+			BuildReadTSO:        1,
+			OldMViewHasAffinity: true,
+		})
+		currentJob = encodeDecodeJob(t, legacyCancelled)
+		cli.mu.Lock()
+		callsBeforeCancel := cli.deleteCalls
+		cli.mu.Unlock()
+		var cache5 sync.Map
+		require.NoError(t, s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: 111, ElementID: 1}, &cache5))
+		cli.mu.Lock()
+		require.Equal(t, callsBeforeCancel, cli.deleteCalls)
+		cli.mu.Unlock()
+		require.True(t, cli.has(oldMVGroup))
+	})
 }
 
 func TestDeleteRangesGCAffinityEndToEnd(t *testing.T) {
