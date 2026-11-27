@@ -101,9 +101,9 @@ func TestAffinityCreatePDHTTPStatus(t *testing.T) {
 				"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
 			}
 			err := affinity.NewPDManager(client).CreateAffinityGroupsIfNotExists(context.Background(), groups)
+			require.Zero(t, getCalls.Load())
 			if tt.status == http.StatusConflict {
 				require.NoError(t, err)
-				require.EqualValues(t, 1, getCalls.Load())
 				return
 			}
 			require.EqualError(t, err, "[domain:8243]"+tt.body)
@@ -111,7 +111,6 @@ func TestAffinityCreatePDHTTPStatus(t *testing.T) {
 			var statusError interface{ HTTPStatusCode() int }
 			require.ErrorAs(t, err, &statusError)
 			require.Equal(t, tt.status, statusError.HTTPStatusCode())
-			require.Zero(t, getCalls.Load())
 		})
 	}
 
@@ -138,6 +137,54 @@ func TestAffinityCreatePDHTTPStatus(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestAffinityGetPDHTTPNotFound(t *testing.T) {
+	ids := make([]string, 101)
+	for i := range ids {
+		ids[i] = "g" + strconv.Itoa(i)
+	}
+	for _, firstBatchOK := range []bool{false, true} {
+		t.Run("first_batch_succeeds="+strconv.FormatBool(firstBatchOK), func(t *testing.T) {
+			var batchCalls, scanCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.Method != http.MethodGet || req.URL.Path != pdhttp.AffinityGroups {
+					t.Errorf("unexpected PD request: %s %s", req.Method, req.URL)
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				batchIDs := req.URL.Query()["ids"]
+				if len(batchIDs) == 0 {
+					scanCalls.Add(1)
+				} else if batchCalls.Add(1) == 1 && firstBatchOK {
+					_, _ = io.WriteString(w, `{"affinity_groups":{"g0":{"id":"g0","range_count":1}}}`)
+					return
+				}
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = io.WriteString(w, "unsupported affinity GET")
+			}))
+			defer server.Close()
+
+			discovery := servicediscovery.NewMockServiceDiscovery([]string{server.URL}, nil)
+			require.NoError(t, discovery.Init())
+			client := pdhttp.NewClientWithServiceDiscovery("test", discovery).WithRespHandler(pdResponseHandler)
+			defer client.Close()
+			t.Cleanup(affinity.SetPDClientForTest(client))
+			result, err := affinity.GetGroupStates(context.Background(), ids)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.EqualValues(t, 1, scanCalls.Load())
+			if firstBatchOK {
+				require.EqualValues(t, 2, batchCalls.Load())
+				require.Len(t, result, 1)
+				require.Equal(t, "g0", result["g0"].ID)
+				require.Nil(t, result["g100"])
+			} else {
+				require.EqualValues(t, 1, batchCalls.Load())
+				require.Empty(t, result)
+			}
+		})
+	}
 }
 
 func TestPDResponseHandlerPlacementCompatibility(t *testing.T) {

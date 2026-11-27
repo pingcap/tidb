@@ -92,11 +92,15 @@ func isRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if _, ok := err.(*affinityGroupCreateConflict); ok {
+		return true
+	}
 	code, ok := extractPDHTTPStatusCode(err)
 	return !ok || code >= http.StatusInternalServerError
 }
 
-// DeleteGroups removes affinity groups in PD with force=true.
+// DeleteGroups removes affinity groups in PD with force=true. It succeeds if
+// the groups are already absent or PD does not support affinity groups.
 func DeleteGroups(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil

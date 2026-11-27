@@ -53,6 +53,37 @@ func (m *mockPDClient) GetAffinityGroups(ctx context.Context, ids []string) (map
 	return args.Get(0).(map[string]*pdhttp.AffinityGroupState), args.Error(1)
 }
 
+func (m *mockPDClient) BatchDeleteAffinityGroups(ctx context.Context, ids []string, force bool) error {
+	return m.Called(ctx, ids, force).Error(0)
+}
+
+func TestDeleteAffinityGroups(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		err     error
+		wantErr bool
+	}{
+		{"already absent", nil, false},
+		{"unsupported endpoint", pdStatusErr(http.StatusNotFound), false},
+		{"service unavailable", pdStatusErr(http.StatusServiceUnavailable), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mockPDClient{}
+			manager := NewPDManager(client)
+			ctx := context.Background()
+			ids := []string{"g1"}
+			client.On("BatchDeleteAffinityGroups", ctx, ids, true).Return(tc.err).Once()
+			err := manager.DeleteAffinityGroups(ctx, ids)
+			if tc.wantErr {
+				require.ErrorIs(t, err, tc.err)
+			} else {
+				require.NoError(t, err)
+			}
+			client.AssertExpectations(t)
+		})
+	}
+}
+
 func (m *mockPDClient) GetAllAffinityGroups(ctx context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
@@ -86,15 +117,81 @@ func TestCreateAffinityGroupsIfNotExistsFallbackWhenSkipExistRejected(t *testing
 		"g2": {{StartKey: []byte("c"), EndKey: []byte("d")}},
 	}
 	client.On("CreateAffinityGroups", mock.Anything, groups, 1).Return(nil, pdStatusErr(http.StatusConflict)).Once()
-	client.On("GetAffinityGroups", mock.Anything, []string{"g1", "g2"}).Return(
+	existing := client.On("GetAffinityGroups", mock.Anything, []string{"g1", "g2"}).Return(
 		map[string]*pdhttp.AffinityGroupState{"g1": affinityGroupState("g1")}, nil,
 	).Once()
-	client.On("CreateAffinityGroups", mock.Anything, map[string][]pdhttp.AffinityGroupKeyRange{
+	missing := client.On("CreateAffinityGroups", mock.Anything, map[string][]pdhttp.AffinityGroupKeyRange{
 		"g2": groups["g2"],
 	}, 0).Return(map[string]*pdhttp.AffinityGroupState{"g2": affinityGroupState("g2")}, nil).Once()
+	mock.InOrder(existing, missing)
 
 	require.NoError(t, manager.CreateAffinityGroupsIfNotExists(ctx, groups))
 	client.AssertExpectations(t)
+}
+
+func TestCreateGroupsIfNotExistsRechecksBatchConflict(t *testing.T) {
+	ctx := context.Background()
+	conflict := pdStatusErr(http.StatusConflict)
+	groups := map[string][]pdhttp.AffinityGroupKeyRange{
+		"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+		"g2": {{StartKey: []byte("c"), EndKey: []byte("d")}},
+		"g3": {{StartKey: []byte("e"), EndKey: []byte("f")}},
+	}
+	ids := []string{"g1", "g2", "g3"}
+	first := map[string]*pdhttp.AffinityGroupState{"g1": affinityGroupState("g1")}
+	firstTwo := map[string]*pdhttp.AffinityGroupState{"g1": affinityGroupState("g1"), "g2": affinityGroupState("g2")}
+	all := map[string]*pdhttp.AffinityGroupState{"g1": affinityGroupState("g1"), "g2": affinityGroupState("g2"), "g3": affinityGroupState("g3")}
+	missing := map[string][]pdhttp.AffinityGroupKeyRange{"g2": groups["g2"], "g3": groups["g3"]}
+	remaining := map[string][]pdhttp.AffinityGroupKeyRange{"g3": groups["g3"]}
+
+	for _, tc := range []struct {
+		name      string
+		conflicts int
+		finalRead map[string]*pdhttp.AffinityGroupState
+		wantErr   bool
+	}{
+		{"all created concurrently", 1, all, false},
+		{"watcher catches up and one group still needs creation", 1, first, false},
+		{"final read sees all groups", maxRetryTimes + 1, all, false},
+		{"watcher still stale after final conflict", maxRetryTimes + 1, first, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mockPDClient{}
+			InitManager(client)
+			t.Cleanup(func() { InitManager(nil) })
+			var calls []*mock.Call
+			for i := 0; i < tc.conflicts; i++ {
+				states := first
+				if i == tc.conflicts-1 {
+					states = tc.finalRead
+				}
+				calls = append(calls,
+					client.On("CreateAffinityGroups", ctx, groups, 1).Return(nil, conflict).Once(),
+					client.On("GetAffinityGroups", ctx, ids).Return(first, nil).Once(),
+					client.On("CreateAffinityGroups", ctx, missing, 0).Return(nil, conflict).Once(),
+					client.On("GetAffinityGroups", ctx, ids).Return(states, nil).Once(),
+				)
+			}
+			if tc.conflicts == 1 && len(tc.finalRead) != len(groups) {
+				calls = append(calls,
+					client.On("CreateAffinityGroups", ctx, groups, 1).Return(nil, conflict).Once(),
+					client.On("GetAffinityGroups", ctx, ids).Return(firstTwo, nil).Once(),
+					client.On("CreateAffinityGroups", ctx, remaining, 0).Return(
+						map[string]*pdhttp.AffinityGroupState{"g3": all["g3"]}, nil,
+					).Once(),
+				)
+			}
+			mock.InOrder(calls...)
+
+			err := CreateGroupsIfNotExists(ctx, groups)
+			if tc.wantErr {
+				require.ErrorIs(t, err, conflict)
+			} else {
+				require.NoError(t, err)
+			}
+			client.AssertExpectations(t)
+		})
+	}
 }
 
 func TestCreateAffinityGroupsIfNotExistsDoNotFallbackForNonCompatibilityError(t *testing.T) {
@@ -301,6 +398,38 @@ func TestGetAffinityGroupsBatchesCompatibility(t *testing.T) {
 			client.AssertExpectations(t)
 			client.AssertNumberOfCalls(t, "GetAffinityGroups", 1)
 			client.AssertNotCalled(t, "GetAllAffinityGroups", mock.Anything)
+		})
+	}
+
+	for _, tc := range []struct {
+		name      string
+		firstRead bool
+		scan      map[string]*pdhttp.AffinityGroupState
+		scanErr   error
+		expected  map[string]*pdhttp.AffinityGroupState
+	}{
+		{"first batch and full scan return 404", false, nil, pdStatusErr(http.StatusNotFound), map[string]*pdhttp.AffinityGroupState{}},
+		{"later batch and full scan return 404", true, nil, pdStatusErr(http.StatusNotFound), map[string]*pdhttp.AffinityGroupState{ids[0]: allGroups[ids[0]], ids[1]: allGroups[ids[1]]}},
+		{"full scan merges and updates known states", true,
+			map[string]*pdhttp.AffinityGroupState{ids[0]: {ID: ids[0], RangeCount: 2}, ids[100]: allGroups[ids[100]], "unrequested": allGroups["unrequested"]}, nil,
+			map[string]*pdhttp.AffinityGroupState{ids[0]: {ID: ids[0], RangeCount: 2}, ids[1]: allGroups[ids[1]], ids[100]: allGroups[ids[100]]}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mockPDClient{}
+			manager := NewPDManager(client)
+			start := 0
+			if tc.firstRead {
+				client.On("GetAffinityGroups", mock.Anything, ids[:100]).Return(
+					map[string]*pdhttp.AffinityGroupState{ids[0]: allGroups[ids[0]], ids[1]: allGroups[ids[1]]}, nil,
+				).Once()
+				start = 100
+			}
+			client.On("GetAffinityGroups", mock.Anything, ids[start:start+100]).Return(nil, pdStatusErr(http.StatusNotFound)).Once()
+			client.On("GetAllAffinityGroups", mock.Anything).Return(tc.scan, tc.scanErr).Once()
+			result, err := manager.GetAffinityGroups(context.Background(), ids)
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, result)
+			client.AssertExpectations(t)
 		})
 	}
 
