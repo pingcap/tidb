@@ -602,7 +602,7 @@ func CheckTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo
 func checkTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) (err error) {
 	// All of these rely on the AST structure of expressions, which were
 	// lost in the model (got serialized into strings).
-	if err := checkGeneratedColumn(ctx, s.Table.Schema, tbInfo.Name, s.Cols); err != nil {
+	if err := checkGeneratedColumn(ctx, s.Table.Schema, tbInfo, s.Cols); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -639,8 +639,9 @@ func checkTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo
 	return nil
 }
 
-func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableName ast.CIStr, colDefs []*ast.ColumnDef) error {
+func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tblInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
+	var generatedExprs []ast.ExprNode
 	var exists bool
 	var autoIncrementColumn string
 	for i, colDef := range colDefs {
@@ -652,12 +653,13 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 				if err := checkEmbedTextGeneratedColumn(colDef.Name.Name.L, option.Expr, option.Stored); err != nil {
 					return errors.Trace(err)
 				}
+				generatedExprs = append(generatedExprs, option.Expr)
 			}
 		}
 		if containsColumnOption(colDef, ast.ColumnOptionAutoIncrement) {
 			exists, autoIncrementColumn = true, colDef.Name.Name.L
 		}
-		generated, depCols, err := findDependedColumnNames(schemaName, tableName, colDef)
+		generated, depCols, err := findDependedColumnNames(schemaName, tblInfo.Name, colDef)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -711,7 +713,7 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 			}
 		}
 	}
-	return nil
+	return checkGeneratedColumnExprs(ctx.GetExprCtx(), schemaName, tblInfo, generatedExprs...)
 }
 
 func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {

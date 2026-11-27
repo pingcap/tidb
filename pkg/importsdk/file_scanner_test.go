@@ -297,7 +297,7 @@ func TestFileScanner(t *testing.T) {
 		))
 		require.NoError(t, os.WriteFile(
 			filepath.Join(estimateDir, "db1.with_csv-schema.sql"),
-			[]byte("CREATE TABLE db1.with_csv (id INT PRIMARY KEY, v VARCHAR(255), KEY idx_v (v));"),
+			[]byte("CREATE TABLE db1.with_csv (id INT PRIMARY KEY, v VARCHAR(255), v_len INT AS (LENGTH(v)) VIRTUAL, KEY idx_v (v));"),
 			0o644,
 		))
 		require.NoError(t, os.WriteFile(

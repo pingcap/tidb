@@ -706,6 +706,20 @@ func TestProcessModifyColumnOptionsGenerated(t *testing.T) {
 	}
 }
 
+func TestCheckGeneratedColumnExprsAllowsRepair(t *testing.T) {
+	sctx := mock.NewContext()
+	ctx := NewMetaBuildContextWithSctx(sctx)
+	stmt, err := parser.New().ParseOneStmt("create table t (c0 int, c1 int as (json_contains(c0, '1')) virtual)", "", "")
+	require.NoError(t, err)
+	tblInfo, err := BuildTableInfoWithStmt(ctx, stmt.(*ast.CreateTableStmt), "utf8mb4", "utf8mb4_bin", nil)
+	require.NoError(t, err)
+
+	stmt, err = parser.New().ParseOneStmt("alter table t modify column c1 int as (c0 + 1) virtual", "", "")
+	require.NoError(t, err)
+	expr := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0].Options[0].Expr
+	require.NoError(t, checkGeneratedColumnExprs(sctx.GetExprCtx(), ast.NewCIStr("test"), tblInfo, expr))
+}
+
 func TestFieldCase(t *testing.T) {
 	var fields = []string{"field", "Field"}
 	colObjects := make([]*model.ColumnInfo, len(fields))
