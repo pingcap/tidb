@@ -572,6 +572,36 @@ func TestVectorizedBuiltinTimeFunc(t *testing.T) {
 	testVectorizedBuiltinFunc(t, vecBuiltinTimeCases)
 }
 
+func TestVectorizedAddTimeDatePart(t *testing.T) {
+	for _, name := range []string{ast.AddTime, ast.SubTime} {
+		t.Run(name, func(t *testing.T) {
+			ctx := createContext(t)
+			strType := types.NewFieldType(mysql.TypeVarString)
+			args := []Expression{&Column{RetType: strType, Index: 0}, &Column{RetType: strType, Index: 1}}
+			f, err := funcs[name].getFunction(ctx, args)
+			require.NoError(t, err)
+			require.True(t, f.vectorized() && f.isChildrenVectorized())
+			input := chunk.NewChunkWithCapacity([]*types.FieldType{strType, strType}, 8)
+			for _, delta := range []string{"2024-01-02 03:04:05", "0000-00-00 01:02:03", " 2024-01-02 03:04:05", "01:02:03", "-01:02:03", "01:02:03.123456"} {
+				input.AppendString(0, "2024-01-01 00:00:00")
+				input.AppendString(1, delta)
+			}
+			input.AppendString(0, "2024-01-01 00:00:00")
+			input.AppendNull(1)
+			result := chunk.NewColumn(strType, input.NumRows())
+			require.NoError(t, vecEvalType(ctx, f, types.ETString, input, result))
+			for i := range input.NumRows() {
+				want, isNull, err := f.evalString(ctx, input.GetRow(i))
+				require.NoError(t, err)
+				require.Equal(t, isNull, result.IsNull(i), "row %d", i)
+				if !isNull {
+					require.Equal(t, want, result.GetString(i), "row %d", i)
+				}
+			}
+		})
+	}
+}
+
 func TestVectorizedTimeFormatEmptyFormatReturnsNull(t *testing.T) {
 	ctx := createContext(t)
 

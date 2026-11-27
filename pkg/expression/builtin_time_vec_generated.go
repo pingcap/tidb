@@ -425,6 +425,11 @@ func (b *builtinAddStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 			return err
 		}
 
+		if hasDatePartForAddTime(arg1) {
+			result.AppendNull() // fixed: false
+			continue
+		}
+
 		var output string
 		var isNull bool
 		if isDuration(arg0) {

@@ -5239,6 +5239,15 @@ func (b *builtinAddStringAndStringSig) Clone() builtinFunc {
 	return newSig
 }
 
+func hasDatePartForAddTime(s string) bool {
+	_, rest, err := parser.Number(parser.Space0(s))
+	if err != nil {
+		return false
+	}
+	rest, err = parser.Char(rest, '-')
+	return err == nil && rest != ""
+}
+
 // evalString evals a builtinAddStringAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddStringAndStringSig) evalString(ctx EvalContext, row chunk.Row) (result string, isNull bool, err error) {
@@ -5268,13 +5277,8 @@ func (b *builtinAddStringAndStringSig) evalString(ctx EvalContext, row chunk.Row
 		return "", true, err
 	}
 
-	check := arg1Str
-	_, check, err = parser.Number(parser.Space0(check))
-	if err == nil {
-		check, err = parser.Char(check, '-')
-		if strings.Compare(check, "") != 0 && err == nil {
-			return "", true, nil
-		}
+	if hasDatePartForAddTime(arg1Str) {
+		return "", true, nil
 	}
 
 	if isDuration(arg0) {
