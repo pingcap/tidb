@@ -550,3 +550,31 @@ func TestPessimisticDeleteYourWrites(t *testing.T) {
 	session2.MustExec("commit;")
 	session2.MustQuery("select * from x").Check(testkit.Rows("1 2"))
 }
+
+func TestLazyAutoIDWithGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_auto_increment_in_generated = 1")
+	tk.MustExec("create table t (id bigint auto_increment, tag varchar(32), b bigint as (id + 10) stored, c bigint as (b * 2) virtual, key idx_id(id))")
+	tk.MustExec("insert into t (tag) values ('omitted_values')")
+	tk.MustExec("insert into t (id, tag) values (null, 'null_values')")
+	tk.MustExec("insert into t (id, tag) values (0, 'zero_values')")
+	tk.MustExec("insert into t (tag) values ('multi_1'), ('multi_2')")
+	tk.MustExec("replace into t (tag) values ('omitted_replace')")
+	tk.MustExec("replace into t (id, tag) values (null, 'null_replace')")
+	tk.MustExec("insert into t set tag = 'omitted_set'")
+	tk.MustExec("insert into t (id, tag) values (100, 'explicit_values')")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("9"))
+	tk.MustQuery("select count(*) from t where b <=> id + 10 and c <=> (id + 10) * 2").Check(testkit.Rows("9"))
+	tk.MustExec("admin check table t")
+
+	tk.MustExec(`create table tp (id bigint auto_increment, tag varchar(32), b bigint as (id + 10) stored, key idx_id(id))
+		partition by range (b) (partition p0 values less than (15), partition p1 values less than maxvalue)`)
+	tk.MustExec("insert into tp (tag) values ('a')")
+	tk.MustExec("insert into tp (id, tag) values (10, 'b')")
+	tk.MustExec("insert into tp (tag) values ('c')")
+	tk.MustQuery("select id, tag, b from tp partition (p0) order by id").Check(testkit.Rows("1 a 11"))
+	tk.MustQuery("select tag from tp partition (p1) where b = id + 10 order by id").Check(testkit.Rows("b", "c"))
+	tk.MustExec("admin check table tp")
+}
