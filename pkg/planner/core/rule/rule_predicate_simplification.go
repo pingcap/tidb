@@ -163,9 +163,38 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	newValues := make([]expression.Expression, 0, len(v.GetArgs()))
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	var lastValue *expression.Constant
+	// The IN list and the `<>` predicate are evaluated with their own collations, which are
+	// derived separately and may differ (for example when the `<>` value carries an explicit
+	// COLLATE). When they are incompatible, a value equal to the `<>` value under the IN
+	// collation (e.g. 'A' and 'a' under utf8mb4_general_ci) may not be equal under the `<>`
+	// collation (e.g. utf8mb4_bin); pruning such a value, or dropping the `<>` predicate
+	// afterwards, would then change the result. Skip the simplification in that case.
+	notEQFunc := notEQPredicate.(*expression.ScalarFunction)
+	_, inCollation := v.CharsetAndCollation()
+	isString := v.GetArgs()[0].GetType(evalCtx).EvalType() == types.ETString
+	if isString {
+		neCollation := ""
+		if ec, err := expression.CheckAndDeriveCollationFromExprs(ctx.GetExprCtx(), ast.NE, types.ETInt, notEQFunc.GetArgs()...); err == nil && ec != nil {
+			neCollation = ec.Collation
+		}
+		if !collate.CompatibleCollate(inCollation, neCollation) {
+			return inPredicate, true
+		}
+	}
+	// Compare with the IN expression's collation rather than Constant.Equal's hardcoded binary
+	// collation so that the pruning matches how the IN list is evaluated at runtime. Non-string
+	// types have no collation, so the binary collator keeps their comparison unchanged.
+	collator := collate.GetBinaryCollator()
+	if isString {
+		collator = collate.GetCollator(inCollation)
+	}
 	for _, element := range v.GetArgs() {
 		value, valueOK := element.(*expression.Constant)
-		redundantValue := valueOK && value.Equal(evalCtx, notEQValue)
+		redundantValue := false
+		if valueOK {
+			cmp, err := value.Value.Compare(evalCtx.TypeCtx(), &notEQValue.Value, collator)
+			redundantValue = (err == nil && cmp == 0)
+		}
 		if !redundantValue {
 			newValues = append(newValues, element)
 		}
