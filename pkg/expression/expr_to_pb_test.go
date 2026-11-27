@@ -1614,6 +1614,12 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// CastDurationAsTime
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), durationColumn)
+	require.NoError(t, err)
+	require.Equal(t, tipb.ScalarFuncSig_CastDurationAsTime, function.(*ScalarFunction).Function.PbCode())
+	exprs = append(exprs, function)
+
 	ctx := mock.NewContext()
 	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 	pushed, remained := PushDownExprs(pushDownCtx, exprs, kv.TiKV)

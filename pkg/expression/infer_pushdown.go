@@ -243,8 +243,6 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.SHA2, ast.UncompressedLength,
 
-		ast.Cast,
-
 		// misc functions.
 		// TODO(#26942): enable functions below after them are fully tested in TiKV.
 		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
@@ -256,6 +254,9 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 			return false
 		}
 		return true
+	case ast.Cast:
+		// TiKV takes the date part from its own clock in UTC instead of the statement timestamp in the session time zone.
+		return sf.Function.PbCode() != tipb.ScalarFuncSig_CastDurationAsTime
 	// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 	// open the following switchers if we implement them in coprocessor via `cmath`
 	case ast.Conv:
