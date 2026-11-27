@@ -325,6 +325,7 @@ create table t8(a int, b int, key(a));
 insert into t3 values(1, 1), (2, 2), (3, 3);
 analyze table t3 all columns;
 --enable_warnings
+set @@session.tidb_opt_enable_non_eval_scalar_subquery = 0;
 explain format='plan_tree' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 explain format='plan_tree' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 explain format='plan_tree' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
@@ -413,6 +414,7 @@ explain format='plan_tree' select /*+ leading(t2@sel_2, t1) */ t1.a, (select min
 explain format='plan_tree' select /*+ leading(t2@sel_2, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 explain format='plan_tree' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 explain format='plan_tree' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
+set @@session.tidb_opt_enable_non_eval_scalar_subquery = 1;
 --disable_warnings
 
 # TestLeadingJoinHint4OuterJoin
@@ -469,6 +471,7 @@ explain format='plan_tree' select /*+ leading(t3) merge_join(t2) */ * from t rig
 explain format='plan_tree' select /*+ leading(t3) merge_join(t3) */ * from t right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 explain format='plan_tree' select /*+ leading(t3) merge_join(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 explain format='plan_tree' select /*+ leading(t2) INL_JOIN(t1) */ * from t join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
+set @@session.tidb_opt_enable_non_eval_scalar_subquery = 0;
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a in (select t3.a from t3 where t1.b = t3.b);
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 right join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
@@ -512,6 +515,7 @@ explain format='plan_tree' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min
 explain format='plan_tree' select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 explain format='plan_tree' select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 left join t3 on t1.a = t3.a;
 explain format='plan_tree' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 right join t3 on t1.a = t3.a;
+set @@session.tidb_opt_enable_non_eval_scalar_subquery = 1;
 --disable_warnings
 
 # TestLeadingJoinHint4DerivedTable
