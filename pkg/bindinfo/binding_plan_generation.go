@@ -566,7 +566,7 @@ func adjustVar(varName string, varVal any) (newVarVal any, err error) {
 // adjustFix returns the new value of the fix-control for plan generation.
 func adjustFix(fixID uint64, fixVal string) (newFixVal string, err error) {
 	switch fixID {
-	case fixcontrol.Fix44855, fixcontrol.Fix52869: // flip the switch
+	case fixcontrol.Fix44855, fixcontrol.Fix52869, fixcontrol.Fix65294: // flip the switch
 		fixVal = strings.ToUpper(strings.TrimSpace(fixVal))
 		if fixVal == vardef.Off {
 			return vardef.On, nil
@@ -663,7 +663,7 @@ func getStartState(vars []string, fixes []uint64, indexHintCount int) (*state, e
 			s.fixValues = append(s.fixValues, "OFF")
 		case fixcontrol.Fix45132:
 			s.fixValues = append(s.fixValues, "1000")
-		case fixcontrol.Fix52869:
+		case fixcontrol.Fix52869, fixcontrol.Fix65294:
 			s.fixValues = append(s.fixValues, "OFF")
 		default:
 			return nil, fmt.Errorf("unsupported fix-control %d in plan generation", fixID)
