@@ -1382,7 +1382,9 @@ func LoadIngestedSSTs(
 		},
 		iter.WithConcurrency(migrationMetadataDownloadBatchSize),
 	)
-	// Transform emits in completion order. Restore path order before validating each group's finished marker.
+	// This branch's Transform preserves input order. Keep the explicit reordering so
+	// groupExtraBackups still receives path order if #68315 is backported and
+	// Transform starts yielding results in completion order.
 	backups := make([]PathedIngestedSSTs, len(paths))
 	for err, backup := range iter.AsSeq(ctx, reads) {
 		if err != nil {
