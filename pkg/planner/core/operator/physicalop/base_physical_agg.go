@@ -555,6 +555,12 @@ func CheckAggCanPushCop(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDe
 			ret = false
 			break
 		}
+		// TiKV evaluates binary literal SUM/AVG arguments differently from root aggregation.
+		if storeType == kv.TiKV && aggFuncHasBinaryLiteralNumericArg(aggFunc) {
+			reason = "arguments of AggFunc `" + aggFunc.Name + "` contain binary literal numeric arguments"
+			ret = false
+			break
+		}
 		orderBySize := len(aggFunc.OrderByItems)
 		if orderBySize > 0 {
 			exprs := make([]expression.Expression, 0, orderBySize)
@@ -596,6 +602,22 @@ func CheckAggCanPushCop(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDe
 		}
 	}
 	return ret
+}
+
+// aggFuncHasBinaryLiteralNumericArg reports SUM/AVG arguments that are numeric
+// in SQL but unsafe for TiKV pushdown because they originate from binary literals.
+func aggFuncHasBinaryLiteralNumericArg(aggFunc *aggregation.AggFuncDesc) bool {
+	switch aggFunc.Name {
+	case ast.AggFuncAvg, ast.AggFuncSum:
+	default:
+		return false
+	}
+	for _, arg := range aggFunc.Args {
+		if expression.IsBinaryLiteral(arg) {
+			return true
+		}
+	}
+	return false
 }
 
 // AggInfo stores the information of an Aggregation.
