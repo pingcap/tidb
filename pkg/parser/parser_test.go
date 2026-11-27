@@ -5893,8 +5893,7 @@ func TestPrivilege(t *testing.T) {
 		// Negative: DISCARD coexisting with an auth-option is invalid.
 		{"ALTER USER 'u1'@'%' IDENTIFIED BY 'p1' DISCARD OLD PASSWORD", false, ""},
 		// MySQL 8.0 user_func_auth_option permits dual-password clauses on the
-		// current-user form. Parser accepts them; the executor stub returns
-		// ER_NOT_SUPPORTED_YET until the behavior PR lands.
+		// current-user form.
 		{"ALTER USER USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD", true, "ALTER USER USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD"},
 		{"ALTER USER USER() DISCARD OLD PASSWORD", true, "ALTER USER USER() DISCARD OLD PASSWORD"},
 		{"ALTER USER IF EXISTS USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD", true, "ALTER USER IF EXISTS USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD"},
