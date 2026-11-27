@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/affinity"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -29,8 +28,14 @@ import (
 )
 
 func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
+<<<<<<< HEAD
 	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
+=======
+	codec := e.Ctx().GetStore().GetCodec()
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
 
 	var (
 		fieldPatternsLike collate.WildcardPattern
@@ -42,7 +47,7 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 	}
 
 	// Get all tables with affinity attribute from infoschema
-	tableInfoResults := is.ListTablesWithSpecialAttribute(infoschemacontext.AffinityAttribute)
+	tableInfoResults := e.is.ListTablesWithSpecialAttribute(infoschemacontext.AffinityAttribute)
 
 	// Collect table/partition info with affinity
 	type tablePartitionInfo struct {
