@@ -320,6 +320,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
 
 	if kv.IsSystemKS(tikvHandlerTool.Store) {
+		router.Handle("/keyspaces/jobs/active", tikvhandler.NewKeyspaceActiveJobsHandler(tikvHandlerTool)).Methods(http.MethodPost).Name("Keyspace_Active_Jobs")
 		router.Handle("/dxf/schedule/status", tikvhandler.NewDXFScheduleStatusHandler()).Name("DXF_Schedule_Status")
 		router.Handle("/dxf/schedule", tikvhandler.NewDXFScheduleHandler()).Name("DXF_Schedule")
 		router.Handle("/dxf/schedule/tune", tikvhandler.NewDXFScheduleTuneHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Tune")
