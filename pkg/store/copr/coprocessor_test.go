@@ -697,6 +697,8 @@ func TestRebuild(t *testing.T) {
 	taskEqual(t, tasks[2], regionIDs[0], 0, "a", "m")
 	taskEqual(t, tasks[1], regionIDs[1], 0, "m", "q")
 	taskEqual(t, tasks[0], regionIDs[2], 0, "q", "z")
+
+	t.Run("checksum_rebuild_keeps_read_timeout", testChecksumCopRebuildKeepsReadTimeout)
 }
 
 func buildCopRanges(keys ...string) *KeyRanges {
@@ -1984,4 +1986,76 @@ func testStoreBatchCopRPCTimeout(t *testing.T) {
 		timeout := sendStoreBatch(t, func(*kv.Request) {})
 		require.Equal(t, coprReqTimeout, timeout)
 	})
+}
+
+// checksumReadTimeoutRecorder records the RPC budget of every checksum cop
+// request and optionally fails the first one with a region error, so the test
+// can observe the budget of the rebuilt attempt through the real client-go
+// send path.
+type checksumReadTimeoutRecorder struct {
+	tikv.Client
+	copTimeouts  []time.Duration
+	failFirstCop bool
+}
+
+func (c *checksumReadTimeoutRecorder) SendRequest(
+	ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration,
+) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdCop {
+		c.copTimeouts = append(c.copTimeouts, timeout)
+		if c.failFirstCop {
+			c.failFirstCop = false
+			// A plain epoch-not-match with no replacement regions: client-go
+			// invalidates the cached region and reports the error upwards, so
+			// TiDB copr rebuilds the task without poisoning the region cache.
+			return &tikvrpc.Response{
+				Resp: &coprocessor.Response{
+					RegionError: &errorpb.Error{
+						EpochNotMatch: &errorpb.EpochNotMatch{},
+					},
+				},
+			}, nil
+		}
+		return &tikvrpc.Response{Resp: &coprocessor.Response{}}, nil
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+func testChecksumCopRebuildKeepsReadTimeout(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	testutils.BootstrapWithMultiRegions(cluster, []byte("m"))
+	recorder := &checksumReadTimeoutRecorder{Client: mockClient, failFirstCop: true}
+	tikvStore, err := tikv.NewTestTiKVStore(recorder, pdClient, nil, nil, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+	copStore, err := NewStore(tikvStore, nil)
+	require.NoError(t, err)
+	t.Cleanup(copStore.Close)
+
+	ctx := context.Background()
+	req := &kv.Request{
+		Tp:                    kv.ReqTypeChecksum,
+		StoreType:             kv.TiKV,
+		KeyRanges:             kv.NewNonPartitionedKeyRanges(BuildKeyRanges("a", "z")),
+		TiKVClientReadTimeout: 256000,
+	}
+	resp := (&CopClient{store: copStore}).Send(ctx, req, kv.NewVariables(nil), &kv.ClientSendOption{})
+
+	// Drain the iterator: the first checksum RPC is answered with a region
+	// error, so the rebuilt attempt must send a second RPC. Every attempt,
+	// initial and rebuilt, must carry the per-request read timeout; falling
+	// back to the default CoprReqTimeout here re-arms the 60s livelock on
+	// regions larger than one default-budget scan.
+	for {
+		result, err := resp.Next(ctx)
+		require.NoError(t, err)
+		if result == nil {
+			break
+		}
+	}
+	require.GreaterOrEqual(t, len(recorder.copTimeouts), 2)
+	for _, timeout := range recorder.copTimeouts {
+		require.Equal(t, 256000*time.Millisecond, timeout)
+	}
 }

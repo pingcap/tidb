@@ -151,9 +151,19 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		mgr := ingestctrl.NewTiKVChecksumManagerForImportInto(p.store, p.taskID,
 			uint(plan.DistSQLScanConcurrency), bfWeight, resourcegroup.DefaultResourceGroupName)
 		defer mgr.Close()
+		// The BR checksum manager builds checksum requests directly instead of
+		// going through ADMIN CHECKSUM, so the affinity-derived read deadline
+		// must be applied explicitly; 0 for non-affinity tables keeps the
+		// global copr-req-timeout default. Derive it inside the callback so a
+		// turned-off checksum does not pay the PD lookup.
+		var checksumReadTimeoutMs uint64
 		return importer.VerifyChecksum(ctx, plan, finalChecksum, logger,
 			func() (*ingestctrl.RemoteChecksum, error) {
 				ctxWithLogger := logutil.WithLogger(ctx, logger)
+				if checksumReadTimeoutMs == 0 && plan.TableInfo.Affinity != nil {
+					checksumReadTimeoutMs = importer.AffinityChecksumReadTimeoutMs(ctxWithLogger)
+					mgr.SetTiKVClientReadTimeout(checksumReadTimeoutMs)
+				}
 				return mgr.Checksum(ctxWithLogger, &importdef.TableInfo{
 					DB:   plan.DBName,
 					Name: plan.TableInfo.Name.L,

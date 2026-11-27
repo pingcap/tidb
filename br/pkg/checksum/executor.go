@@ -38,6 +38,9 @@ type ExecutorBuilder struct {
 
 	resourceGroupName string
 	requestSource     util.RequestSource
+	// tikvClientReadTimeoutMs is an optional per-request coprocessor read
+	// deadline (ms); 0 keeps the global copr-req-timeout default.
+	tikvClientReadTimeoutMs uint64
 }
 
 // NewExecutorBuilder returns a new executor builder.
@@ -93,6 +96,15 @@ func (builder *ExecutorBuilder) SetExplicitRequestSourceType(name string) *Execu
 	return builder
 }
 
+// SetTiKVClientReadTimeout sets an optional per-request coprocessor read
+// deadline in milliseconds. Callers that checksum tables whose regions may
+// legitimately exceed the global copr-req-timeout (e.g. affinity tables)
+// use it; zero keeps the default.
+func (builder *ExecutorBuilder) SetTiKVClientReadTimeout(ms uint64) *ExecutorBuilder {
+	builder.tikvClientReadTimeoutMs = ms
+	return builder
+}
+
 // Build builds a checksum executor.
 func (builder *ExecutorBuilder) Build() (*Executor, error) {
 	reqs, err := buildChecksumRequest(
@@ -104,6 +116,7 @@ func (builder *ExecutorBuilder) Build() (*Executor, error) {
 		builder.newKeyspace,
 		builder.resourceGroupName,
 		builder.requestSource,
+		builder.tikvClientReadTimeoutMs,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -120,6 +133,7 @@ func buildChecksumRequest(
 	newKeyspace []byte,
 	resourceGroupName string,
 	requestSource util.RequestSource,
+	tikvClientReadTimeoutMs uint64,
 ) ([]*kv.Request, error) {
 	var partDefs []model.PartitionDefinition
 	if part := newTable.Partition; part != nil {
@@ -132,7 +146,7 @@ func buildChecksumRequest(
 		oldTableID = oldTable.Info.ID
 	}
 	rs, err := buildRequest(newTable, newTable.ID, oldTable, oldTableID, startTS, concurrency,
-		oldKeyspace, newKeyspace, resourceGroupName, requestSource)
+		oldKeyspace, newKeyspace, resourceGroupName, requestSource, tikvClientReadTimeoutMs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -147,7 +161,7 @@ func buildChecksumRequest(
 			}
 		}
 		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency,
-			oldKeyspace, newKeyspace, resourceGroupName, requestSource)
+			oldKeyspace, newKeyspace, resourceGroupName, requestSource, tikvClientReadTimeoutMs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -168,10 +182,11 @@ func buildRequest(
 	newKeyspace []byte,
 	resourceGroupName string,
 	requestSource util.RequestSource,
+	tikvClientReadTimeoutMs uint64,
 ) ([]*kv.Request, error) {
 	reqs := make([]*kv.Request, 0)
 	req, err := buildTableRequest(tableInfo, tableID, oldTable, oldTableID, startTS, concurrency,
-		oldKeyspace, newKeyspace, resourceGroupName, requestSource)
+		oldKeyspace, newKeyspace, resourceGroupName, requestSource, tikvClientReadTimeoutMs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -201,7 +216,7 @@ func buildRequest(
 		}
 		req, err = buildIndexRequest(
 			tableID, indexInfo, oldTableID, oldIndexInfo, startTS, concurrency,
-			oldKeyspace, newKeyspace, resourceGroupName, requestSource)
+			oldKeyspace, newKeyspace, resourceGroupName, requestSource, tikvClientReadTimeoutMs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -222,6 +237,7 @@ func buildTableRequest(
 	newKeyspace []byte,
 	resourceGroupName string,
 	requestSource util.RequestSource,
+	tikvClientReadTimeoutMs uint64,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldTable != nil {
@@ -247,6 +263,7 @@ func buildTableRequest(
 	var builder distsql.RequestBuilder
 	// Use low priority to reducing impact to other requests.
 	builder.Request.Priority = kv.PriorityLow
+	builder.Request.TiKVClientReadTimeout = tikvClientReadTimeoutMs
 	return builder.SetHandleRanges(nil, tableID, tableInfo.IsCommonHandle, ranges).
 		SetStartTS(startTS).
 		SetChecksumRequest(checksum).
@@ -267,6 +284,7 @@ func buildIndexRequest(
 	newKeyspace []byte,
 	resourceGroupName string,
 	requestSource util.RequestSource,
+	tikvClientReadTimeoutMs uint64,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
@@ -286,6 +304,7 @@ func buildIndexRequest(
 	var builder distsql.RequestBuilder
 	// Use low priority to reducing impact to other requests.
 	builder.Request.Priority = kv.PriorityLow
+	builder.Request.TiKVClientReadTimeout = tikvClientReadTimeoutMs
 	return builder.SetIndexRanges(nil, tableID, indexInfo.ID, ranges).
 		SetStartTS(startTS).
 		SetChecksumRequest(checksum).
