@@ -267,7 +267,8 @@ pub struct Performance {
     /// Plan-replayer dump-worker concurrency.
     #[serde(rename = "plan-replayer-dump-worker-concurrency")]
     pub plan_replayer_dump_worker_concurrency: usize,
-    /// Enable stats-cache mem quota.
+    /// Deprecated: this config has no effect. The stats cache always uses
+    /// its memory quota.
     #[serde(rename = "enable-stats-cache-mem-quota")]
     pub enable_stats_cache_mem_quota: bool,
     /// Deprecated committer concurrency.

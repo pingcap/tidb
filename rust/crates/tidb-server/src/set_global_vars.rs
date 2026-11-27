@@ -45,6 +45,12 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
             tidb_versioninfo::tidb_edition()
         ),
     );
+    if !config.global_config.performance.enable_stats_cache_mem_quota {
+        tidb_logutil::bg_logger().warn(
+            "performance.enable-stats-cache-mem-quota is deprecated and has no effect; the stats cache always uses its memory quota",
+            &[],
+        );
+    }
     // Go's `setInstanceVar` block: the `[instance]` values this instance
     // keeps over the `mysql.global_variables` rows.
     let instance = &config.global_config.instance;

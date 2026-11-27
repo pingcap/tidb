@@ -18,7 +18,6 @@ rand = "0.10"
 tidb-ristretto = { path = "../tidb-ristretto" }
 tidb-log = { path = "../tidb-log" }
 tidb-stats = { path = "../tidb-stats" }
-tidb-stats-handle-cache-internal = { path = "../tidb-stats-handle-cache-internal" }
 tidb-stats-handle-cache-metrics = { path = "../tidb-stats-handle-cache-metrics" }
 tidb-zeropool = { path = "../tidb-zeropool" }
 

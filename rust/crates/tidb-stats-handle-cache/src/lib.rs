@@ -25,9 +25,7 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use tidb_stats::{CopyIntent, Table};
-use tidb_stats_handle_cache_internal::StatsCacheInner;
 use tidb_stats_handle_cache_internal_lfu::Lfu;
-use tidb_stats_handle_cache_internal_mapcache::MapCache;
 use tidb_stats_handle_cache_metrics as metrics;
 use tidb_stats_handle_metrics as handle_metrics;
 
@@ -106,9 +104,10 @@ pub enum UpdateError<E> {
     Panicked,
 }
 
-/// Go `StatsCache`: the full-table cache and its lifecycle maximum version.
+/// Go `statsCache`: the full-table cache, an LFU cache sized by
+/// `tidb_stats_cache_mem_quota`, and its lifecycle maximum version.
 pub struct StatsCache {
-    inner: Box<dyn StatsCacheInner>,
+    inner: Lfu,
     max_table_stats_version: AtomicU64,
 }
 
@@ -208,23 +207,14 @@ impl StatsCacheImpl {
         self.replace_cache(replacement.load());
     }
 
-    /// Go `UpdateStatsCache`, preserving quota-mode in-place updates and map-mode COW.
+    /// Go `UpdateStatsCache`: applies the updates and deletions to the
+    /// current cache in place.
     pub fn update_stats_cache(&self, update: CacheUpdate) {
-        if tidb_config::config_tree::config::get_global_config()
-            .performance
-            .enable_stats_cache_mem_quota
-        {
-            self.load().update(
-                &update.updated,
-                &update.deleted,
-                update.options.skip_move_forward,
-            );
-        } else {
-            let cache = self
-                .load()
-                .copy_and_update(&update.updated, &update.deleted);
-            self.replace_cache(Arc::new(cache));
-        }
+        self.load().update(
+            &update.updated,
+            &update.deleted,
+            update.options.skip_move_forward,
+        );
     }
 
     /// Go `GetNextCheckVersionWithOffset`, with the handle-owned lease explicit.
@@ -513,20 +503,15 @@ where
 
 #[allow(clippy::len_without_is_empty)]
 impl StatsCache {
-    /// Go `NewStatsCache`.
+    /// Go `newStatsCache`: a cache backed by an LFU cache sized by
+    /// `tidb_stats_cache_mem_quota`.
     pub fn new() -> Result<Self, String> {
-        let config = tidb_config::config_tree::config::get_global_config();
-        let inner: Box<dyn StatsCacheInner> = if config.performance.enable_stats_cache_mem_quota {
-            Box::new(Lfu::new(
-                tidb_vardef::STATS_CACHE_MEM_QUOTA.load(Ordering::SeqCst),
-            )?)
-        } else {
-            Box::new(MapCache::new())
-        };
-        Ok(Self::from_inner(inner))
+        Ok(Self::from_inner(Lfu::new(
+            tidb_vardef::STATS_CACHE_MEM_QUOTA.load(Ordering::SeqCst),
+        )?))
     }
 
-    fn from_inner(inner: Box<dyn StatsCacheInner>) -> Self {
+    fn from_inner(inner: Lfu) -> Self {
         Self {
             inner,
             max_table_stats_version: AtomicU64::new(0),
@@ -591,19 +576,7 @@ impl StatsCache {
         self.max_table_stats_version.load(Ordering::Acquire)
     }
 
-    /// Go `CopyAndUpdate`, used by copy-on-write mode.
-    pub fn copy_and_update(&self, tables: &[Arc<Table>], deleted_ids: &[i64]) -> Self {
-        let inner = self.inner.copy_and_update(tables, deleted_ids);
-        let version = tables
-            .iter()
-            .fold(self.version(), |version, table| version.max(table.version));
-        Self {
-            inner,
-            max_table_stats_version: AtomicU64::new(version),
-        }
-    }
-
-    /// Go `Update`, used by quota mode.
+    /// Go `Update`.
     pub fn update(&self, tables: &[Arc<Table>], deleted_ids: &[i64], skip_move_forward: bool) {
         for table in tables {
             metrics::update_counter().inc();
@@ -650,6 +623,11 @@ mod tests {
 
     use super::*;
 
+    /// An LFU cache large enough that no test table is evicted.
+    fn test_lfu() -> Lfu {
+        Lfu::new(1 << 30).expect("the LFU cache builds")
+    }
+
     fn table(id: i64, version: u64) -> Arc<Table> {
         let source = new_mock_statistics_table(1, 1, true, false, false);
         let mut table = (*source).clone();
@@ -661,7 +639,7 @@ mod tests {
 
     #[test]
     fn source_get_put_and_version() {
-        let cache = StatsCache::from_inner(Box::new(MapCache::new()));
+        let cache = StatsCache::from_inner(test_lfu());
         assert!(cache.get(1).is_none());
         cache.put(1, table(1, 2));
         cache.put(2, table(2, 1));
@@ -674,7 +652,7 @@ mod tests {
     #[test]
     fn source_stats_cache_get_nil_failpoint_forces_a_miss() {
         let cache =
-            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(test_lfu())));
         cache.put(1, table(1, 7));
         assert!(cache.get(1).is_some());
         assert!(cache.contains_table(1));
@@ -689,26 +667,11 @@ mod tests {
     }
 
     #[test]
-    fn source_copy_and_update_is_independent() {
-        let cache = StatsCache::from_inner(Box::new(MapCache::new()));
-        cache.put(1, table(1, 2));
-        let insert = table(2, 3);
-        let expected_cost = insert.memory_usage().total_mem_usage;
-        let copied = cache.copy_and_update(&[table(1, 9), insert], &[1]);
-        assert!(cache.get(1).is_some());
-        assert!(cache.get(2).is_none());
-        assert!(copied.get(1).is_none());
-        assert!(copied.get(2).is_some());
-        assert_eq!(copied.version(), 9);
-        assert_eq!(copied.cost(), expected_cost);
-    }
-
-    #[test]
-    fn source_cache_replace_keeps_the_loaded_snapshot_alive() {
+    fn source_cache_replace_closes_the_replaced_cache() {
         let cache =
-            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(test_lfu())));
         let replacement =
-            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(test_lfu())));
         cache.put(1, table(1, 2));
         replacement.put(1, table(1, 3));
 
@@ -719,8 +682,10 @@ mod tests {
             scope.spawn(|| cache.replace(&replacement));
         });
 
+        // Go `replace` closes the old cache: a reader still holding it keeps
+        // its version, but the LFU released its tables.
         assert_eq!(loaded.version(), 2);
-        assert_eq!(loaded.get(1).unwrap().version, 2);
+        assert!(loaded.get(1).is_none());
         assert_eq!(cache.max_table_stats_version(), 3);
         assert_eq!(cache.get(1).unwrap().version, 3);
     }
@@ -731,9 +696,9 @@ mod tests {
 
         for _ in 0..32 {
             let cache =
-                StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+                StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(test_lfu())));
             let replacement =
-                StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+                StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(test_lfu())));
             cache.put(1, table(1, 2));
             replacement.put(1, table(1, 3));
 
@@ -752,7 +717,7 @@ mod tests {
 
     #[test]
     fn source_update_can_skip_version_movement() {
-        let cache = StatsCache::from_inner(Box::new(MapCache::new()));
+        let cache = StatsCache::from_inner(test_lfu());
         cache.update(&[table(1, 4)], &[], true);
         assert_eq!(cache.version(), 0);
         cache.update(&[table(2, 3)], &[1], false);
@@ -799,7 +764,7 @@ mod tests {
         for gauge in handle_metrics::stats_healthy_gauges() {
             gauge.set(0.0);
         }
-        let cache = StatsCache::from_inner(Box::new(MapCache::new()));
+        let cache = StatsCache::from_inner(test_lfu());
         for (id, pseudo, count, modify, analyzed) in [
             (0, false, 2_000, 1_000, 0),
             (1, false, 2_000, 1_100, 1),
@@ -871,7 +836,7 @@ mod tests {
 
     #[test]
     fn source_refresh_reuses_payload_deletes_unknown_and_skips_load_errors() {
-        let cache = StatsCache::from_inner(Box::new(MapCache::new()));
+        let cache = StatsCache::from_inner(test_lfu());
         let mut old = (*table(1, 10)).clone();
         old.last_stats_hist_version = 100;
         old.table_info_update_ts = 1;
@@ -938,7 +903,7 @@ mod tests {
     #[test]
     fn source_refresh_cancellation_discards_the_pending_batch() {
         let cache =
-            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(test_lfu())));
         let source = RefreshSource {
             rows: vec![StatsMetaRow {
                 version: 1,
@@ -969,7 +934,7 @@ mod tests {
     fn update_observes_the_stats_delta_load_duration_histogram_on_every_exit() {
         let histogram = metrics::stats_delta_load_histogram();
         let cache =
-            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(test_lfu())));
         let source = RefreshSource {
             rows: vec![StatsMetaRow {
                 version: 1,
