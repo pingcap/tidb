@@ -1365,14 +1365,13 @@ func TestIssue41014(t *testing.T) {
 	tk.MustQuery("explain format='brief' select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
 		testkit.Rows("HashAgg 1.00 root  funcs:count(distinct test.tai1.aid)->Column#10",
 			"└─HashJoin 9990.00 root  inner join, equal:[eq(test.tai2.rid, test.tai1.rid)]",
-			"  ├─Selection(Build) 8000.00 root  like(lower(test.tai2.prilan), \"%python%\", 92)",
-			"  │ └─Projection 10000.00 root  test.tai2.rid, lower(test.tai2.prilan)",
-			"  │   └─TableReader 9990.00 root  data:Selection",
-			"  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.tai2.rid))",
-			"  │       └─TableFullScan 10000.00 cop[tikv] table:tai2 keep order:false, stats:pseudo",
-			"  └─TableReader(Probe) 9990.00 root  data:Selection",
-			"    └─Selection 9990.00 cop[tikv]  not(isnull(test.tai1.rid))",
-			"      └─TableFullScan 10000.00 cop[tikv] table:tai1 keep order:false, stats:pseudo"))
+			"  ├─TableReader(Build) 9990.00 root  data:Selection",
+			"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.tai1.rid))",
+			"  │   └─TableFullScan 10000.00 cop[tikv] table:tai1 keep order:false, stats:pseudo",
+			"  └─Projection(Probe) 10000.00 root  test.tai2.rid, lower(test.tai2.prilan)",
+			"    └─TableReader 7992.00 root  data:Selection",
+			"      └─Selection 7992.00 cop[tikv]  like(lower(test.tai2.prilan), \"%python%\", 92), not(isnull(test.tai2.rid))",
+			"        └─TableFullScan 10000.00 cop[tikv] table:tai2 keep order:false, stats:pseudo"))
 	tk.MustQuery("select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
 		testkit.Rows("0"))
 }
@@ -1679,20 +1678,21 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 				if strings.Contains(sql, "count") {
 					require.True(t, aggPushdownTiFlash)
 				}
-			} else {
-				// Can generate tiflash plan, but Agg/Selection cannot push down to tiflash.
-				//require.True(t, genTiFlashPlan)
-				require.False(t, selectionPushdownTiFlash)
+			} else if genTiFlashPlan {
+				// lower(c2) is rewritten to the expression index's hidden column for
+				// the TiKV index path; a TiFlash plan computes that column from c2, so
+				// Agg/Selection still push down to TiFlash.
+				require.True(t, selectionPushdownTiFlash)
 				if strings.Contains(sql, "count") {
-					require.False(t, aggPushdownTiFlash)
+					require.True(t, aggPushdownTiFlash)
 				}
 			}
 		}
 	}
 
 	test2 := func() {
-		// Can generate tiflash plan when select generated column.
-		// But Agg cannot push down to tiflash.
+		// Can generate tiflash plan when select generated column, and TiFlash
+		// computes c2 = lower(c1), so Agg can push down to tiflash too.
 		sqls := []string{
 			"explain select * from t1;",
 			"explain select c2 from t1;",
@@ -1713,7 +1713,7 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 			}
 			require.True(t, genTiFlashPlan)
 			if strings.Contains(sql, "count") {
-				require.False(t, aggPushdownTiFlash)
+				require.True(t, aggPushdownTiFlash)
 			}
 		}
 	}
@@ -1734,6 +1734,27 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 	test1(true)
 	test1(false)
 	test2()
+
+	// A condition TiFlash can't evaluate but TiKV can (field) stays at root as a
+	// condition of the scan and references c2,
+	// so the Projection that computes c2 above the scan is kept. The MPP task must
+	// still convert to a root task with that Projection under the reader.
+	tk.MustExec("set tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set tidb_allow_tiflash_cop = OFF")
+	defer tk.MustExec("set tidb_allow_tiflash_cop = default")
+	rows := tk.MustQuery("explain format = 'brief' select c1 from t1 where field(c2, 'abc') = 1").Rows()
+	var rootSel, tiflashProj bool
+	for _, row := range rows {
+		line := fmt.Sprintf("%v", row)
+		if strings.Contains(line, "Selection") && strings.Contains(line, "root") && strings.Contains(line, "field(test.t1.c2") {
+			rootSel = true
+		}
+		if strings.Contains(line, "Projection") && strings.Contains(line, "tiflash") && strings.Contains(line, "lower(test.t1.c1)->test.t1.c2") {
+			tiflashProj = true
+		}
+	}
+	require.True(t, rootSel, "%v", rows)
+	require.True(t, tiflashProj, "%v", rows)
 }
 
 func TestMppStoreCntWithErrors(t *testing.T) {
@@ -1811,11 +1832,20 @@ func TestMPP47766(t *testing.T) {
 	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustQuery("explain select date(test_time), count(1) as test_date from `traces` group by 1").Check(testkit.Rows(
-		"Projection_4 8000.00 root  test.traces.test_time_gen->Column#6, Column#5",
-		"└─HashAgg_8 8000.00 root  group by:test.traces.test_time_gen, funcs:count(1)->Column#5, funcs:firstrow(test.traces.test_time_gen)->test.traces.test_time_gen",
-		"  └─TableReader_20 10000.00 root  MppVersion: 3, data:ExchangeSender_19",
-		"    └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"      └─TableFullScan_18 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo"))
+		"TableReader_57 8000.00 root  MppVersion: 3, data:ExchangeSender_56",
+		"└─ExchangeSender_56 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"  └─Projection_5 8000.00 mpp[tiflash]  test.traces.test_time_gen->Column#6, Column#5",
+		"    └─Projection_52 8000.00 mpp[tiflash]  Column#5, test.traces.test_time_gen",
+		"      └─HashAgg_53 8000.00 mpp[tiflash]  group by:test.traces.test_time_gen, funcs:sum(Column#11)->Column#5, funcs:firstrow(test.traces.test_time_gen)->test.traces.test_time_gen",
+		"        └─ExchangeReceiver_55 8000.00 mpp[tiflash]  ",
+		"          └─ExchangeSender_54 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.traces.test_time_gen, collate: binary]",
+		"            └─HashAgg_50 8000.00 mpp[tiflash]  group by:test.traces.test_time_gen, funcs:count(1)->Column#11",
+		"              └─Projection_35 10000.00 mpp[tiflash]  date(test.traces.test_time)->test.traces.test_time_gen",
+		"                └─TableFullScan_34 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo"))
+	// The virtual column is computed in TiFlash, so the whole aggregation is MPP.
+	tk.MustExec("insert into traces (test_time) values ('2026-01-01 10:00:00'), ('2026-01-01 11:00:00'), ('2026-01-02 09:00:00')")
+	tk.MustQuery("select date(test_time), count(1) as test_date from `traces` group by 1 order by 1").Check(testkit.Rows(
+		"2026-01-01 2", "2026-01-02 1"))
 	tk.MustQuery("explain select /*+ read_from_storage(tiflash[traces]) */ date(test_time) as test_date, count(1) from `traces` group by 1").
 		Check(testkit.Rows(
 			"TableReader_31 8000.00 root  MppVersion: 3, data:ExchangeSender_30",
@@ -2373,4 +2403,200 @@ func TestCanGenerateTiFlashCopWithKeepOrer(t *testing.T) {
 
 	// expected at least one plan contains TableRangeScan, cop[tiflash], and keep order:true"
 	require.True(t, found)
+}
+
+// tiflashRowContains reports whether a plan row running in TiFlash has operator
+// info containing substr.
+func tiflashRowContains(rows [][]any, substr string) bool {
+	for _, row := range rows {
+		if strings.Contains(row[2].(string), "tiflash") && strings.Contains(row[4].(string), substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestVirtualColumnFilterOnTiFlash(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (
+  k varchar(16) not null, id int not null, label varchar(64) not null, n int, txt varchar(255), body text,
+  txt_lower text generated always as (lower(txt)) virtual,
+  body_lower text generated always as (lower(body)) virtual,
+  label_lower text generated always as (lower(label)) virtual,
+  txt_lower_short varchar(3) generated always as (left(lower(txt), 3)) virtual,
+  n_half decimal(10,1) generated always as (n / 2) virtual,
+  primary key (k, id) clustered)`)
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	require.NoError(t, domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true))
+	tk.MustExec(`insert into t (k, id, label, n, txt) values
+  ('t1', 1, 'Alpha', 1, 'AcmeCorp'), ('t1', 2, 'beta', 2, 'acmecorp'),
+  ('t1', 3, 'Gamma', 3, 'ACMECORP Mixer'), ('t1', 4, 'delta', 4, NULL),
+  ('t1', 5, 'EPSILON', 5, 'Orbital'), ('t2', 6, 'zeta', 6, 'AcmeCorp'),
+  ('t1', 7, 'Eta', 7, 'ÄBC acmecorp'), ('t1', 8, 'theta', 8, '')`)
+	tk.MustExec("update t set body = txt")
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash,tidb'")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
+	for _, mpp := range []string{"1", "0"} {
+		tk.MustExec("set @@session.tidb_allow_mpp=" + mpp)
+		tk.MustExec("set @@session.tidb_allow_tiflash_cop=" + map[string]string{"1": "OFF", "0": "ON"}[mpp])
+		for _, c := range []struct {
+			pred string
+			// pushedExpr is the condition as TiFlash evaluates it, or empty when it
+			// must stay at root on the virtual column.
+			pushedExpr string
+			ids        []string
+		}{
+			{"txt_lower = 'acmecorp'", `eq(lower(test.t.txt), "acmecorp")`, []string{"1", "2"}},
+			{"txt_lower like '%acmecorp%'", `like(lower(test.t.txt), "%acmecorp%"`, []string{"1", "2", "3", "7"}},
+			{"label_lower in ('alpha', 'eta')", `in(lower(test.t.label), "alpha", "eta")`, []string{"1", "7"}},
+			{"txt_lower is null", `isnull(lower(test.t.txt))`, []string{"4"}},
+			{"txt_lower_short = 'acm'", "", []string{"1", "2", "3"}},
+			// lower(text) can outgrow TEXT's byte limit, so body_lower may differ.
+			{"body_lower = 'acmecorp'", "", []string{"1", "2"}},
+			{"n_half = 2.5", "", []string{"5"}},
+		} {
+			sql := "select id from t where k = 't1' and " + c.pred + " order by label, id limit 100"
+			col := "test.t." + strings.SplitN(c.pred, " ", 2)[0]
+			rows := tk.MustQuery("explain format='brief' " + sql).Rows()
+			var vcolAtRoot bool
+			for _, row := range rows {
+				if row[2].(string) == "root" && strings.Contains(row[4].(string), col) && strings.HasPrefix(strings.TrimLeft(row[0].(string), "└─│ "), "Selection") {
+					vcolAtRoot = true
+				}
+			}
+			require.Equal(t, c.pushedExpr == "", vcolAtRoot, "mpp=%s %s", mpp, sql)
+			if c.pushedExpr != "" {
+				require.True(t, tiflashRowContains(rows, c.pushedExpr), "mpp=%s %s: %v", mpp, sql, rows)
+			}
+			tk.MustQuery(sql).Sort().Check(testkit.Rows(c.ids...))
+		}
+		// The virtual columns in the select list, computed by TiFlash.
+		tk.MustQuery("select id, txt_lower, label_lower from t where k = 't1' and txt_lower like '%acmecorp%' order by id").Check(testkit.Rows(
+			"1 acmecorp alpha", "2 acmecorp beta", "3 acmecorp mixer gamma", "7 äbc acmecorp eta"))
+	}
+}
+
+func TestVirtualColumnComputedInMPP(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table obj (k varchar(16) not null, id varchar(8) not null, part int, label varchar(32) not null,
+  t8 varchar(255), t24 varchar(255), n int,
+  t8_lower text generated always as (lower(t8)) virtual,
+  t24_lower text generated always as (lower(t24)) virtual,
+  t24_short varchar(3) generated always as (left(lower(t24), 3)) virtual,
+  primary key (k, id) clustered, key ix_t8 (k, t8_lower(10)), key ix_t24 (k, t24_lower(10)))`)
+	tk.MustExec(`create table rel (k varchar(16) not null, id varchar(8) not null, src varchar(8) not null, dst varchar(8) not null,
+  primary key (k, id) clustered)`)
+	for _, tbl := range []string{"obj", "rel"} {
+		tk.MustExec("alter table " + tbl + " set tiflash replica 1")
+		tb := external.GetTableByName(t, tk, "test", tbl)
+		require.NoError(t, domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true))
+	}
+	tk.MustExec(`insert into obj (k, id, part, label, t8, t24, n) values
+  ('t', 'o1', 1, 'L1', 'AcmeCorp', 'x', 1), ('t', 'o2', 1, 'L2', 'other', 'Zenith', 2),
+  ('t', 'o3', 1, 'L3', 'x', 'ZENITH', 3), ('t', 'o4', 1, 'L4', 'ACMECORP', 'y', 4),
+  ('t', 'o5', 2, 'L5', 'acmecorp', 'zenith', 5), ('t', 'o6', 1, 'L6', NULL, 'Zenith Two', 6)`)
+	tk.MustExec(`insert into rel values ('t', 'r1', 'o1', 'o2'), ('t', 'r2', 'o4', 'o3'), ('t', 'r3', 'o2', 'o3'), ('t', 'r4', 'o5', 'o6')`)
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash,tidb'")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
+
+	// Virtual columns used in filters, the select list and an aggregate: every
+	// operator, including the joins, must run in TiFlash.
+	q := `select o.id, o.t24_lower from obj o
+where o.k = 't' and o.part = 1 and o.t24_lower like 'zenith%'
+  and o.id in (select r.dst from rel r join obj s on r.src = s.id and s.k = 't'
+               where s.part = 1 and s.t8_lower = 'acmecorp' and r.k = 't')
+order by o.label limit 10`
+	checkAllMPP := func(sql string) {
+		for _, row := range tk.MustQuery("explain format='brief' " + sql).Rows() {
+			op := strings.TrimLeft(row[0].(string), "└─│├ ")
+			if row[2].(string) == "root" {
+				require.Regexp(t, `^(Projection|TopN|Limit|TableReader|Sort|HashAgg)`, op, sql)
+				require.NotContains(t, op, "Selection", sql)
+			}
+		}
+		require.Len(t, tk.MustQuery("show warnings").Rows(), 0, sql)
+	}
+	checkAllMPP(q)
+	tk.MustQuery(q).Check(testkit.Rows("o2 zenith", "o3 zenith"))
+
+	q = `select o.t8_lower, count(*) from obj o join rel r on r.src = o.id and r.k = 't' where o.k = 't' group by o.t8_lower`
+	checkAllMPP(q)
+	tk.MustQuery(q).Sort().Check(testkit.Rows("acmecorp 3", "other 1"))
+
+	// Written against the base column: lower(t24) and lower(t8) have indexed
+	// virtual columns, so the planner rewrites them to the virtual columns for the
+	// TiKV index paths, and the TiFlash plan computes them back from t24 and t8.
+	q = `select o.id from obj o
+where o.k = 't' and o.part = 1 and lower(o.t24) like 'zenith%'
+  and o.id in (select r.dst from rel r join obj s on r.src = s.id and s.k = 't'
+               where s.part = 1 and lower(s.t8) = 'acmecorp' and r.k = 't')
+order by o.label limit 10`
+	// TiKV must be readable for the index paths (and so the rewrite) to exist.
+	// Join placement then depends on costing (the same for a plain-column filter
+	// in this mock), so check that both scans compute the columns in TiFlash.
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tikv,tiflash,tidb'")
+	roundTripRows := tk.MustQuery("explain format='brief' " + q).Rows()
+	roundTripPlan := fmt.Sprint(roundTripRows)
+	// The rewritten filters run in TiFlash as the expressions again ...
+	require.True(t, tiflashRowContains(roundTripRows, `like(lower(test.obj.t24), "zenith%", 92)`), roundTripPlan)
+	require.True(t, tiflashRowContains(roundTripRows, `eq(lower(test.obj.t8), "acmecorp")`), roundTripPlan)
+	// ... and the virtual columns, used only by those filters, are not computed.
+	require.NotContains(t, roundTripPlan, "->test.obj.t24_lower")
+	require.NotContains(t, roundTripPlan, "->test.obj.t8_lower")
+	tk.MustQuery(q).Check(testkit.Rows("o2", "o3"))
+	// In the select list the column is needed, so TiFlash computes it.
+	q2 := "select o.id, lower(o.t24) from obj o where o.k = 't' and lower(o.t24) like 'zenith%' order by o.id"
+	q2Rows := tk.MustQuery("explain format='brief' " + q2).Rows()
+	require.True(t, tiflashRowContains(q2Rows, "lower(test.obj.t24)->test.obj.t24_lower"), "%v", q2Rows)
+	tk.MustQuery(q2).Check(testkit.Rows("o2 zenith", "o3 zenith", "o5 zenith", "o6 zenith two"))
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash,tidb'")
+
+	// obj has a composite clustered primary key (a common handle), whose TiFlash
+	// table path carries PRIMARY as its index. Without enforcing MPP, the filter
+	// on the virtual column still runs in TiFlash and the correlated EXISTS
+	// becomes an MPP semi join (see https://github.com/pingcap/tidb/issues/73897).
+	tk.MustExec("set @@session.tidb_enforce_mpp=0, @@session.tidb_allow_mpp=1, @@session.tidb_allow_tiflash_cop=0")
+	existsQuery := `select o.id from obj o
+where o.k = 't' and o.t8_lower = 'acmecorp'
+  and exists (select 1 from rel r where r.src = o.id)
+order by o.id limit 10`
+	existsRows := tk.MustQuery("explain format='brief' " + existsQuery).Rows()
+	require.True(t, tiflashRowContains(existsRows, `eq(lower(test.obj.t8), "acmecorp")`), "%v", existsRows)
+	var hasMPPSemiJoin bool
+	for _, row := range existsRows {
+		op := strings.TrimLeft(row[0].(string), "└─│├ ")
+		require.False(t, strings.HasPrefix(op, "Apply"), "%v", existsRows)
+		require.False(t, row[2].(string) == "root" && strings.HasPrefix(op, "Selection"), "%v", existsRows)
+		if strings.HasPrefix(op, "HashJoin") && strings.HasPrefix(row[2].(string), "mpp[tiflash]") && strings.Contains(row[4].(string), "semi join") {
+			hasMPPSemiJoin = true
+		}
+	}
+	require.True(t, hasMPPSemiJoin, "%v", existsRows)
+	tk.MustQuery(existsQuery).Check(testkit.Rows("o1", "o4", "o5"))
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
+
+	// left(lower(t24), 3) is typed longer than varchar(3), so t24_short is not
+	// computed in TiFlash and TiDB fills it; t24_lower from the same scan still
+	// is computed in TiFlash, and the base column t24 must reach TiDB for t24_short.
+	q = `select o.id, o.t24_lower, o.t24_short from obj o where o.k = 't' and o.t24_lower like 'zenith%' order by o.id`
+	plan := tk.MustQuery("explain format='brief' " + q).Rows()
+	var sawComputed, sawFilterInTiFlash bool
+	for _, row := range plan {
+		info := row[4].(string)
+		if row[2].(string) != "root" && strings.Contains(info, "lower(test.obj.t24)->test.obj.t24_lower") {
+			sawComputed = true
+		}
+		if row[2].(string) != "root" && strings.Contains(info, "like(lower(test.obj.t24), \"zenith%\"") {
+			sawFilterInTiFlash = true
+		}
+	}
+	require.True(t, sawComputed, q)
+	require.True(t, sawFilterInTiFlash, q)
+	tk.MustQuery(q).Check(testkit.Rows("o2 zenith zen", "o3 zenith zen", "o5 zenith zen", "o6 zenith two zen"))
 }

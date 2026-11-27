@@ -82,9 +82,9 @@
       {
         "SQL": "desc format = 'plan_tree' select c from t where a+1=3",
         "Plan": [
-          "Projection root  test.t.c",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection mpp[tiflash]  plus(test.t.a, 1)->test.t.c",
           "    └─Selection mpp[tiflash]  eq(plus(test.t.a, 1), 3)",
           "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -167,43 +167,46 @@
       {
         "SQL": "desc format = 'plan_tree' select * from t join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
-          "HashJoin root  inner join, equal:[eq(test.t.id, Column)]",
-          "├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─Projection mpp[tiflash]  minus(test.t.id, 2)->Column",
-          "│     └─Selection mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "│       └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Selection mpp[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.id, Column)]",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Projection mpp[tiflash]  minus(test.t.id, 2)->Column",
+          "    │     └─Selection mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "    │       └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─Projection(Probe) mpp[tiflash]  test.t.a, test.t.b, test.t.i, test.t.id, test.t.value, test.t.name, test.t.d, test.t.s, test.t.t, plus(test.t.a, 1)->test.t.c, plus(test.t.b, cast(test.t.a, double BINARY))->test.t.e",
+          "      └─Selection mpp[tiflash]  not(isnull(test.t.id))",
+          "        └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'plan_tree' select * from t left join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
-          "HashJoin root  left outer join, left side:TableReader, equal:[eq(test.t.id, Column)]",
-          "├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─Projection mpp[tiflash]  minus(test.t.id, 2)->Column",
-          "│     └─Selection mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "│       └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin mpp[tiflash]  left outer join, left side:Projection, equal:[eq(test.t.id, Column)]",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Projection mpp[tiflash]  minus(test.t.id, 2)->Column",
+          "    │     └─Selection mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "    │       └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─Projection(Probe) mpp[tiflash]  test.t.a, test.t.b, test.t.i, test.t.id, test.t.value, test.t.name, test.t.d, test.t.s, test.t.t, plus(test.t.a, 1)->test.t.c, plus(test.t.b, cast(test.t.a, double BINARY))->test.t.e",
+          "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'plan_tree' select * from t right join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
-          "HashJoin root  right outer join, left side:TableReader, equal:[eq(test.t.id, Column)]",
-          "├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─Projection mpp[tiflash]  minus(test.t.id, 2)->Column",
-          "│     └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Selection mpp[tiflash]  not(isnull(test.t.id))",
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.id, Column)]",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Projection mpp[tiflash]  test.t.a, test.t.b, test.t.i, test.t.id, test.t.value, test.t.name, test.t.d, test.t.s, test.t.t, plus(test.t.a, 1)->test.t.c, plus(test.t.b, cast(test.t.a, double BINARY))->test.t.e",
+          "    │     └─Selection mpp[tiflash]  not(isnull(test.t.id))",
+          "    │       └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─Projection(Probe) mpp[tiflash]  minus(test.t.id, 2)->Column",
           "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },

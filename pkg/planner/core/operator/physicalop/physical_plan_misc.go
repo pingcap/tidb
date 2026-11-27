@@ -22,7 +22,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -74,6 +77,364 @@ func SplitSelCondsWithVirtualColumn(conds []expression.Expression) (
 		}
 	}
 	return withoutVirt, withVirt
+}
+
+// SubstituteVirtualColumnsForPushDown rewrites each condition that references a
+// virtual generated column so that the column is replaced by its generation
+// expression, e.g. `c_lower = 'x'` with `c_lower AS (lower(c)) VIRTUAL` becomes
+// `lower(c) = 'x'`. Storage engines do not hold virtual columns, so a condition
+// on one is otherwise always evaluated in TiDB above the scan, which also blocks
+// pushing TopN/Limit below it. The rewrite is kept only when every virtual column
+// in the condition evaluates to the same value as its expression (see
+// VirtualExprPreservesValue) and the rewritten condition can be pushed to
+// storeType; otherwise the original condition is returned unchanged.
+//
+// The scan still lists the virtual column in its schema, so ExpandVirtualColumn
+// later adds the base columns the rewritten condition reads.
+func SubstituteVirtualColumnsForPushDown(sctx base.PlanContext, conds []expression.Expression, storeType kv.StoreType) []expression.Expression {
+	var out []expression.Expression
+	pctx := plannerutil.GetPushDownCtx(sctx)
+	for i := range conds {
+		if !expression.ContainVirtualColumn(conds[i : i+1]) {
+			continue
+		}
+		newCond, ok := substituteVirtualColumns(sctx, conds[i])
+		if !ok || !expression.CanExprsPushDown(pctx, []expression.Expression{newCond}, storeType) {
+			continue
+		}
+		if out == nil {
+			out = make([]expression.Expression, len(conds))
+			copy(out, conds)
+		}
+		out[i] = newCond
+	}
+	if out == nil {
+		return conds
+	}
+	return out
+}
+
+// MaterializeVirtualColumnsInTiFlashScan lets a TiFlash table scan serve
+// virtual generated columns. TiFlash does not store virtual columns, and TiDB
+// only fills them after the data is returned, which is why a scan whose schema
+// contains one cannot be part of an MPP plan. Every virtual column in the
+// scan's schema that VirtualColumnComputableInTiFlash accepts is computed in
+// TiFlash instead: the scan reads the base columns, and the returned
+// expressions compute the virtual columns in a Projection placed above the scan
+// (and its pushed-down Selection). The Projection's output keeps the original
+// UniqueIDs, so parent operators resolve the columns unchanged. Other virtual
+// columns stay in the scan's schema and are filled by TiDB as before.
+// It returns ok=false and leaves ts untouched when no virtual column can be
+// computed this way.
+func MaterializeVirtualColumnsInTiFlashScan(ts *PhysicalTableScan) (exprs []expression.Expression, outSchema *expression.Schema, ok bool) {
+	sctx := ts.SCtx()
+	schema := ts.Schema()
+	if len(ts.Columns) != len(schema.Columns) {
+		return nil, nil, false
+	}
+	exprs = make([]expression.Expression, 0, len(schema.Columns))
+	computed := make([]bool, len(schema.Columns))
+	anyComputed := false
+	for i, col := range schema.Columns {
+		var expr expression.Expression = col
+		if col.VirtualExpr != nil {
+			if newExpr, ok := virtualColumnTiFlashExpr(sctx, col); ok {
+				expr = newExpr
+				computed[i] = true
+				anyComputed = true
+			}
+		}
+		exprs = append(exprs, expr)
+	}
+	if !anyComputed {
+		return nil, nil, false
+	}
+
+	// The scan outputs the columns it already had, except the computed virtual
+	// columns, plus any base column the generation expressions read.
+	newCols := make([]*expression.Column, 0, len(schema.Columns))
+	newInfos := make([]*model.ColumnInfo, 0, len(ts.Columns))
+	for i, col := range schema.Columns {
+		if !computed[i] {
+			newCols = append(newCols, col)
+			newInfos = append(newInfos, ts.Columns[i])
+		}
+	}
+	scanSchema := expression.NewSchema(newCols...)
+	for i, e := range exprs {
+		if !computed[i] {
+			continue
+		}
+		for _, base := range expression.ExtractColumns(e) {
+			if scanSchema.Contains(base) {
+				continue
+			}
+			info := model.FindColumnInfoByID(ts.Table.Columns, base.ID)
+			if info == nil {
+				return nil, nil, false
+			}
+			scanSchema.Append(base)
+			newInfos = append(newInfos, info)
+		}
+	}
+
+	// Computed columns are plain columns from here up: TiDB must not try to
+	// fill them again.
+	outCols := make([]*expression.Column, len(schema.Columns))
+	for i, col := range schema.Columns {
+		outCols[i] = col
+		if computed[i] {
+			c := col.Clone().(*expression.Column)
+			c.VirtualExpr = nil
+			outCols[i] = c
+		}
+	}
+	outSchema = expression.NewSchema(outCols...)
+	// TiDB still fills the remaining virtual columns, so the base columns they
+	// depend on must reach it through the Projection.
+	for i, col := range schema.Columns {
+		if col.VirtualExpr == nil || computed[i] {
+			continue
+		}
+		for _, base := range expression.ExtractDependentColumns(col.VirtualExpr) {
+			if base.VirtualExpr != nil {
+				continue
+			}
+			if !scanSchema.Contains(base) {
+				info := model.FindColumnInfoByID(ts.Table.Columns, base.ID)
+				if info == nil {
+					return nil, nil, false
+				}
+				scanSchema.Append(base)
+				newInfos = append(newInfos, info)
+			}
+			if !outSchema.Contains(base) {
+				outSchema.Append(base)
+				exprs = append(exprs, base)
+			}
+		}
+	}
+	ts.SetSchema(scanSchema)
+	ts.Columns = newInfos
+	return exprs, outSchema, true
+}
+
+// PruneUncomputedVirtualColumns drops, from the Projection built by
+// MaterializeVirtualColumnsInTiFlashScan, the computed virtual columns that no
+// operator needs: those not in parentUsed (the DataSource's output columns, see
+// DataSource.ColsRequiringFullLen) and not referenced by rootConds. A virtual
+// column kept only for a filter is not needed once the filter has been
+// rewritten to the expression and pushed down. It returns ok=false when the
+// Projection is no longer needed at all, i.e. it would only pass columns through.
+// A nil parentUsed keeps every column.
+func PruneUncomputedVirtualColumns(exprs []expression.Expression, outSchema *expression.Schema, childSchema *expression.Schema,
+	parentUsed []*expression.Column, rootConds []expression.Expression) ([]expression.Expression, *expression.Schema, bool) {
+	if parentUsed == nil {
+		return exprs, outSchema, true
+	}
+	needed := expression.NewSchema(parentUsed...)
+	for _, c := range expression.ExtractColumnsFromExpressions(rootConds, nil) {
+		needed.Append(c)
+	}
+	newExprs := make([]expression.Expression, 0, len(exprs))
+	newCols := make([]*expression.Column, 0, len(exprs))
+	computes := false
+	for i, e := range exprs {
+		col := outSchema.Columns[i]
+		if c, isCol := e.(*expression.Column); isCol && c.UniqueID == col.UniqueID {
+			newExprs = append(newExprs, e)
+			newCols = append(newCols, col)
+			continue
+		}
+		if !needed.Contains(col) {
+			continue
+		}
+		computes = true
+		newExprs = append(newExprs, e)
+		newCols = append(newCols, col)
+	}
+	if !computes {
+		// Only pass-through columns remain; the child already outputs them.
+		for _, c := range newCols {
+			if !childSchema.Contains(c) {
+				return newExprs, expression.NewSchema(newCols...), true
+			}
+		}
+		return nil, nil, false
+	}
+	return newExprs, expression.NewSchema(newCols...), true
+}
+
+// virtualColumnTiFlashExpr returns the expression that computes the virtual
+// column col from stored columns, if that expression equals the column's value
+// and can be evaluated by TiFlash.
+func virtualColumnTiFlashExpr(sctx base.PlanContext, col *expression.Column) (expression.Expression, bool) {
+	newExpr, ok := substituteVirtualColumns(sctx, col)
+	if !ok || !expression.CanExprsPushDown(plannerutil.GetPushDownCtx(sctx), []expression.Expression{newExpr}, kv.TiFlash) {
+		return nil, false
+	}
+	return newExpr, true
+}
+
+// ContainVirtualColumnForStore reports whether exprs reference a virtual
+// column that storeType cannot see. TiFlash table scans compute the virtual
+// columns accepted by virtualColumnTiFlashExpr (MaterializeVirtualColumnsInTiFlashScan),
+// so operators above them may use those columns; no other store sees any
+// virtual column.
+func ContainVirtualColumnForStore(sctx base.PlanContext, exprs []expression.Expression, storeType kv.StoreType) bool {
+	if storeType != kv.TiFlash {
+		return expression.ContainVirtualColumn(exprs)
+	}
+	for _, e := range exprs {
+		for _, col := range expression.ExtractColumns(e) {
+			if col.VirtualExpr == nil {
+				continue
+			}
+			if _, ok := virtualColumnTiFlashExpr(sctx, col); !ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// substituteVirtualColumns replaces every virtual column in expr with its
+// generation expression, repeating for generated columns that are defined on
+// other generated columns. It fails if any virtual column cannot be replaced.
+func substituteVirtualColumns(sctx base.PlanContext, expr expression.Expression) (expression.Expression, bool) {
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	// A generation expression can only reference earlier columns, so the depth
+	// is bounded by the number of generated columns; cap it defensively.
+	for range 16 {
+		var cols []*expression.Column
+		var exprs []expression.Expression
+		for _, col := range expression.ExtractColumns(expr) {
+			if col.VirtualExpr == nil {
+				continue
+			}
+			if !VirtualExprPreservesValue(evalCtx, col) {
+				return nil, false
+			}
+			cols = append(cols, col)
+			exprs = append(exprs, col.VirtualExpr.Clone())
+		}
+		if len(cols) == 0 {
+			return expr, true
+		}
+		hasFail, newExpr := expression.ColumnSubstituteAll(sctx.GetExprCtx(), expr, expression.NewSchema(cols...), exprs)
+		if hasFail {
+			return nil, false
+		}
+		expr = newExpr
+	}
+	return nil, false
+}
+
+// VirtualExprPreservesValue reports whether a virtual column always equals its
+// generation expression. The stored value is the expression cast to the
+// column's type, so the two can differ when that cast changes the value
+// (numeric precision, CHAR padding, truncation to a shorter length, a
+// different charset/collation, or NOT NULL coercing a NULL). Accept identical
+// types, and string expressions whose charset and collation match a
+// VARCHAR/TEXT/BLOB column that is long enough for any value of the
+// expression, compared in bytes for TEXT/BLOB and allowing for case mapping
+// growing a value in bytes; in both cases a NOT NULL column needs a NOT NULL
+// expression. A value can't be relied on to fail the write instead: ADD COLUMN
+// doesn't check existing rows, and non-strict mode truncates.
+func VirtualExprPreservesValue(ctx expression.EvalContext, col *expression.Column) bool {
+	exprTp := col.VirtualExpr.GetType(ctx)
+	colTp := col.RetType
+	if exprTp.IsArray() || colTp.IsArray() {
+		return false
+	}
+	// A NOT NULL column stores a non-NULL value (e.g. 0 under INSERT IGNORE)
+	// where its expression is NULL, so the two are not interchangeable.
+	// FieldType.Equal does not compare the flag (see issue #61290).
+	if mysql.HasNotNullFlag(colTp.GetFlag()) && !mysql.HasNotNullFlag(exprTp.GetFlag()) {
+		return false
+	}
+	if exprTp.Equal(colTp) {
+		return true
+	}
+	if exprTp.EvalType() != types.ETString || colTp.EvalType() != types.ETString {
+		return false
+	}
+	if exprTp.GetCharset() != colTp.GetCharset() || exprTp.GetCollate() != colTp.GetCollate() {
+		return false
+	}
+	switch colTp.GetType() {
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeTinyBlob, mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	default:
+		return false
+	}
+	switch exprTp.GetType() {
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeTinyBlob, mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	default:
+		return false
+	}
+	exprLen, colLen := exprTp.GetFlen(), colTp.GetFlen()
+	if exprLen == types.UnspecifiedLength || colLen == types.UnspecifiedLength {
+		return false
+	}
+	if !types.IsTypeBlob(colTp.GetType()) {
+		// A VARCHAR column's length is in characters, and case mapping maps one
+		// character to one character.
+		return exprLen <= colLen
+	}
+	// A TEXT/BLOB column's length is in bytes. A VARCHAR expression's length is
+	// in characters, unless the expression only reads TEXT/BLOB columns, whose
+	// byte lengths it inherits (lower(text) is var_string(65535)).
+	exprBytes := exprLen
+	if !types.IsTypeBlob(exprTp.GetType()) && !readsOnlyBlobStrings(col.VirtualExpr) {
+		cs, err := charset.GetCharsetInfo(exprTp.GetCharset())
+		if err != nil {
+			return false
+		}
+		exprBytes *= cs.Maxlen
+	}
+	// Case mapping keeps the declared length but can grow a value in bytes: in
+	// UTF-8 by up to half (lower(U+023A) and upper(U+023F) are 2 bytes to 3).
+	// Unless the column has room for that, a value can be truncated where the
+	// expression isn't - for rows that existed when the column was added (ADD
+	// COLUMN doesn't check them) or that were written in non-strict mode.
+	if containsCaseMapping(col.VirtualExpr) {
+		switch exprTp.GetCharset() {
+		case charset.CharsetUTF8, charset.CharsetUTF8MB4:
+			exprBytes += (exprBytes + 1) / 2
+		default:
+			return false
+		}
+	}
+	return exprBytes <= colLen
+}
+
+// containsCaseMapping reports whether expr calls LOWER or UPPER.
+func containsCaseMapping(expr expression.Expression) bool {
+	f, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	switch f.FuncName.L {
+	case ast.Lower, ast.Lcase, ast.Upper, ast.Ucase:
+		return true
+	}
+	for _, arg := range f.GetArgs() {
+		if containsCaseMapping(arg) {
+			return true
+		}
+	}
+	return false
+}
+
+// readsOnlyBlobStrings reports whether every string column expr reads is a
+// TEXT/BLOB column.
+func readsOnlyBlobStrings(expr expression.Expression) bool {
+	for _, c := range expression.ExtractColumns(expr) {
+		if c.RetType.EvalType() == types.ETString && !types.IsTypeBlob(c.RetType.GetType()) {
+			return false
+		}
+	}
+	return true
 }
 
 // PhysPlanPartInfo indicates partition helper info in physical plan.

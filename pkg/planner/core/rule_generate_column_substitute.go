@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
@@ -80,7 +81,18 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.Schema().Columns
 				col := expression.ColInfo2Col(s, colInfo)
-				if col != nil && col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
+				// The column can replace its expression when the two always have the
+				// same value. Exact type equality guarantees that; so does a string
+				// column that is at least as long as its expression with the same
+				// charset and collation (VirtualExprPreservesValue), e.g. a TEXT
+				// column defined as lower(text_col). tidb_enable_unsafe_substitute
+				// additionally accepts string columns shorter than the expression,
+				// which can truncate and so is off by default.
+				// TiFlash plans turn the column back into its expression
+				// (MaterializeVirtualColumnsInTiFlashScan), so this substitution only
+				// matters for TiKV index paths.
+				if col != nil && (col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) ||
+					physicalop.VirtualExprPreservesValue(ectx, col)) {
 					// Replacing a literal with a generated column that is itself a pure constant is not
 					// semantically neutral across outer joins, because null-augmentation can turn the
 					// generated column into NULL while the original literal stays constant.

@@ -3061,6 +3061,7 @@ func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, 
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
 	var rootTaskConds []expression.Expression
+	tableConds = physicalop.SubstituteVirtualColumnsForPushDown(is.SCtx(), tableConds, kv.TiKV)
 	tableConds, rootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(tableConds)
 	// Preserve pre-collected root conditions (for example, large IN / NOT IN filters moved
 	// from IndexJoin probe side) instead of overwriting them.
@@ -3235,6 +3236,9 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			))
 			ts.SetStats(property.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
+		// Compute virtual columns from their base columns inside TiFlash when
+		// possible, so the scan no longer carries a virtual column.
+		vcolExprs, vcolSchema, vcolMaterialized := physicalop.MaterializeVirtualColumnsInTiFlashScan(ts)
 		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool
 		for _, col := range ts.Schema().Columns {
@@ -3261,6 +3265,16 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			mppTask := physicalop.NewMppTask(ts, property.AnyType, nil, ds.TblColHists, nil)
 			ts.PlanPartInfo = buildPhysPlanPartInfo(ds)
 			mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
+			if vcolMaterialized {
+				child := mppTask.Plan()
+				vcolExprs, vcolSchema, vcolMaterialized = physicalop.PruneUncomputedVirtualColumns(vcolExprs, vcolSchema, child.Schema(), ds.ColsRequiringFullLen, mppTask.RootTaskConds)
+				if vcolMaterialized {
+					proj := physicalop.PhysicalProjection{Exprs: vcolExprs, MaterializesVirtualColumns: true}.Init(ds.SCtx(), child.StatsInfo(), ds.QueryBlockOffset())
+					proj.SetSchema(vcolSchema)
+					proj.SetChildren(child)
+					mppTask.SetPlan(proj)
+				}
+			}
 			var task base.Task = mppTask
 			if !mppTask.Invalid() {
 				if prop.TaskTp == property.MppTaskType && len(mppTask.RootTaskConds) > 0 {
@@ -3307,7 +3321,25 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.GroupByColIdxs = candidate.path.GroupByColIdxs
 		}
 	}
+	var copVcolExprs []expression.Expression
+	var copVcolSchema *expression.Schema
+	copVcolMaterialized := false
+	if isTiFlashPath {
+		// Same as the MPP path: operators pushed to TiFlash above this scan may
+		// use the virtual columns TiFlash can compute.
+		copVcolExprs, copVcolSchema, copVcolMaterialized = physicalop.MaterializeVirtualColumnsInTiFlashScan(ts)
+	}
 	addPushedDownSelection4PhysicalTableScan(ts, copTask, ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
+	if copVcolMaterialized {
+		child := copTask.TablePlan
+		copVcolExprs, copVcolSchema, copVcolMaterialized = physicalop.PruneUncomputedVirtualColumns(copVcolExprs, copVcolSchema, child.Schema(), ds.ColsRequiringFullLen, copTask.RootTaskConds)
+		if copVcolMaterialized {
+			proj := physicalop.PhysicalProjection{Exprs: copVcolExprs, MaterializesVirtualColumns: true}.Init(ds.SCtx(), child.StatsInfo(), ds.QueryBlockOffset())
+			proj.SetSchema(copVcolSchema)
+			proj.SetChildren(child)
+			copTask.TablePlan = proj
+		}
+	}
 	if prop.IsFlashProp() && len(copTask.RootTaskConds) != 0 {
 		return base.InvalidTask, nil
 	}
@@ -3511,7 +3543,8 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 }
 
 func addPushedDownSelectionToMppTask4PhysicalTableScan(ts *physicalop.PhysicalTableScan, mpp *physicalop.MppTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) *physicalop.MppTask {
-	filterCondition, rootTaskConds := physicalop.SplitSelCondsWithVirtualColumn(ts.FilterCondition)
+	filterCondition := physicalop.SubstituteVirtualColumnsForPushDown(ts.SCtx(), ts.FilterCondition, ts.StoreType)
+	filterCondition, rootTaskConds := physicalop.SplitSelCondsWithVirtualColumn(filterCondition)
 	var newRootConds []expression.Expression
 	filterCondition, newRootConds = expression.PushDownExprs(util.GetPushDownCtx(ts.SCtx()), filterCondition, ts.StoreType)
 	mpp.RootTaskConds = append(rootTaskConds, newRootConds...)
@@ -3531,6 +3564,7 @@ func addPushedDownSelectionToMppTask4PhysicalTableScan(ts *physicalop.PhysicalTa
 
 func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, copTask *physicalop.CopTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) {
 	var rootTaskConds []expression.Expression
+	ts.FilterCondition = physicalop.SubstituteVirtualColumnsForPushDown(ts.SCtx(), ts.FilterCondition, ts.StoreType)
 	ts.FilterCondition, rootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(ts.FilterCondition)
 	// Preserve pre-collected root conditions (for example, large IN / NOT IN filters moved
 	// from IndexJoin probe side) instead of overwriting them.

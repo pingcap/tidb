@@ -43,6 +43,11 @@ type PhysicalProjection struct {
 	// for the expressions of Projection which is child of Union operator.
 	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
 	AvoidColumnEvaluator bool
+
+	// MaterializesVirtualColumns marks a projection injected above a TiFlash
+	// scan to compute virtual columns from their generation expressions. A
+	// column-only projection directly above it may be folded into it.
+	MaterializesVirtualColumns bool
 }
 
 // ExhaustPhysicalPlans4LogicalProjection will be called by LogicalLimit in logicalOp pkg.
