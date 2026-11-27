@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -655,7 +657,16 @@ type updateColumnWorker struct {
 
 	rowMap map[int64]types.Datum
 
+	// checkConstraints are the enforced check constraints on the old column, built with the new column type.
+	checkConstraints []*checkConstraintExpr
+	checkRow         []types.Datum
+
 	checksumNeeded bool
+}
+
+type checkConstraintExpr struct {
+	name ast.CIStr
+	expr expression.Expression
 }
 
 func getOldAndNewColumnsForUpdateColumn(t table.Table, currElementID int64) (oldCol, newCol *model.ColumnInfo) {
@@ -690,14 +701,50 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 		defer vardef.EnableRowLevelChecksum.Store(orig)
 		vardef.EnableRowLevelChecksum.Store(true)
 	})
+	checkConstraints, err := buildCheckConstraintsForNewColumn(bCtx.exprCtx, t, oldCol, newCol, reorgInfo.SchemaName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return &updateColumnWorker{
-		backfillCtx:    bCtx,
-		oldColInfo:     oldCol,
-		newColInfo:     newCol,
-		rowDecoder:     rowDecoder,
-		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-		checksumNeeded: vardef.EnableRowLevelChecksum.Load(),
+		backfillCtx:      bCtx,
+		oldColInfo:       oldCol,
+		newColInfo:       newCol,
+		rowDecoder:       rowDecoder,
+		rowMap:           make(map[int64]types.Datum, len(decodeColMap)),
+		checkConstraints: checkConstraints,
+		checkRow:         make([]types.Datum, len(t.Meta().Columns)),
+		checksumNeeded:   vardef.EnableRowLevelChecksum.Load(),
 	}, nil
+}
+
+// buildCheckConstraintsForNewColumn builds the writable check constraints that reference oldCol
+// against a copy of the table in which oldCol has the type of newCol.
+func buildCheckConstraintsForNewColumn(ctx exprctx.BuildContext, t table.Table, oldCol, newCol *model.ColumnInfo, dbName string) ([]*checkConstraintExpr, error) {
+	var (
+		tblInfo *model.TableInfo
+		exprs   []*checkConstraintExpr
+	)
+	for _, c := range t.WritableConstraint() {
+		if !slices.ContainsFunc(c.ConstraintCols, func(name ast.CIStr) bool { return name.L == oldCol.Name.L }) {
+			continue
+		}
+		if tblInfo == nil {
+			tblInfo = t.Meta().Clone()
+			for i, col := range tblInfo.Columns {
+				if col.ID == oldCol.ID {
+					col = col.Clone()
+					col.FieldType = *newCol.FieldType.Clone()
+					tblInfo.Columns[i] = col
+				}
+			}
+		}
+		expr, err := table.BuildConstraintExprWithCtx(ctx, c.ConstraintInfo, tblInfo, dbName)
+		if err != nil {
+			return nil, err
+		}
+		exprs = append(exprs, &checkConstraintExpr{name: c.Name, expr: expr})
+	}
+	return exprs, nil
 }
 
 func (w *updateColumnWorker) AddMetricInfo(cnt float64) {
@@ -830,6 +877,9 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err = w.checkRowConstraints(newColVal); err != nil {
+		return err
+	}
 	newColumnIDs := make([]int64, 0, len(w.rowMap))
 	newRow := make([]types.Datum, 0, len(w.rowMap))
 	for colID, val := range w.rowMap {
@@ -850,6 +900,28 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 
 	w.rowRecords = append(w.rowRecords, &rowRecord{key: recordKey, vals: newRowVal, warning: recordWarning})
 	w.cleanRowMap()
+	return nil
+}
+
+func (w *updateColumnWorker) checkRowConstraints(newColVal types.Datum) error {
+	if len(w.checkConstraints) == 0 {
+		return nil
+	}
+	for _, col := range w.table.WritableCols() {
+		w.checkRow[col.Offset] = w.rowMap[col.ID]
+	}
+	w.checkRow[w.oldColInfo.Offset] = newColVal
+	row := chunk.MutRowFromDatums(w.checkRow).ToRow()
+	evalCtx := w.exprCtx.GetEvalCtx()
+	for _, c := range w.checkConstraints {
+		ok, isNull, err := c.expr.EvalInt(evalCtx, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok == 0 && !isNull {
+			return table.ErrCheckConstraintViolated.FastGenByArgs(c.name.O)
+		}
+	}
 	return nil
 }
 
