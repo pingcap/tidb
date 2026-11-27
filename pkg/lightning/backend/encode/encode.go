@@ -34,6 +34,9 @@ type EncodingConfig struct {
 	// when encoding.
 	// default false, in this case we will do sharding automatically if needed.
 	UseIdentityAutoRowID bool
+	// SkipEncodeRowID skips the auxiliary source-row discriminator on each KV.
+	// It is only safe when the downstream consumer ignores KvPair.RowID.
+	SkipEncodeRowID bool
 }
 
 // EncodingBuilder consists of operations to handle encoding backend row data formats from source.

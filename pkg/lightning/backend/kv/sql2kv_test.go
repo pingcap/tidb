@@ -715,3 +715,360 @@ func BenchmarkSQL2KV(b *testing.B) {
 		require.Equal(b, l, 2)
 	}
 }
+
+// passthroughTable wraps table.Table without overriding AddRecord so BaseKVEncoder
+// falls back to TableCommon.AddRecord instead of bulkRowEncoder.
+type passthroughTable struct {
+	table.Table
+}
+
+type testKVGroupCollector struct {
+	dataKVs  []common.KvPair
+	indexKVs map[int64][]common.KvPair
+	cksum    *verification.KVGroupChecksum
+	bufs     []*lkv.BytesBuf
+	memBuf   *lkv.MemBuf
+}
+
+func newTestKVGroupCollector() *testKVGroupCollector {
+	return &testKVGroupCollector{
+		indexKVs: make(map[int64][]common.KvPair),
+		cksum:    verification.NewKVGroupChecksumWithKeyspace(nil),
+	}
+}
+
+func (c *testKVGroupCollector) recordBuf(buf *lkv.BytesBuf, memBuf *lkv.MemBuf) {
+	if buf == nil {
+		return
+	}
+	c.memBuf = memBuf
+	for _, existing := range c.bufs {
+		if existing == buf {
+			return
+		}
+	}
+	c.bufs = append(c.bufs, buf)
+}
+
+func (c *testKVGroupCollector) AddDataKV(pair common.KvPair, filledBuf *lkv.BytesBuf, memBuf *lkv.MemBuf) {
+	c.dataKVs = append(c.dataKVs, common.KvPair{
+		Key: append([]byte(nil), pair.Key...),
+		Val: append([]byte(nil), pair.Val...),
+	})
+	c.cksum.UpdateOneDataKV(pair)
+	c.recordBuf(filledBuf, memBuf)
+}
+
+func (c *testKVGroupCollector) AddIndexKV(indexID int64, pair common.KvPair, filledBuf *lkv.BytesBuf, memBuf *lkv.MemBuf) {
+	c.indexKVs[indexID] = append(c.indexKVs[indexID], common.KvPair{
+		Key: append([]byte(nil), pair.Key...),
+		Val: append([]byte(nil), pair.Val...),
+	})
+	c.cksum.UpdateOneIndexKV(indexID, pair)
+	c.recordBuf(filledBuf, memBuf)
+}
+
+func (c *testKVGroupCollector) recycle() {
+	if c.memBuf != nil {
+		for _, buf := range c.bufs {
+			c.memBuf.Recycle(buf)
+		}
+		c.bufs = nil
+		c.memBuf = nil
+	}
+}
+
+func TestBulkRowEncoderEquivalence(t *testing.T) {
+	buildTable := func(t *testing.T, createSQL string, mutateMeta func(*model.TableInfo)) table.Table {
+		t.Helper()
+		node, err := parser.New().ParseOneStmt(createSQL, "", "")
+		require.NoError(t, err)
+		tblInfo, err := ddl.MockTableInfo(mock.NewContext(), node.(*ast.CreateTableStmt), 100)
+		require.NoError(t, err)
+		tblInfo.State = model.StatePublic
+		if mutateMeta != nil {
+			mutateMeta(tblInfo)
+		}
+		tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+		require.NoError(t, err)
+		return tbl
+	}
+
+	cloneDatums := func(in []types.Datum) []types.Datum {
+		out := make([]types.Datum, len(in))
+		copy(out, in)
+		return out
+	}
+
+	type testCase struct {
+		name       string
+		createSQL  string
+		mutateMeta func(*model.TableInfo)
+		sysVars    map[string]string
+		rows       [][]types.Datum
+		wantFast   bool
+	}
+
+	testCases := []testCase{
+		{
+			name: "PKIsHandle_Unique_Composite_Nulls_Defaults",
+			createSQL: `create table t(
+				id bigint primary key clustered,
+				a int default 7,
+				b int,
+				c varchar(32) collate utf8mb4_general_ci,
+				unique key uk_a_b(a, b),
+				key idx_c(c),
+				key idx_b_c(b, c)
+			)`,
+			rows: [][]types.Datum{
+				{types.NewIntDatum(1), types.NewIntDatum(10), types.NewIntDatum(20), types.NewStringDatum("AbC")},
+				{types.NewIntDatum(2), types.NewIntDatum(10), types.NewDatum(nil), types.NewStringDatum("def")},
+				{types.NewIntDatum(3), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil)},
+			},
+			wantFast: true,
+		},
+		{
+			name: "NonClustered_RestoredData_Prefix_BinPadding",
+			createSQL: `create table t(
+				id bigint primary key nonclustered,
+				c_ci varchar(60) collate utf8mb4_general_ci,
+				c_bin varchar(60) collate utf8mb4_bin,
+				key idx_ci(c_ci),
+				key idx_prefix(c_ci(5)),
+				key idx_bin(c_bin)
+			)`,
+			rows: [][]types.Datum{
+				{types.NewIntDatum(10), types.NewStringDatum("HelloWorld123"), types.NewStringDatum("pad   "), types.NewIntDatum(101)},
+				{types.NewIntDatum(20), types.NewStringDatum("你好世界测试字符串"), types.NewStringDatum("nopad"), types.NewIntDatum(102)},
+				{types.NewIntDatum(30), types.NewDatum(nil), types.NewStringDatum("   "), types.NewIntDatum(103)},
+			},
+			wantFast: true,
+		},
+		{
+			name: "GeneratedColumns_StoredAndVirtual",
+			createSQL: `create table t(
+				id bigint primary key clustered,
+				a int,
+				g_stored int as (a + 1) stored,
+				g_virt int as (a * 2) virtual,
+				key idx_stored(g_stored),
+				key idx_virt(g_virt)
+			)`,
+			rows: [][]types.Datum{
+				{types.NewIntDatum(1), types.NewIntDatum(5), types.NewIntDatum(6), types.NewIntDatum(10)},
+				{types.NewIntDatum(2), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil)},
+			},
+			wantFast: true,
+		},
+		{
+			name: "PartialIndex",
+			createSQL: `create table t(
+				id bigint primary key clustered,
+				b int,
+				key idx_part(b) where b > 10
+			)`,
+			rows: [][]types.Datum{
+				{types.NewIntDatum(1), types.NewIntDatum(5)},
+				{types.NewIntDatum(2), types.NewIntDatum(15)},
+				{types.NewIntDatum(3), types.NewDatum(nil)},
+			},
+			wantFast: true,
+		},
+		{
+			name: "Fallback_MultiValuedIndex",
+			createSQL: `create table t(
+				id bigint primary key clustered,
+				j json,
+				key idx_mv((cast(j as signed array)))
+			)`,
+			rows: func() [][]types.Datum {
+				j1, err := types.ParseBinaryJSONFromString(`[1, 2, 2, 3]`)
+				require.NoError(t, err)
+				j2, err := types.ParseBinaryJSONFromString(`[]`)
+				require.NoError(t, err)
+				// MV index creates a hidden virtual generated column at offset 2 holding the cast JSON array.
+				return [][]types.Datum{
+					{types.NewIntDatum(1), types.NewJSONDatum(j1), types.NewJSONDatum(j1)},
+					{types.NewIntDatum(2), types.NewJSONDatum(j2), types.NewJSONDatum(j2)},
+					{types.NewIntDatum(3), types.NewDatum(nil), types.NewDatum(nil)},
+				}
+			}(),
+			wantFast: false,
+		},
+		{
+			name: "RowFormatV1",
+			createSQL: `create table t(
+				id bigint primary key clustered,
+				a int,
+				b varchar(20),
+				key idx_ab(a, b)
+			)`,
+			sysVars: map[string]string{"tidb_row_format_version": "1"},
+			rows: [][]types.Datum{
+				{types.NewIntDatum(1), types.NewIntDatum(42), types.NewStringDatum("v1")},
+				{types.NewIntDatum(2), types.NewDatum(nil), types.NewDatum(nil)},
+			},
+			wantFast: true,
+		},
+		{
+			name: "RowLevelChecksumEnabled",
+			createSQL: `create table t(
+				id bigint primary key clustered,
+				a int,
+				b varchar(20),
+				key idx_a(a)
+			)`,
+			sysVars: map[string]string{"tidb_enable_row_level_checksum": "ON"},
+			rows: [][]types.Datum{
+				{types.NewIntDatum(1), types.NewIntDatum(99), types.NewStringDatum("cksum")},
+			},
+			wantFast: true,
+		},
+		{
+			name: "Fallback_CommonHandle",
+			createSQL: `create table t(
+				k1 int,
+				k2 varchar(20) collate utf8mb4_general_ci,
+				v int,
+				primary key(k1, k2) clustered,
+				key idx_v(v)
+			)`,
+			rows: [][]types.Datum{
+				{types.NewIntDatum(1), types.NewStringDatum("Abc"), types.NewIntDatum(7)},
+			},
+			wantFast: false,
+		},
+		{
+			name: "Fallback_CheckConstraint",
+			createSQL: `create table t(
+				id bigint primary key clustered,
+				a int,
+				key idx_a(a)
+			)`,
+			mutateMeta: func(info *model.TableInfo) {
+				info.Constraints = []*model.ConstraintInfo{{
+					Name:           ast.NewCIStr("chk_a"),
+					ExprString:     "a > 0",
+					ConstraintCols: []ast.CIStr{ast.NewCIStr("a")},
+					Enforced:       true,
+					State:          model.StatePublic,
+				}}
+			},
+			rows: [][]types.Datum{
+				{types.NewIntDatum(1), types.NewIntDatum(5)},
+			},
+			wantFast: false,
+		},
+		{
+			name: "Fallback_PartitionedTable",
+			createSQL: `create table t(
+				id bigint primary key clustered,
+				a int,
+				key idx_a(a)
+			)`,
+			mutateMeta: func(info *model.TableInfo) {
+				info.Partition = &model.PartitionInfo{
+					Enable: true,
+					Type:   ast.PartitionTypeHash,
+					Expr:   "id",
+					Num:    2,
+					Definitions: []model.PartitionDefinition{
+						{ID: 101, Name: ast.NewCIStr("p0")},
+						{ID: 102, Name: ast.NewCIStr("p1")},
+					},
+				}
+			},
+			rows: [][]types.Datum{
+				{types.NewIntDatum(1), types.NewIntDatum(5)},
+				{types.NewIntDatum(2), types.NewIntDatum(6)},
+			},
+			wantFast: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tbl := buildTable(t, tc.createSQL, tc.mutateMeta)
+			opts := encode.SessionOptions{
+				SQLMode:   mysql.ModeStrictAllTables,
+				Timestamp: 1234567890,
+				SysVars:   tc.sysVars,
+			}
+			fastEnc, err := lkv.NewBaseKVEncoder(&encode.EncodingConfig{
+				Table:           tbl,
+				SessionOptions:  opts,
+				Logger:          log.L(),
+				SkipEncodeRowID: true,
+			})
+			require.NoError(t, err)
+			defer fastEnc.SessionCtx.Close()
+			require.Equal(t, tc.wantFast, fastEnc.CanEncodeDirect())
+
+			refEnc, err := lkv.NewBaseKVEncoder(&encode.EncodingConfig{
+				Table:           passthroughTable{Table: tbl},
+				SessionOptions:  opts,
+				Logger:          log.L(),
+				SkipEncodeRowID: true,
+			})
+			require.NoError(t, err)
+			defer refEnc.SessionCtx.Close()
+			require.False(t, refEnc.CanEncodeDirect())
+
+			for rowIdx, row := range tc.rows {
+				refPairs, err := refEnc.Record2KV(cloneDatums(row), row, int64(rowIdx+1))
+				require.NoError(t, err)
+				refKV := make([]common.KvPair, len(refPairs.Pairs))
+				for i, p := range refPairs.Pairs {
+					refKV[i] = common.KvPair{
+						Key: append([]byte(nil), p.Key...),
+						Val: append([]byte(nil), p.Val...),
+					}
+				}
+				refPairs.Clear()
+
+				// 1. Verify Record2KV matches TableCommon.AddRecord byte-for-byte.
+				fastPairs, err := fastEnc.Record2KV(cloneDatums(row), row, int64(rowIdx+1))
+				require.NoError(t, err)
+				fastKV := make([]common.KvPair, len(fastPairs.Pairs))
+				for i, p := range fastPairs.Pairs {
+					fastKV[i] = common.KvPair{
+						Key: append([]byte(nil), p.Key...),
+						Val: append([]byte(nil), p.Val...),
+					}
+				}
+				fastPairs.Clear()
+				require.Equal(t, refKV, fastKV, "Record2KV mismatch on row %d", rowIdx)
+
+				// 2. Verify Record2KVGroup matches grouped KVs and checksum byte-for-byte.
+				if tc.wantFast {
+					collector := newTestKVGroupCollector()
+					kvBytes, err := fastEnc.Record2KVGroup(cloneDatums(row), row, collector)
+					require.NoError(t, err)
+					collector.recycle()
+
+					var expectedBytes int64
+					expectedData := make([]common.KvPair, 0, 1)
+					expectedIdx := make(map[int64][]common.KvPair)
+					expectedCksum := verification.NewKVGroupChecksumWithKeyspace(nil)
+					for _, p := range refKV {
+						expectedBytes += int64(len(p.Key) + len(p.Val))
+						if tablecodec.IsRecordKey(p.Key) {
+							expectedData = append(expectedData, p)
+							expectedCksum.UpdateOneDataKV(p)
+						} else {
+							idxID, err := tablecodec.DecodeIndexID(p.Key)
+							require.NoError(t, err)
+							expectedIdx[idxID] = append(expectedIdx[idxID], p)
+							expectedCksum.UpdateOneIndexKV(idxID, p)
+						}
+					}
+					require.Equal(t, expectedBytes, kvBytes, "kvBytes mismatch on row %d", rowIdx)
+					require.Equal(t, expectedData, collector.dataKVs, "dataKVs mismatch on row %d", rowIdx)
+					require.Equal(t, expectedIdx, collector.indexKVs, "indexKVs mismatch on row %d", rowIdx)
+					require.Equal(t, expectedCksum.MergedChecksum(), collector.cksum.MergedChecksum(), "checksum mismatch on row %d", rowIdx)
+				}
+			}
+		})
+	}
+}

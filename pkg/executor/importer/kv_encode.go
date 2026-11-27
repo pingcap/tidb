@@ -105,6 +105,16 @@ func (en *TableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 	return en.Record2KV(record, row, rowID)
 }
 
+// EncodeToGroup encodes a table row directly into a grouped KV collector.
+func (en *TableKVEncoder) EncodeToGroup(row []types.Datum, rowID int64, dst kv.GroupCollector) (int64, error) {
+	defer en.TruncateWarns()
+	record, err := en.parserData2TableData(row, rowID)
+	if err != nil {
+		return 0, err
+	}
+	return en.Record2KVGroup(record, row, dst)
+}
+
 // todo merge with code in load_data.go
 func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
 	if cap(en.insertColumnRowCache) < len(en.insertColumns) {

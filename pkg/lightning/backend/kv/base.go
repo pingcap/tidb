@@ -29,10 +29,13 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -118,6 +121,262 @@ func (row RowArrayMarshaller) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 	return nil
 }
 
+// GroupCollector receives encoded data/index KVs directly grouped by index ID.
+type GroupCollector interface {
+	AddDataKV(pair common.KvPair, filledBuf *BytesBuf, memBuf *MemBuf)
+	AddIndexKV(indexID int64, pair common.KvPair, filledBuf *BytesBuf, memBuf *MemBuf)
+}
+
+type bulkEncodeCol struct {
+	colID      int64
+	offset     int
+	skipIfNull bool
+}
+
+type bulkEncodeIndex struct {
+	index            table.Index
+	idxInfo          *model.IndexInfo
+	id               int64
+	colOffsets       []int
+	hasCondition     bool
+	needRestoredData bool
+}
+
+// bulkRowEncoder encodes table records and secondary indexes directly using
+// tablecodec (matching ADD INDEX's direct path) without going through
+// Table.AddRecord's transactional DML scaffolding.
+type bulkRowEncoder struct {
+	tblInfo            *model.TableInfo
+	phyTblID           int64
+	useNewCollate      bool
+	keyEncoder         codec.Encoder
+	recordPrefix       kv.Key
+	colCount           int
+	pkHandleOffset     int
+	cols               []bulkEncodeCol
+	indices            []bulkEncodeIndex
+	rowEncoder         *rowcodec.Encoder
+	idxRowEncoder      rowcodec.Encoder
+	rowChecksumEnabled bool
+
+	intHandle     kv.IntHandle
+	handleRef     kv.Handle
+	recKeyBuf     []byte
+	rowValBuf     []byte
+	idxKeyBuf     []byte
+	idxValBuf     []byte
+	idxValsBuf    []types.Datum
+	colIDsBuf     []int64
+	rowDatumsBuf  []types.Datum
+	addRowValsBuf []types.Datum
+}
+
+func newBulkRowEncoder(tbl table.Table, se *Session) *bulkRowEncoder {
+	if _, ok := tbl.(*tables.TableCommon); !ok {
+		return nil
+	}
+	meta := tbl.Meta()
+	if meta.Partition != nil || meta.TempTableType != model.TempTableNone {
+		return nil
+	}
+	if len(tbl.WritableConstraint()) > 0 || len(meta.Constraints) > 0 {
+		return nil
+	}
+	if se.GetTableCtx().EnableMutationChecker() {
+		return nil
+	}
+	pkHandleOffset := -1
+	if meta.PKIsHandle {
+		pkCol := meta.GetPkColInfo()
+		if pkCol == nil {
+			return nil
+		}
+		pkHandleOffset = pkCol.Offset
+	} else if meta.IsCommonHandle || !common.TableHasAutoRowID(meta) {
+		return nil
+	}
+
+	cols := tbl.Cols()
+	writableCols := tbl.WritableCols()
+	if len(meta.Columns) != len(cols) || len(cols) != len(writableCols) {
+		return nil
+	}
+	encCols := make([]bulkEncodeCol, 0, len(cols))
+	for _, col := range writableCols {
+		if col.State != model.StatePublic || col.ChangeStateInfo != nil || col.ChangingFieldType != nil {
+			return nil
+		}
+		if col.IsPKHandleColumn(meta) || col.IsVirtualGenerated() {
+			continue
+		}
+		encCols = append(encCols, bulkEncodeCol{
+			colID:      col.ID,
+			offset:     col.Offset,
+			skipIfNull: col.GetDefaultValue() == nil && col.GetOriginDefaultValue() == nil,
+		})
+	}
+
+	useNewCollate := tbl.UseNewCollate()
+	rawIndices := tbl.Indices()
+	encIndices := make([]bulkEncodeIndex, 0, len(rawIndices))
+	maxIdxCols := 0
+	for _, idx := range rawIndices {
+		idxMeta := idx.Meta()
+		if idxMeta.State == model.StateNone || idxMeta.State == model.StateDeleteOnly || idxMeta.State == model.StateDeleteReorganization {
+			continue
+		}
+		if idxMeta.State != model.StatePublic || idxMeta.Global || idxMeta.MVIndex {
+			return nil
+		}
+		if idxMeta.IsColumnarIndex() {
+			continue
+		}
+		if meta.IsCommonHandle && idxMeta.Primary {
+			continue
+		}
+		offsets := make([]int, len(idxMeta.Columns))
+		for i, ic := range idxMeta.Columns {
+			offsets[i] = ic.Offset
+		}
+		if len(offsets) > maxIdxCols {
+			maxIdxCols = len(offsets)
+		}
+		encIndices = append(encIndices, bulkEncodeIndex{
+			index:            idx,
+			idxInfo:          idxMeta,
+			id:               idxMeta.ID,
+			colOffsets:       offsets,
+			hasCondition:     idxMeta.HasCondition(),
+			needRestoredData: tables.NeedRestoredData(useNewCollate, idxMeta.Columns, meta.Columns),
+		})
+	}
+
+	phyTblID := meta.ID
+	if pt, ok := tbl.(table.PhysicalTable); ok {
+		phyTblID = pt.GetPhysicalID()
+	}
+
+	rowCfg := se.GetTableCtx().GetRowEncodingConfig()
+	b := &bulkRowEncoder{
+		tblInfo:            meta,
+		phyTblID:           phyTblID,
+		useNewCollate:      useNewCollate,
+		keyEncoder:         codec.NewEncoder(useNewCollate),
+		recordPrefix:       tbl.RecordPrefix(),
+		colCount:           len(cols),
+		pkHandleOffset:     pkHandleOffset,
+		cols:               encCols,
+		indices:            encIndices,
+		rowEncoder:         rowCfg.RowEncoder,
+		idxRowEncoder:      rowcodec.Encoder{Enable: true},
+		rowChecksumEnabled: rowCfg.IsRowLevelChecksumEnabled,
+		recKeyBuf:          make([]byte, 0, tablecodec.RecordRowKeyLen),
+		rowValBuf:          make([]byte, 0, 256),
+		idxKeyBuf:          make([]byte, 0, 128),
+		idxValBuf:          make([]byte, 0, 128),
+		idxValsBuf:         make([]types.Datum, maxIdxCols),
+		colIDsBuf:          make([]int64, 0, len(encCols)),
+		rowDatumsBuf:       make([]types.Datum, 0, len(encCols)),
+	}
+	b.handleRef = &b.intHandle
+	return b
+}
+
+func (b *bulkRowEncoder) encodeRow(
+	se *Session,
+	record []types.Datum,
+	dst GroupCollector,
+) (kvBytes int64, err error) {
+	var handleID int64
+	if len(record) > b.colCount {
+		handleID = record[len(record)-1].GetInt64()
+	} else {
+		handleID = record[b.pkHandleOffset].GetInt64()
+	}
+	b.intHandle = kv.IntHandle(handleID)
+
+	evalCtx := se.GetExprCtx().GetEvalCtx()
+	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
+	memBuf := &se.txn.MemBuf
+
+	b.recKeyBuf = tablecodec.AppendRecordKey(b.recKeyBuf[:0], b.recordPrefix, b.handleRef)
+	colIDs := b.colIDsBuf[:0]
+	rowDatums := b.rowDatumsBuf[:0]
+	for _, c := range b.cols {
+		v := record[c.offset]
+		if c.skipIfNull && v.IsNull() {
+			continue
+		}
+		colIDs = append(colIDs, c.colID)
+		rowDatums = append(rowDatums, v)
+	}
+	b.colIDsBuf = colIDs
+	b.rowDatumsBuf = rowDatums
+
+	var checksum rowcodec.Checksum
+	if b.rowChecksumEnabled {
+		checksum = rowcodec.RawChecksum{Handle: b.handleRef}
+	}
+	if b.rowEncoder == nil || !b.rowEncoder.Enable {
+		need := len(rowDatums) * 2
+		if cap(b.addRowValsBuf) < need {
+			b.addRowValsBuf = make([]types.Datum, need)
+		} else {
+			b.addRowValsBuf = b.addRowValsBuf[:need]
+		}
+	}
+	encodedRow, err := tablecodec.EncodeRow(loc, rowDatums, colIDs, b.rowValBuf, b.addRowValsBuf, checksum, b.rowEncoder)
+	if err = ec.HandleError(err); err != nil {
+		return 0, err
+	}
+	b.rowValBuf = encodedRow
+	if dst != nil {
+		k, v, filled := memBuf.CopyKV(b.recKeyBuf, encodedRow)
+		dst.AddDataKV(common.KvPair{Key: k, Val: v}, filled, memBuf)
+		kvBytes += int64(len(k) + len(v))
+	} else {
+		_ = memBuf.Set(b.recKeyBuf, encodedRow)
+	}
+
+	for i := range b.indices {
+		idx := &b.indices[i]
+		if idx.hasCondition {
+			ok, err := idx.index.MeetPartialCondition(record)
+			if err != nil {
+				return 0, err
+			}
+			if !ok {
+				continue
+			}
+		}
+		idxVals := b.idxValsBuf[:len(idx.colOffsets)]
+		for j, off := range idx.colOffsets {
+			idxVals[j] = record[off]
+		}
+		key, distinct, err := tablecodec.GenIndexKey(b.keyEncoder, loc, b.tblInfo, idx.idxInfo, b.phyTblID, idxVals, b.handleRef, b.idxKeyBuf)
+		if err = ec.HandleError(err); err != nil {
+			return 0, err
+		}
+		b.idxKeyBuf = key
+		val, err := tablecodec.GenIndexValuePortalWithEncoder(
+			b.useNewCollate, loc, b.tblInfo, idx.idxInfo, idx.needRestoredData,
+			distinct, false, idxVals, b.handleRef, b.phyTblID, nil, b.idxValBuf, &b.idxRowEncoder,
+		)
+		if err = ec.HandleError(err); err != nil {
+			return 0, err
+		}
+		b.idxValBuf = val
+		if dst != nil {
+			k, v, filled := memBuf.CopyKV(key, val)
+			dst.AddIndexKV(idx.id, common.KvPair{Key: k, Val: v}, filled, memBuf)
+			kvBytes += int64(len(k) + len(v))
+		} else {
+			_ = memBuf.Set(key, val)
+		}
+	}
+	return kvBytes, nil
+}
+
 // BaseKVEncoder encodes a row into a KV pair.
 type BaseKVEncoder struct {
 	GenCols    []GeneratedCol
@@ -129,8 +388,10 @@ type BaseKVEncoder struct {
 	// convert auto id for shard rowid or auto random id base on row id generated by lightning
 	AutoIDFn AutoIDConverterFn
 
-	logger      *zap.Logger
-	recordCache []types.Datum
+	logger          *zap.Logger
+	recordCache     []types.Datum
+	skipEncodeRowID bool
+	bulkEncoder     *bulkRowEncoder
 }
 
 // NewBaseKVEncoder creates a new BaseKVEncoder.
@@ -180,7 +441,15 @@ func NewBaseKVEncoder(config *encode.EncodingConfig) (*BaseKVEncoder, error) {
 		AutoRandomColID: autoRandomColID,
 		AutoIDFn:        autoIDFn,
 		logger:          config.Logger.Logger,
+		skipEncodeRowID: config.SkipEncodeRowID,
+		bulkEncoder:     newBulkRowEncoder(config.Table, se),
 	}, nil
+}
+
+// CanEncodeDirect reports whether Record2KVGroup can encode directly without
+// creating intermediate kv.Pairs or decoding index IDs back from keys.
+func (e *BaseKVEncoder) CanEncodeDirect() bool {
+	return e.skipEncodeRowID && e.bulkEncoder != nil
 }
 
 // GetOrCreateRecord returns a record slice from the cache if possible, otherwise creates a new one.
@@ -191,9 +460,29 @@ func (e *BaseKVEncoder) GetOrCreateRecord() []types.Datum {
 	return make([]types.Datum, 0, len(e.Columns)+1)
 }
 
+// Record2KVGroup encodes a row directly into a grouped KV collector.
+func (e *BaseKVEncoder) Record2KVGroup(record, originalRow []types.Datum, dst GroupCollector) (int64, error) {
+	kvBytes, err := e.bulkEncoder.encodeRow(e.SessionCtx, record, dst)
+	if err != nil {
+		e.logger.Error("kv encode failed",
+			zap.Array("originalRow", RowArrayMarshaller(originalRow)),
+			zap.Array("convertedRow", RowArrayMarshaller(record)),
+			log.ShortError(err),
+		)
+		return 0, errors.Trace(err)
+	}
+	e.recordCache = record[:0]
+	return kvBytes, nil
+}
+
 // Record2KV converts a row into a KV pair.
 func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64) (*Pairs, error) {
-	_, err := e.AddRecord(record)
+	var err error
+	if e.bulkEncoder != nil {
+		_, err = e.bulkEncoder.encodeRow(e.SessionCtx, record, nil)
+	} else {
+		_, err = e.AddRecord(record)
+	}
 	if err != nil {
 		e.logger.Error("kv encode failed",
 			zap.Array("originalRow", RowArrayMarshaller(originalRow)),
@@ -203,9 +492,11 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 		return nil, errors.Trace(err)
 	}
 	kvPairs := e.SessionCtx.TakeKvPairs()
-	for i := range kvPairs.Pairs {
-		var encoded [9]byte // The max length of encoded int64 is 9.
-		kvPairs.Pairs[i].RowID = codec.EncodeComparableVarint(encoded[:0], rowID)
+	if !e.skipEncodeRowID {
+		for i := range kvPairs.Pairs {
+			var encoded [9]byte // The max length of encoded int64 is 9.
+			kvPairs.Pairs[i].RowID = codec.EncodeComparableVarint(encoded[:0], rowID)
+		}
 	}
 	e.recordCache = record[:0]
 	return kvPairs, nil

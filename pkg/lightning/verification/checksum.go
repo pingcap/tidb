@@ -119,6 +119,13 @@ func (c *KVChecksum) Sum() uint64 {
 	return c.checksum
 }
 
+// Reset resets accumulated checksum counters while preserving keyspace metadata.
+func (c *KVChecksum) Reset() {
+	c.bytes = 0
+	c.kvs = 0
+	c.checksum = 0
+}
+
 // SumSize returns the total size of the key-value pairs.
 func (c *KVChecksum) SumSize() uint64 {
 	return c.bytes
@@ -198,6 +205,13 @@ func (c *KVGroupChecksum) Add(other *KVGroupChecksum) {
 	for id, cksum := range other.m {
 		thisCksum := c.getOrCreateOneGroup(id)
 		thisCksum.Add(cksum)
+	}
+}
+
+// Reset resets accumulated checksums in all groups while retaining map entries.
+func (c *KVGroupChecksum) Reset() {
+	for _, cksum := range c.m {
+		cksum.Reset()
 	}
 }
 
