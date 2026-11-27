@@ -2179,6 +2179,13 @@ func TestAddPartitionTooManyPartitions(t *testing.T) {
 	partition p8193 values less than (8193)
 	);`
 	tk.MustGetErrCode(sql3, errno.ErrTooManyPartitions)
+
+	// Fix https://github.com/pingcap/tidb/issues/73294
+	tk.MustExec("create table p3 (a int) partition by hash(a) partitions 2")
+	tk.MustGetErrCode("alter table p3 add partition partitions 9000", errno.ErrTooManyPartitions)
+	tk.MustGetErrCode("alter table p3 add partition partitions 18446744073709551615", errno.ErrTooManyPartitions)
+	tk.MustGetErrCode("alter table p3 add partition partitions 4294967297", errno.ErrTooManyPartitions)
+	tk.MustQuery("select count(*) from information_schema.partitions where table_schema = 'test' and table_name = 'p3'").Check(testkit.Rows("2"))
 }
 
 func waitGCDeleteRangeDone(t *testing.T, tk *testkit.TestKit, physicalID int64) bool {

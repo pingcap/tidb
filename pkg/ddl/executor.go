@@ -6630,6 +6630,10 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 			if len(spec.PartDefinitions) > 0 {
 				numParts = uint64(len(meta.Partition.Definitions)) + uint64(len(spec.PartDefinitions))
 			} else {
+				// Checked before the addition so that a huge count cannot wrap numParts around.
+				if err := checkAddPartitionTooManyPartitions(spec.Num); err != nil {
+					return nil, err
+				}
 				numParts = uint64(len(meta.Partition.Definitions)) + spec.Num
 			}
 		}
