@@ -32,6 +32,8 @@ func TestJobSubmitterSubmitTable(t *testing.T) {
 	const (
 		s3SourceDirWithExternalID  = "s3://bucket/path?role-arn=arn&external-id=remove&External_ID=remove-too&external%5Fid=remove-encoded&region=us-east-1&endpoint=http%3A%2F%2Fminio%3A9000"
 		s3ResourceParameters       = "endpoint=http%3A%2F%2Fminio%3A9000&region=us-east-1&role-arn=arn"
+		ks3SourceDirWithExternalID = "ks3://bucket/path?external-id=remove&access-key=ak&secret-access-key=sk&region=us-east-1"
+		ks3ResourceParameters      = "access-key=ak&region=us-east-1&secret-access-key=sk"
 		ossSourceDirWithExternalID = "oss://bucket/path?external-id=remove&role-arn=arn&region=us-east-1"
 		ossResourceParameters      = "region=us-east-1&role-arn=arn"
 		gcsSourceDir               = "gcs://bucket/path?external-id=keep&external_id=keep-too&region=us-east-1"
@@ -42,6 +44,8 @@ func TestJobSubmitterSubmitTable(t *testing.T) {
 	s3CfgWithStrip := config.NewConfig()
 	s3CfgWithStrip.Mydumper.SourceDir = s3SourceDirWithExternalID
 	s3CfgWithStrip.TikvImporter.StripS3ExternalIDForImportSQL = true
+	ks3Cfg := config.NewConfig()
+	ks3Cfg.Mydumper.SourceDir = ks3SourceDirWithExternalID
 	ossCfg := config.NewConfig()
 	ossCfg.Mydumper.SourceDir = ossSourceDirWithExternalID
 	gcsCfg := config.NewConfig()
@@ -136,6 +140,23 @@ func TestJobSubmitterSubmitTable(t *testing.T) {
 					func(_ *importsdk.TableMeta, opts *importsdk.ImportOptions) (string, error) {
 						require.Equal(t, s3ResourceParameters, opts.ResourceParameters)
 						require.Equal(t, s3SourceDirWithExternalID, s3CfgWithStrip.Mydumper.SourceDir)
+						return "IMPORT INTO ...", nil
+					})
+				mockSDK.EXPECT().SubmitJob(gomock.Any(), "IMPORT INTO ...").Return(int64(123), nil)
+			},
+		},
+		{
+			name:                "sanitize ks3 external id as s3 like resource parameters",
+			jobSubmitterOptions: []importinto.JobSubmitterOption{importinto.WithJobSubmitterStripS3ExternalIDForImportSQL(true)},
+			tableMeta: &importsdk.TableMeta{
+				Database: "db",
+				Table:    "t1",
+			},
+			cfg: ks3Cfg,
+			setup: func(t *testing.T, mockSDK *sdkmock.MockSDK) {
+				mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).DoAndReturn(
+					func(_ *importsdk.TableMeta, opts *importsdk.ImportOptions) (string, error) {
+						require.Equal(t, ks3ResourceParameters, opts.ResourceParameters)
 						return "IMPORT INTO ...", nil
 					})
 				mockSDK.EXPECT().SubmitJob(gomock.Any(), "IMPORT INTO ...").Return(int64(123), nil)

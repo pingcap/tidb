@@ -558,6 +558,14 @@ func TestS3NoProfileCredentialsValidation(t *testing.T) {
 }
 
 func TestParseBackend(t *testing.T) {
+	for _, rawURL := range []string{"s3://bucket", "ks3://bucket", "oss://bucket", "gcs://bucket", "azure://bucket", "local:///tmp"} {
+		u, err := ParseRawURL(rawURL)
+		require.NoError(t, err)
+		backend, err := ParseBackend(rawURL, nil)
+		require.NoError(t, err)
+		require.Equal(t, backend.GetS3() != nil, IsS3Like(u), rawURL)
+	}
+
 	for _, rawURL := range []string{
 		"s3://FAKE_BACKEND_USER:FAKE_BACKEND_PASS@bucket/path%zz?access-key=FAKE_BACKEND_AK&secret-access-key=FAKE_BACKEND_SK",
 		"s3:///path?access-key=FAKE_BACKEND_AK&secret-access-key=FAKE_BACKEND_SK&unknown-token=FAKE_BACKEND_TOKEN",

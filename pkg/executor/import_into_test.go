@@ -189,7 +189,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				t.Cleanup(func() {
 					fns[1](t, tk)
 				})
-				for _, schema := range []string{"s3", "oss"} {
+				for _, schema := range []string{"s3", "ks3", "oss"} {
 					tk.MustMatchErrMsg(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?EXTERNAL-ID=abc'", schema), `(?i).*Feature 'IMPORT INTO .*external.*' is not supported when security enhanced mode is enabled`)
 				}
 			})
@@ -204,7 +204,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				t.Cleanup(func() {
 					fns[1](t, tk)
 				})
-				for _, schema := range []string{"s3", "oss"} {
+				for _, schema := range []string{"s3", "ks3", "oss"} {
 					tk.MustMatchErrMsg(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket'", schema), `(?i).*Feature 'IMPORT INTO .*without access key/secret access key or role ARN' is not supported when security enhanced mode is enabled`)
 				}
 			})
@@ -235,7 +235,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 					require.Equal(t, "aaa", u.Query().Get(s3like.S3ExternalID))
 					panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 				})
-				for _, schema := range []string{"s3", "oss"} {
+				for _, schema := range []string{"s3", "ks3", "oss"} {
 					err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?access-key=ak&secret-access-key=sk'", schema))
 					require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
 				}
@@ -285,7 +285,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				t.Cleanup(func() {
 					fns[1](t, tk)
 				})
-				for _, schema := range []string{"s3", "oss"} {
+				for _, schema := range []string{"s3", "ks3", "oss"} {
 					for _, query := range []string{
 						"access-key=ak&secret-access-key=sk",
 						"EXTERNAL_ID=&access-key=ak&secret-access-key=sk",
@@ -314,7 +314,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 							require.Equal(t, []string{tc.value}, u.Query()[tc.param])
 							panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 						})
-						for _, schema := range []string{"s3", "oss"} {
+						for _, schema := range []string{"s3", "ks3", "oss"} {
 							err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?%s=%s&access-key=ak&secret-access-key=sk'", schema, tc.param, tc.value))
 							require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
 						}
