@@ -110,6 +110,10 @@ type Joiner interface {
 	// parameter passed to `OnMissMatch`.
 	OnMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk)
 
+	// ReleaseRowReferences drops shallow references to input rows once the caller
+	// has finished processing them. The joiner remains reusable.
+	ReleaseRowReferences()
+
 	// isSemiJoinWithoutCondition returns if it's a semi join and has no condition.
 	// If true, at most one matched row is needed to match inners, which can optimize a lot when
 	// there are a lot of matched rows.
@@ -273,6 +277,10 @@ type baseJoiner struct {
 	// 1. every columns are used if lUsed/rUsed is nil.
 	// 2. no columns are used if lUsed/rUsed is not nil but the size of lUsed/rUsed is 0.
 	lUsed, rUsed []int
+}
+
+func (j *baseJoiner) ReleaseRowReferences() {
+	j.shallowRow.ReleaseShallowReferences()
 }
 
 func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInner []types.Datum) {

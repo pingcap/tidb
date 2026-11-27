@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -45,6 +46,21 @@ type outerRow struct {
 	row      chunk.Row
 	selected bool // if this row is selected by the outer side
 	seq      uint64
+	chunkRef *applyOuterChunk
+}
+
+// applyOuterChunk accounts for an outer chunk while the producer or an inner
+// worker uses it. Rows keep the chunk alive; no list retains completed chunks.
+type applyOuterChunk struct {
+	refs       atomic.Int64
+	memUsage   int64
+	memTracker *memory.Tracker
+}
+
+func (c *applyOuterChunk) release() {
+	if c.refs.Add(-1) == 0 {
+		c.memTracker.Consume(-c.memUsage)
+	}
 }
 
 // orderedResult carries the join output for a single outer row, tagged with
@@ -60,24 +76,25 @@ type ParallelNestedLoopApplyExec struct {
 	exec.BaseExecutor
 
 	// outer-side fields
-	outerExec   exec.Executor
-	outerFilter expression.CNFExprs
-	outerList   *chunk.List
-	outer       bool
+	outerExec       exec.Executor
+	outerFilter     expression.CNFExprs
+	outerMemTracker *memory.Tracker
+	outer           bool
 
 	// inner-side fields
 	// use slices since the inner side is paralleled
-	corCols       [][]*expression.CorrelatedColumn
-	innerFilter   []expression.CNFExprs
-	innerExecs    []exec.Executor
-	innerList     []*chunk.List
-	innerChunk    []*chunk.Chunk
-	innerSelected [][]bool
-	innerIter     []chunk.Iterator
-	outerRow      []*chunk.Row
-	hasMatch      []bool
-	hasNull       []bool
-	joiners       []join.Joiner
+	corCols        [][]*expression.CorrelatedColumn
+	innerFilter    []expression.CNFExprs
+	innerExecs     []exec.Executor
+	innerList      []*chunk.List
+	innerChunk     []*chunk.Chunk
+	innerSelected  [][]bool
+	innerIter      []chunk.Iterator
+	outerRow       []*chunk.Row
+	outerChunkRefs []*applyOuterChunk
+	hasMatch       []bool
+	hasNull        []bool
+	joiners        []join.Joiner
 
 	// fields about concurrency control
 	concurrency int
@@ -136,15 +153,15 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	e.outerList = chunk.NewList(exec.RetTypes(e.outerExec), e.InitCap(), e.MaxChunkSize())
-	e.outerList.GetMemTracker().SetLabel(memory.LabelForOuterList)
-	e.outerList.GetMemTracker().AttachTo(e.memTracker)
+	e.outerMemTracker = memory.NewTracker(memory.LabelForOuterList, -1)
+	e.outerMemTracker.AttachTo(e.memTracker)
 
 	e.innerList = make([]*chunk.List, e.concurrency)
 	e.innerChunk = make([]*chunk.Chunk, e.concurrency)
 	e.innerSelected = make([][]bool, e.concurrency)
 	e.innerIter = make([]chunk.Iterator, e.concurrency)
 	e.outerRow = make([]*chunk.Row, e.concurrency)
+	e.outerChunkRefs = make([]*applyOuterChunk, e.concurrency)
 	e.hasMatch = make([]bool, e.concurrency)
 	e.hasNull = make([]bool, e.concurrency)
 	for i := range e.concurrency {
@@ -299,12 +316,20 @@ func (e *ParallelNestedLoopApplyExec) notifyWorker(ctx context.Context) {
 func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 	defer trace.StartRegion(ctx, "ParallelApplyOuterWorker").End()
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
+	var chunkRef *applyOuterChunk
+	defer func() {
+		if chunkRef != nil {
+			chunkRef.release()
+		}
+	}()
 	var selected []bool
 	var err error
 	var seq uint64
 	for {
 		failpoint.Inject("parallelApplyOuterWorkerPanic", nil)
-		chk := exec.TryNewCacheChunk(e.outerExec)
+		// The session allocator retains chunks until statement completion.
+		// Allocate outside it so completed outer input can be reclaimed sooner.
+		chk := exec.NewFirstChunk(e.outerExec)
 		if err := exec.Next(ctx, e.outerExec, chk); err != nil {
 			// If the executor is shutting down, the error is from
 			// deliberate context cancellation — not a real failure.
@@ -320,7 +345,11 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 			close(e.outerRowCh)
 			return
 		}
-		e.outerList.Add(chk)
+		chunkRef = &applyOuterChunk{memUsage: chk.MemoryUsage(), memTracker: e.outerMemTracker}
+		// Keep the producer's reference until all rows are dispatched. Install
+		// cleanup before Consume, which can panic when the memory quota is hit.
+		chunkRef.refs.Store(1)
+		e.outerMemTracker.Consume(chunkRef.memUsage)
 		outerIter := chunk.NewIterator4Chunk(chk)
 		selected, err = expression.VectorizedFilter(e.Ctx().GetExprCtx().GetEvalCtx(), e.Ctx().GetSessionVars().EnableVectorizedExpression, e.outerFilter, outerIter, selected)
 		if err != nil {
@@ -339,14 +368,32 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 				}
 			}
 			row := chk.GetRow(i)
-			or := outerRow{row: row, selected: selected[i], seq: seq}
+			or := outerRow{row: row, selected: selected[i], seq: seq, chunkRef: chunkRef}
 			seq++
+			chunkRef.refs.Add(1)
 			select {
 			case e.outerRowCh <- or:
 			case <-e.exit:
+				chunkRef.release()
 				return
 			}
 		}
+		chunkRef.release()
+		chunkRef = nil
+	}
+}
+
+func (e *ParallelNestedLoopApplyExec) releaseOuterRow(id int) {
+	e.outerRow[id] = nil
+	e.joiners[id].ReleaseRowReferences()
+	// Variable-width correlated values may alias the outer chunk even after
+	// the inner executor closes. Discard them before releasing its accounting.
+	for _, col := range e.corCols[id] {
+		*col.Data = types.Datum{}
+	}
+	if ref := e.outerChunkRefs[id]; ref != nil {
+		e.outerChunkRefs[id] = nil
+		ref.release()
 	}
 }
 
@@ -355,6 +402,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
 	defer trace.StartRegion(ctx, "ParallelApplyInnerWorker").End()
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
+	defer e.releaseOuterRow(id)
 	for {
 		var chk *chunk.Chunk
 		select {
@@ -388,6 +436,7 @@ func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
 func (e *ParallelNestedLoopApplyExec) innerWorkerOrdered(ctx context.Context, id int) {
 	defer trace.StartRegion(ctx, "ParallelApplyInnerWorkerOrdered").End()
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
+	defer e.releaseOuterRow(id)
 
 	for {
 		var or outerRow
@@ -400,6 +449,7 @@ func (e *ParallelNestedLoopApplyExec) innerWorkerOrdered(ctx context.Context, id
 		case <-e.exit:
 			return
 		}
+		e.outerChunkRefs[id] = or.chunkRef
 
 		failpoint.Inject("parallelApplyInnerWorkerOrderedPanic", nil)
 		failpoint.Inject("parallelApplyOrderedSleep", func(val failpoint.Value) {
@@ -412,6 +462,9 @@ func (e *ParallelNestedLoopApplyExec) innerWorkerOrdered(ctx context.Context, id
 			}
 		})
 		chks, err := e.processOneOuterRow(ctx, id, or)
+		// Joined output owns its data, so ordering the results does not need
+		// to keep the source chunk alive.
+		e.releaseOuterRow(id)
 		if err != nil {
 			select {
 			case e.orderedResultCh <- orderedResult{seq: or.seq, err: err}:
@@ -722,12 +775,14 @@ func (e *ParallelNestedLoopApplyExec) fetchNextOuterRow(id int, req *chunk.Chunk
 			if !ok { // no more data
 				return nil, false
 			}
+			e.outerChunkRefs[id] = outerRow.chunkRef
 			if !outerRow.selected {
 				if e.outer {
 					e.joiners[id].OnMissMatch(false, outerRow.row, req)
-					if req.IsFull() {
-						return nil, false
-					}
+				}
+				e.releaseOuterRow(id)
+				if req.IsFull() {
+					return nil, false
 				}
 				continue // try the next outer row
 			}
@@ -745,6 +800,7 @@ func (e *ParallelNestedLoopApplyExec) fillInnerChunk(ctx context.Context, id int
 			if e.outerRow[id] != nil && !e.hasMatch[id] {
 				e.joiners[id].OnMissMatch(e.hasNull[id], *e.outerRow[id], req)
 			}
+			e.releaseOuterRow(id)
 			var exit bool
 			e.outerRow[id], exit = e.fetchNextOuterRow(id, req)
 			if exit || req.IsFull() || e.outerRow[id] == nil {
