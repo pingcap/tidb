@@ -653,6 +653,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	}
 
 	schemaVer, err := wk.transitOneJobStep(jobCtx, jobW)
+	job = jobW.Job
 	if err != nil {
 		jobCtx.logger.Info("transit one job step failed", zap.Error(err), zap.Stringer("job", job))
 		return err

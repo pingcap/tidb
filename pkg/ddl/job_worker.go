@@ -124,6 +124,7 @@ type jobContext struct {
 	deferStorageClassTransitionStaging bool
 	pendingStorageClassTransitions     []pendingStorageClassTransition
 	sharedMultiSchemaVersion           int64
+	stepOutcome                        *stepOutcome
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
@@ -317,19 +318,29 @@ func injectFailPointForGetJob(job *model.Job) {
 }
 
 // handleUpdateJobError handles the too large DDL job.
-func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, rawArgsBeforeUpdate []byte, err error) error {
+func (w *worker) handleUpdateJobError(
+	jobCtx *jobContext,
+	jobW *model.JobW,
+	rawArgsBeforeUpdate []byte,
+	err error,
+	updateRawArgs bool,
+) (bool, error) {
 	if err == nil {
-		return nil
+		return false, nil
 	}
 	if kv.ErrEntryTooLarge.Equal(err) {
+		job := jobW.Job
 		jobCtx.logger.Warn("update DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		w.sess.Rollback()
-		if beginErr := w.sess.Begin(w.workCtx); beginErr != nil {
-			return errors.Trace(beginErr)
+		txn, err1 := w.prepareTxn(job)
+		if err1 != nil {
+			return false, errors.Trace(err1)
 		}
-		txn, txnErr := w.sess.Txn()
-		if txnErr != nil {
-			return errors.Trace(txnErr)
+		if len(jobW.Bytes) > 0 {
+			if err1 = w.checkJobMetaUnchanged(jobCtx, jobW); err1 != nil {
+				w.sess.Rollback()
+				return false, errors.Trace(err1)
+			}
 		}
 		jobCtx.metaMut = meta.NewMutator(txn)
 		// Discard rolled-back schema metadata and reduce the history entry size.
@@ -352,9 +363,9 @@ func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, rawArg
 			}
 		}
 		deleteAffinityGroupsOfCancelledJob(jobCtx, cleanupJob)
-		err = w.finishDDLJob(jobCtx, job)
+		return true, errors.Trace(w.finishDDLJob(jobCtx, job, updateRawArgs))
 	}
-	return errors.Trace(err)
+	return false, errors.Trace(err)
 }
 
 // updateDDLJob updates the DDL job information.
@@ -463,7 +474,7 @@ func JobNeedGC(job *model.Job) bool {
 
 // finishDDLJob deletes the finished DDL job from the DDL queue and puts it in the history queue.
 // If the finished job needs deferred cleanup, it enqueues delete-range tasks first.
-func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
+func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs bool) (err error) {
 	// Failed DDL jobs are not accounted for yet. Clear any RU accumulated by
 	// earlier steps before moving a cancelled or rolled-back job to history.
 	if job.IsCancelled() || job.IsRollbackDone() {
@@ -488,6 +499,7 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 			// it may be too large that it can not be added to the history queue, so
 			// delete its arguments
 			job.ClearDecodedArgs()
+			updateRawArgs = true
 		}
 	case model.ActionAlterNoCacheTable:
 		if !job.IsCancelled() {
@@ -509,7 +521,6 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 	metaMut := jobCtx.metaMut
 	job.BinlogInfo.FinishedTS = metaMut.StartTS
 	jobCtx.logger.Info("finish DDL job", zap.String("job", job.String()))
-	updateRawArgs := true
 	if job.Type == model.ActionAddPrimaryKey && !job.IsCancelled() {
 		// ActionAddPrimaryKey needs to check the warnings information in job.Args.
 		// Notice: warnings is used to support non-strict mode.
@@ -591,7 +602,7 @@ func (w *ReorgContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 	w.ddlJobCtx = kv.WithInternalSourceAndTaskType(w.ddlJobCtx, w.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 }
 
-func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
+func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job, updateRawArgs bool) error {
 	start := time.Now()
 	defer func() {
 		metrics.DDLHandleJobDoneOpHist.Observe(time.Since(start).Seconds())
@@ -599,7 +610,7 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
-	err := w.finishDDLJob(jobCtx, job)
+	err := w.finishDDLJob(jobCtx, job, updateRawArgs)
 	if err != nil {
 		w.sess.Rollback()
 		return err
@@ -751,6 +762,10 @@ func (w *worker) transitOneJobStep(
 	jobW *model.JobW,
 ) (int64, error) {
 	jobCtx.mustRollbackTxnOnError = false
+	jobCtx.stepOutcome = nil
+	defer func() {
+		jobCtx.stepOutcome = nil
+	}()
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
 	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.transitOneJobStep")
 	defer r.End()
@@ -802,7 +817,7 @@ func (w *worker) transitOneJobStep(
 				}
 			}
 		})
-		return 0, w.handleJobDone(jobCtx, job)
+		return 0, w.handleJobDone(jobCtx, job, true)
 	}
 	failpoint.InjectCall("beforeRunOneJobStep", job)
 
@@ -810,32 +825,28 @@ func (w *worker) transitOneJobStep(
 	defer func() {
 		metrics.DDLTransitOneStepOpHist.Observe(time.Since(start).Seconds())
 	}()
-	// If running job meets error, we will save this error in job Error and retry
-	// later if the job is not cancelled.
-	restoreStorageClassTransitionStep := checkpointStorageClassTransitionStep(w.sess, txn, job)
+	defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
+
+	sp, err := captureStepSavepoint(w.sess, txn, jobW)
+	if err != nil {
+		w.sess.Rollback()
+		return 0, err
+	}
 	jobCtx.pendingReorgRU = 0
 	defer func() {
 		jobCtx.pendingReorgRU = 0
 	}()
 	restoreAll, restoreKV := snapshotJobStepState(job)
-	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
-	if restoreStorageClassTransitionStep != nil {
-		var stagingErr *storageClassTransitionStagingError
-		if goerrors.As(runJobErr, &stagingErr) {
-			// History SQL can release earlier TableInfo and history writes from
-			// the statement buffer, so Reset alone cannot discard this step.
-			restoreStorageClassTransitionStep()
-			schemaVer = 0
-			// Preserve the saved raw arguments, not decoded args mutated by a
-			// sub-job whose metadata changes were just rolled back.
-			updateRawArgs = false
-		}
-	}
+	res := w.runOneJobStep(jobCtx, job)
+	schemaVer, updateRawArgs, runJobErr := res.ver, res.updateRawArgs, res.err
 
 	failpoint.InjectCall("afterRunOneJobStep", job)
 
+	if outcome, ok := resolveStepOutcome(job, jobCtx, res); ok {
+		return w.applyStepOutcome(jobCtx, jobW, sp, outcome)
+	}
+
 	if err = w.checkBeforeCommit(); err != nil {
-		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 
@@ -857,14 +868,12 @@ func (w *worker) transitOneJobStep(
 			failpoint.InjectCall("afterRollbackTxnForMustRollbackTxnOnError", job)
 			txn, txnErr := w.prepareTxn(job)
 			if txnErr != nil {
-				jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 				return 0, txnErr
 			}
 			// Rollback ends the transaction checked above. Recheck in the new
 			// transaction so it does not overwrite a concurrent job update.
 			if txnErr = w.checkJobMetaUnchanged(jobCtx, jobW); txnErr != nil {
 				w.sess.Rollback()
-				jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 				return 0, txnErr
 			}
 			jobCtx.metaMut = meta.NewMutator(txn)
@@ -885,22 +894,30 @@ func (w *worker) transitOneJobStep(
 	}
 
 	if job.IsCancelled() {
-		defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		// Delete PD groups before the cancellation commits. If the commit fails,
 		// the job runs again and repeats this idempotent cleanup.
 		deleteAffinityGroupsOfCancelledJob(jobCtx, job)
-		return 0, w.handleJobDone(jobCtx, job)
+		return 0, w.handleJobDone(jobCtx, job, true)
 	}
 
-	err = w.registerMDLInfo(job, schemaVer)
+	return w.commitActiveJobStep(jobCtx, jobW, schemaVer, updateRawArgs, runJobErr)
+}
+
+func (w *worker) commitActiveJobStep(
+	jobCtx *jobContext,
+	jobW *model.JobW,
+	schemaVer int64,
+	updateRawArgs bool,
+	runJobErr error,
+) (int64, error) {
+	job := jobW.Job
+	err := w.registerMDLInfo(job, schemaVer)
 	if err != nil {
 		w.sess.Rollback()
-		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 	if err = w.accountJobRU(job); err != nil {
 		w.sess.Rollback()
-		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 	var rawArgsBeforeUpdate []byte
@@ -909,18 +926,22 @@ func (w *worker) transitOneJobStep(
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
 	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
-	if err = w.handleUpdateJobError(jobCtx, job, rawArgsBeforeUpdate, err); err != nil {
+	handledErr, err := w.handleUpdateJobError(jobCtx, jobW, rawArgsBeforeUpdate, err, updateRawArgs)
+	if err != nil {
 		w.sess.Rollback()
-		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
+	}
+	if handledErr {
+		schemaVer = 0
 	}
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.Commit(w.workCtx)
-	jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 	if err != nil {
 		return 0, err
 	}
+	// Do not hold the global schema version lock during the retry sleep.
+	jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 	jobCtx.addUnSynced(job.ID)
 
 	// If error is non-retryable, we can ignore the sleep.
@@ -960,6 +981,7 @@ func (w *worker) checkBeforeCommit() error {
 
 	if err := w.workCtx.Err(); err != nil {
 		// The worker context is canceled, it should not commit any transaction.
+		w.sess.Rollback()
 		return err
 	}
 	return nil
@@ -1079,9 +1101,10 @@ func (*worker) processJobPausingRequest(jobCtx *jobContext, job *model.Job) (isR
 func (w *worker) runOneJobStep(
 	jobCtx *jobContext,
 	job *model.Job,
-) (ver int64, updateRawArgs bool, err error) {
+) (res runStepResult) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
+			res.panicked = true
 			w.countForPanic(jobCtx, job)
 		}, false)
 
@@ -1101,21 +1124,31 @@ func (w *worker) runOneJobStep(
 		job.RealStartTS = jobCtx.metaMut.StartTS
 	}
 	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLRunOneStep, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLRunOneStep, job.Type.String(), metrics.RetLabel(res.err)).Observe(time.Since(timeStart).Seconds())
 	}()
 
+	var (
+		ver int64
+		err error
+	)
 	if job.IsCancelling() {
 		jobCtx.logger.Debug("cancel DDL job", zap.String("job", job.String()))
 		ver, err = convertJob2RollbackJob(w, jobCtx, job)
 		// if job is converted to rollback job, the job.Args may be changed for the
 		// rollback logic, so we let caller persist the new arguments.
-		updateRawArgs = job.IsRollingback()
-		return
+		return runStepResult{ver: ver, updateRawArgs: job.IsRollingback(), err: err}
 	}
 
 	isRunnable, err := w.processJobPausingRequest(jobCtx, job)
 	if !isRunnable {
-		return ver, false, err
+		if !jobCtx.inInnerRunOneJobStep {
+			jobCtx.stepOutcome = &stepOutcome{
+				discardWrites: true,
+				finish:        stepFinishUpdateJob,
+				err:           err,
+			}
+		}
+		return runStepResult{ver: ver, err: err}
 	}
 
 	// It would be better to do the positive check, but no idea to list all valid states here now.
@@ -1137,7 +1170,7 @@ func (w *worker) runOneJobStep(
 				if infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
 					job.State = model.JobStateCancelled
 				}
-				return ver, false, w.countForError(jobCtx, job, err)
+				return runStepResult{ver: ver, err: w.countForError(jobCtx, job, err)}
 			}
 			job.CheckSchemaReadOnly = false
 		}
@@ -1380,7 +1413,7 @@ func (w *worker) runOneJobStep(
 	//
 	// if job has no error, some arguments may be changed, there's no harm to update
 	// it.
-	updateRawArgs = err == nil
+	updateRawArgs := err == nil
 	// if job changed from running to rolling back, arguments may be changed
 	if prevState == model.JobStateRunning && job.IsRollingback() {
 		updateRawArgs = true
@@ -1390,7 +1423,7 @@ func (w *worker) runOneJobStep(
 	if err != nil {
 		err = w.countForError(jobCtx, job, err)
 	}
-	return ver, updateRawArgs, err
+	return runStepResult{ver: ver, updateRawArgs: updateRawArgs, err: err}
 }
 
 // loadGlobalVars loads global variables from system table
@@ -1407,6 +1440,12 @@ func (w *worker) loadGlobalVars(varName ...string) error {
 }
 
 func toTError(err error) *terror.Error {
+	if err == nil {
+		return nil
+	}
+	if tErr, ok := err.(*terror.Error); ok && tErr == nil {
+		return nil
+	}
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
 	if ok {
@@ -1425,7 +1464,8 @@ func updateGlobalVersionAndWaitSynced(
 	latestSchemaVersion int64,
 	job *model.Job,
 ) error {
-	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
+	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() &&
+		!(job.IsPausingOrPausedBySystemForKVDiskFull() && latestSchemaVersion != 0) {
 		return nil
 	}
 

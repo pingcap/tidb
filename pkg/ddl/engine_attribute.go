@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -175,56 +174,6 @@ func (w *worker) onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job
 	return ver, nil
 }
 
-// storageClassTransitionStagingError marks failures that require rolling back
-// history SQL and the metadata changes released by its preceding statements.
-type storageClassTransitionStagingError struct {
-	cause error
-}
-
-func (e *storageClassTransitionStagingError) Error() string {
-	return e.cause.Error()
-}
-
-func (e *storageClassTransitionStagingError) Unwrap() error {
-	return e.cause
-}
-
-func (e *storageClassTransitionStagingError) Cause() error {
-	return e.cause
-}
-
-// checkpointStorageClassTransitionStep captures the whole outer DDL step, since
-// a multi-schema batch can change metadata before it stages transition history.
-// Other DDL jobs retain their existing statement rollback behavior.
-func checkpointStorageClassTransitionStep(se *sess.Session, txn kv.Transaction, job *model.Job) func() {
-	if !kerneltype.IsNextGen() {
-		return nil
-	}
-	stagesHistory := job.Type == model.ActionModifyEngineAttribute
-	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
-		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			if sub.Type == model.ActionModifyEngineAttribute {
-				stagesHistory = true
-				break
-			}
-		}
-	}
-	if !stagesHistory {
-		return nil
-	}
-
-	checkpoint := txn.GetMemDBCheckpoint()
-	txnCtx := se.GetSessionVars().TxnCtx
-	txnCtxSavepoint := txnCtx.GetCurrentSavepoint()
-	restoreAll, _ := snapshotJobStepState(job)
-
-	return func() {
-		txnCtx.RestoreBySavepoint(txnCtxSavepoint)
-		txn.RollbackMemDBToCheckpoint(checkpoint)
-		restoreAll(nil)
-	}
-}
-
 type pendingStorageClassTransition struct {
 	tblInfo       *model.TableInfo
 	old           map[int64]physicalStorageClass
@@ -279,10 +228,7 @@ func (pending pendingStorageClassTransition) stage(
 		pending.schemaName,
 		pending.tableName,
 	)
-	if err != nil {
-		return &storageClassTransitionStagingError{cause: err}
-	}
-	return nil
+	return errors.Trace(err)
 }
 
 func (w *worker) flushPendingStorageClassTransitions(jobCtx *jobContext) error {

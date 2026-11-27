@@ -50,19 +50,25 @@ The submitter-side wait loop assumes this simplified sequence (see the comment i
 
 Internal SQL can move earlier metadata writes out of the current statement buffer.
 Steps that use `jobContext.mustRollbackTxnOnError` discard the entire transaction
-on error before persisting either a retry or a cancelled job. This also protects
-TRUNCATE TABLE when masking-policy SQL has already flushed the old table deletion;
-`sess.Reset()` alone only discards the current statement buffer.
+on error before persisting either a retry or a cancelled job. Actions migrated to
+the unified step-boundary contract (`stepSavepoint` and `stepOutcome` in
+`pkg/ddl/step_savepoint.go`, such as `ActionModifyEngineAttribute`,
+multi-schema jobs containing it, and recovered step panics) capture an entry
+`MemDBCheckpoint` (when `txn.Len() == 0`), `TransactionContext` savepoint, and
+entry job bytes before `runOneJobStep`; on discard, they either roll back
+in-place on the same optimistic TSO or fall back to transaction rollback, reopen,
+and `checkJobMetaUnchanged` while restoring a fresh `*model.Job` baseline from the
+captured bytes. This also protects TRUNCATE TABLE when masking-policy SQL has
+already flushed the old table deletion; `sess.Reset()` alone only discards the
+current statement buffer.
 
-A full transaction rollback restores the job's schema state, binlog information
-and resume reason, and clears the last schema version before job persistence.
-This also applies when the job enters cancellation or rollback, preserving the
-sub-job states that record those decisions. For a retry after full transaction
-rollback or `sess.Reset()` statement rollback, the worker also restores the
-multi-schema sub-jobs and keeps the previous raw arguments. Error accounting
-and durable `ReorgMeta` choices survive restoration. Storage-class history
-staging failures use the same snapshot when restoring their transaction
-checkpoint.
+For unmigrated actions, a full transaction rollback restores the job's schema
+state, binlog information and resume reason, and clears the last schema version
+before job persistence. This also applies when the job enters cancellation or
+rollback, preserving the sub-job states that record those decisions. For a retry
+after full transaction rollback or `sess.Reset()` statement rollback, the worker
+also restores the multi-schema sub-jobs and keeps the previous raw arguments.
+Error accounting and durable `ReorgMeta` choices survive restoration.
 
 `ALTER SCHEMA ... READ ONLY` retains its schema state after a failed step.
 The rollback handler uses `StatePendingReadOnly` to distinguish a job that
