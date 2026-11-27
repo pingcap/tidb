@@ -74,6 +74,7 @@ go_test(
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
+        "//pkg/statistics/handle",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",

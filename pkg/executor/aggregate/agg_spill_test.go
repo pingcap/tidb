@@ -684,6 +684,47 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 	})
 }
 
+type finalizationErrorAggFunc struct {
+	aggfuncs.AggFunc
+	err error
+}
+
+func (f finalizationErrorAggFunc) AppendFinalResult2Chunk(aggfuncs.AggFuncUpdateContext, aggfuncs.PartialResult, *chunk.Chunk) error {
+	return f.err
+}
+
+func TestHashAggFinalizationErrorPropagation(t *testing.T) {
+	for _, spill := range []bool{false, true} {
+		t.Run(fmt.Sprintf("spill=%t", spill), func(t *testing.T) {
+			t.Cleanup(config.RestoreFunc())
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.TempStoragePath = t.TempDir()
+			})
+			ctx := mock.NewContext()
+			initCtx(ctx, new(testutil.MockActionOnExceed), -1, 32)
+			dataSource := buildMockDataSource(getMockDataSourceParameters(ctx), []string{"key"}, []float64{1})
+			prefix := util.GetFunctionName()
+			aggExec := buildHashAggExecutor(t, ctx, dataSource, prefix)
+			expectedErr := fmt.Errorf("finalization failed")
+			// The first aggregate has already appended a column when the second fails.
+			aggExec.FinalAggFuncs[1] = finalizationErrorAggFunc{AggFunc: aggExec.FinalAggFuncs[1], err: expectedErr}
+			dataSource.PrepareChunks()
+			require.NoError(t, aggExec.Open(context.Background()))
+			t.Cleanup(func() {
+				require.NoError(t, aggExec.Close())
+				util.CheckNoLeakFiles(t, prefix)
+			})
+			if spill {
+				aggExec.ActionSpill().Action(ctx.GetSessionVars().MemTracker)
+			}
+			chk := exec.NewFirstChunk(aggExec)
+			require.ErrorIs(t, aggExec.Next(context.Background(), chk), expectedErr)
+			require.Zero(t, chk.NumRows())
+			require.Equal(t, spill, aggExec.IsSpillTriggeredForTest())
+		})
+	}
+}
+
 // sql: select col0, sum(col1), count(col1), avg(col1), min(col1), max(col1), var_pop(col1),
 // var_samp(col1), stddev_pop(col1), stddev_samp(col1), approx_percentile(col1, 50) from t group by t.col0;
 func TestGetCorrectResult(t *testing.T) {

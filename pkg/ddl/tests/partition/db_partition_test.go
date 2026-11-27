@@ -3182,8 +3182,8 @@ func TestRemoveKeyPartitioning(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	// And also cached and lazy loaded
-	h.Clear()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	h.ClearForTest()
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemovePartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3230,8 +3230,8 @@ func TestRemoveListPartitioning(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	// And also cached and lazy loaded
-	h.Clear()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	h.ClearForTest()
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3278,8 +3278,8 @@ func TestRemoveListColumnPartitioning(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	// And also cached and lazy loaded
-	h.Clear()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	h.ClearForTest()
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3326,8 +3326,8 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	// And also cached and lazy loaded
-	h.Clear()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	h.ClearForTest()
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)

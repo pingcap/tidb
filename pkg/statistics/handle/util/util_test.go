@@ -96,7 +96,7 @@ func TestCallSCtxFailed(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	var sctxWithFailure sessionctx.Context
-	err := util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
+	err := util.CallWithSCtx(dom.StatsHandle().Pool().SPool(), func(sctx sessionctx.Context) error {
 		sctxWithFailure = sctx
 		return errors.New("simulated error")
 	})
@@ -106,7 +106,7 @@ func TestCallSCtxFailed(t *testing.T) {
 	require.False(t, notReleased)
 
 	// A panic in the function is recovered and returned as an error.
-	err = util.CallWithSCtx(dom.StatsHandle().SPool(), func(sessionctx.Context) error {
+	err = util.CallWithSCtx(dom.StatsHandle().Pool().SPool(), func(sessionctx.Context) error {
 		panic("simulated panic")
 	})
 	require.ErrorContains(t, err, "panic in CallWithSCtx")
@@ -114,7 +114,7 @@ func TestCallSCtxFailed(t *testing.T) {
 	// A panic in the function of WrapTxn rolls back the writes made before the panic.
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t (a int)")
-	err = util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(dom.StatsHandle().Pool().SPool(), func(sctx sessionctx.Context) error {
 		_, _, err := util.ExecRows(sctx, "insert into test.t values (1)")
 		require.NoError(t, err)
 		panic("simulated panic")
@@ -241,7 +241,7 @@ func TestCallWithSCtxRestoresStatsSessionVars(t *testing.T) {
 func TestCallWithSCtxSyncsStmtCtxTimeZone(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	pool := dom.StatsHandle().SPool()
+	pool := dom.StatsHandle().Pool().SPool()
 	originTZ := fmt.Sprint(tk.MustQuery("select @@global.time_zone").Rows()[0][0])
 	defer tk.MustExec("set @@global.time_zone='" + originTZ + "'")
 

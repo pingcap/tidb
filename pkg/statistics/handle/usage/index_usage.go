@@ -26,13 +26,13 @@ import (
 
 // NewSessionIndexUsageCollector creates a new Collector on the list.
 // The returned value's type should be *usage.SessionIndexUsageCollector, use interface{} to avoid cycle import now.
-func (u *statsUsageImpl) NewSessionIndexUsageCollector() *indexusage.SessionIndexUsageCollector {
+func (u *Tracker) NewSessionIndexUsageCollector() *indexusage.SessionIndexUsageCollector {
 	return u.idxUsageCollector.SpawnSessionCollector()
 }
 
 // GCIndexUsage removes unnecessary index usage data.
-func (u *statsUsageImpl) GCIndexUsage() error {
-	return util.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+func (u *Tracker) GCIndexUsage() error {
+	return util.CallWithSCtx(u.pool.SPool(), func(sctx sessionctx.Context) error {
 		schema := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 		u.idxUsageCollector.GCIndexUsage(func(id int64) (*model.TableInfo, bool) {
 			tbl, ok := schema.TableByID(context.Background(), id)
@@ -46,17 +46,17 @@ func (u *statsUsageImpl) GCIndexUsage() error {
 }
 
 // StartWorker starts for the collector worker.
-func (u *statsUsageImpl) StartWorker() {
+func (u *Tracker) StartWorker() {
 	// TODO: after migrating other usage stats to also use the same collector, also start their worker here.
 	u.idxUsageCollector.StartWorker()
 }
 
 // Close closes and waits for the index usage collector worker.
-func (u *statsUsageImpl) Close() {
+func (u *Tracker) Close() {
 	u.idxUsageCollector.Close()
 }
 
 // GetIndexUsage returns the index usage information
-func (u *statsUsageImpl) GetIndexUsage(tableID int64, indexID int64) indexusage.Sample {
+func (u *Tracker) GetIndexUsage(tableID int64, indexID int64) indexusage.Sample {
 	return u.idxUsageCollector.GetIndexUsage(tableID, indexID)
 }

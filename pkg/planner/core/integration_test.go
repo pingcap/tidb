@@ -91,6 +91,43 @@ func TestBinaryLiteralMinMaxHaving(t *testing.T) {
 	}
 }
 
+func TestUnionStringCastLength(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table union_text(v longtext)")
+	tk.MustQuery("select 2 in (select 5 union select null)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 2 in (select null union select 5)").Check(testkit.Rows("<nil>"))
+	tk.MustExec("create view nullable_union as select 'a' c union all select null")
+	tk.MustQuery("show fields from nullable_union").Check(testkit.Rows("c varchar(1) YES  <nil> "))
+	tk.MustExec("drop view nullable_union")
+	tk.MustExec("create view nullable_union as select null c union select 'a'")
+	tk.MustQuery("show fields from nullable_union").Check(testkit.Rows("c varchar(1) YES  <nil> "))
+	tk.MustExec("drop view nullable_union")
+	tk.MustExec("insert into union_text values(repeat('z',1592)),(repeat('界',600)),(null)")
+	tk.MustQuery("select 2 in (select 5 union select null) from union_text").Check(testkit.Rows("<nil>", "<nil>", "<nil>"))
+	short := "select cast('q' as char(255)) as v where false"
+	text := "select v from union_text"
+	numeric := "select cast(10 as double)*cast(10 as double) as v where false"
+	for _, sql := range []string{
+		short + " union all " + text + " union all " + numeric,
+		numeric + " union all " + short + " union all " + text,
+		"(" + short + " union all " + text + ") union all " + numeric,
+	} {
+		rs, err := tk.Exec(sql)
+		require.NoError(t, err)
+		ft := rs.Fields()[0].Column.FieldType
+		flen := ft.GetFlen()
+		if flen < 0 {
+			flen, _ = mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
+		}
+		require.GreaterOrEqual(t, flen, 1592)
+		require.NoError(t, rs.Close())
+		tk.MustQuery(sql).Sort().Check(testkit.Rows("<nil>", strings.Repeat("z", 1592), strings.Repeat("界", 600)))
+	}
+	tk.MustQuery("select char_length(v) from (select cast('q' as char(255)) v where false union all select repeat('z',1592) union all select cast(10 as double)*cast(10 as double) where false)u").Check(testkit.Rows("1592"))
+}
+
 func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
@@ -904,6 +941,38 @@ func TestHypoIndexHint(t *testing.T) {
 		testKit.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_a, a, b, c) */ a from t1 where a=1 and b=1 and c<1`, "IndexRangeScan")
 		testKit.MustHavePlan(`select 1 from t1, t2 where t1.a=1 and t1.b=t2.b`, "─HashJoin")
 		testKit.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_ab, a, b), HYPO_INDEX(t2, idx_b, b) */ 1 from t1, t2 where t1.a=1 and t1.b=t2.b`, "IndexHashJoin")
+
+		// Expression hypothetical indexes must keep their hidden columns for planning.
+		testKit.MustExec("insert into t1 values (41, 41, 44)")
+		testKit.MustExec("create index hypo_expr_a type hypo on t1 ((a + 1))")
+		checkRange := func(sql, index, indexRange string) {
+			plan := fmt.Sprint(testKit.MustQuery("explain format = 'brief' " + sql).Rows())
+			require.Contains(t, plan, "IndexRangeScan")
+			require.Contains(t, plan, "index:"+index+"(")
+			require.Contains(t, plan, "range:"+indexRange)
+		}
+		checkRange("select * from t1 where a + 1 = 42", "hypo_expr_a", "[42,42]")
+		testKit.MustExec("create index hypo_expr_bc type hypo on t1 ((b + 2), c)")
+		checkRange("select b + 2, c from t1 where b + 2 = 43 and c = 44", "hypo_expr_bc", "[43 44,43 44]")
+		showCreate := testKit.MustQuery("show create table t1").Rows()[0][1].(string)
+		require.Contains(t, showCreate, "KEY `hypo_expr_a` ((`a` + 1)) /* HYPO INDEX */")
+		require.Contains(t, showCreate, "KEY `hypo_expr_bc` ((`b` + 2),`c`) /* HYPO INDEX */")
+
+		// The hypothetical columns must not leak into execution or another session.
+		testKit.MustQuery("select * from t1").Check(testkit.Rows("41 41 44"))
+		other := testkit.NewTestKit(t, testKit.Session().GetStore())
+		require.NotContains(t, other.MustQuery("show create table test.t1").Rows()[0][1], "HYPO INDEX")
+		other.MustQuery("select * from test.t1").Check(testkit.Rows("41 41 44"))
+		tbl, err := domain.GetDomain(testKit.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+		require.NoError(t, err)
+		require.Len(t, tbl.Meta().Columns, 3)
+		require.Empty(t, tbl.Meta().Indices)
+
+		testKit.MustExec("drop hypo index hypo_expr_a on t1")
+		checkRange("select b + 2, c from t1 where b + 2 = 43 and c = 44", "hypo_expr_bc", "[43 44,43 44]")
+		testKit.MustExec("drop hypo index hypo_expr_bc on t1")
+		testKit.MustNotHavePlan("select * from t1 where a + 1 = 42", "IndexRangeScan")
+		require.NotContains(t, testKit.MustQuery("show create table t1").Rows()[0][1], "HYPO INDEX")
 
 		// invalid cases
 		testKit.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_a) */ a from t1 where a=1`, "TableFullScan")
@@ -2467,9 +2536,9 @@ func TestIssue48257(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		h := dom.StatsHandle()
 		oriLease := h.Lease()
-		h.SetLease(1)
+		h.SetLeaseForTest(1)
 		defer func() {
-			h.SetLease(oriLease)
+			h.SetLeaseForTest(oriLease)
 		}()
 		tk.MustExec("use test")
 
@@ -2478,7 +2547,7 @@ func TestIssue48257(t *testing.T) {
 		testutil.HandleNextDDLEventWithTxn(h)
 		tk.MustExec("insert into t value(1)")
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		tk.MustExec("analyze table t all columns")
 		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
 			"TableReader 1.00 root  data:TableFullScan",
@@ -2486,7 +2555,7 @@ func TestIssue48257(t *testing.T) {
 		))
 		tk.MustExec("insert into t value(1)")
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
 			"TableReader 2.00 root  data:TableFullScan",
 			"└─TableFullScan 2.00 cop[tikv] table:t keep order:false",
@@ -2504,7 +2573,7 @@ func TestIssue48257(t *testing.T) {
 		testutil.HandleNextDDLEventWithTxn(h)
 		tk.MustExec("insert into t1 value(1)")
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		tk.MustExec("analyze table t1 all columns")
 		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 			"TableReader 1.00 root  data:TableFullScan",
@@ -2512,7 +2581,7 @@ func TestIssue48257(t *testing.T) {
 		))
 		tk.MustExec("insert into t1 value(1)")
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 			"TableReader 2.00 root  data:TableFullScan",
 			"└─TableFullScan 2.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -2522,7 +2591,7 @@ func TestIssue48257(t *testing.T) {
 			"TableReader 10000.00 root  data:TableFullScan",
 			"└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 		))
-		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+		require.NoError(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 			"TableReader 1.00 root  data:TableFullScan",
 			"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false",
@@ -2779,7 +2848,7 @@ func TestIndexScanSeekCost(t *testing.T) {
 	// and the table falls back to pseudo stats, which disables pruning.
 	dom := domain.GetDomain(tk.Session())
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Usage().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
 	tk.MustExec("set @@tidb_cost_model_version = 2")
 
@@ -2826,10 +2895,10 @@ func TestIndexScanSeekCost(t *testing.T) {
 	tk.MustExec("create table t3 (a int, b int, c int, d int, e int, f int, key idx(a, b, c, d, e, f))")
 	tk.MustExec(`insert into t3 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 100000)
 		select n % 2, n % 10, n % 1000, n, n, n from cte`)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Usage().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t2")
 	tk.MustExec("analyze table t3")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	const where2 = "a in (1,2,3,4,5,6,7,8,9,10,11,12) and b in (1,2,3,4) and c in (1,2,3) and d in (1,2,3,4,5,6,7,8,9) and e = -1"
 	tk.MustQuery("explain format='brief' select * from t2 where " + where2).Check(testkit.Rows(
@@ -2860,9 +2929,9 @@ func TestIndexScanSeekCost(t *testing.T) {
 	tk.MustExec("create table t4 (a int, b int, c int, d int, e int, primary key(c, d) clustered, key idx(a, b))")
 	tk.MustExec(`insert into t4 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 20000)
 		select n % 1000, n % 7, n % 13, n, n from cte`)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Usage().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t4")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	const where4 = "a = 1 and b in (1,2,3,4,5,6) and c in (1,2,3,4,5,6,7,8,9,10) and d in (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20)"
 	tk.MustQuery("explain format='brief' select * from t4 use index(idx) where "+where4).CheckAt([]int{0, 4}, [][]any{
 		{"IndexLookUp", ""},
@@ -2923,4 +2992,22 @@ func TestIssue72090(t *testing.T) {
 		tk.MustQuery("select count(*) from (select k, max(c0) as m from t group by k) d where inet_aton('')").Check(testkit.Rows("0"))
 		requirePlanOrder(t, "select * from (select k, max(c0) as m from t group by k) d where inet_aton('')", "Agg", "Selection")
 	})
+}
+
+func TestUnionAllCorrelatedQuantifiedPredicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_union_fd (id bigint)")
+	tk.MustExec("create view v_union_fd as select * from t_union_fd union all select * from t_union_fd")
+	query := "select 1 from v_union_fd as t1 where (t1.id < all (select 1)) in (select t1.id)"
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery("explain " + query)
+	corrAllQuery := "select t1.id from v_union_fd as t1 where t1.id <= all (select t1.id)"
+	tk.MustQuery(corrAllQuery).Check(testkit.Rows())
+	tk.MustQuery("explain " + corrAllQuery)
+	tk.MustExec("insert into t_union_fd values (null), (-1), (0), (1), (2)")
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery("select t1.id from v_union_fd as t1 where (t1.id <= all (select 1)) in (select t1.id)").Check(testkit.Rows("1", "1"))
+	tk.MustQuery(corrAllQuery).Sort().Check(testkit.Rows("-1", "-1", "0", "0", "1", "1", "2", "2"))
 }

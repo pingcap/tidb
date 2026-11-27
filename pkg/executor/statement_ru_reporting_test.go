@@ -30,12 +30,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func (report *statementRUFullReport) matrix() (units [statementRUEngineCount][statementRUOperatorCount]ruv2.StmtUnits) {
+	for i := range report.count {
+		entry := report.at(i)
+		units[entry.engine][entry.operator] = entry.units
+	}
+	return units
+}
+
 func requireStatementRUReportConservation(t *testing.T, finalized statementRUFinalizedSnapshot) {
 	t.Helper()
 	require.NotNil(t, finalized.report)
 	var total ruv2.StmtUnits
 	var engineRU [statementRUEngineCount]float64
-	for engine, operators := range finalized.report.units {
+	for engine, operators := range finalized.report.matrix() {
 		for _, units := range operators {
 			total = total.Add(units)
 			result, ok := ruv2.Calculate(units, currentStatementRUWeights())
@@ -78,8 +86,8 @@ func TestStatementRUReportingModes(t *testing.T) {
 			require.Equal(t, statementRUEngineResult{TiDB: 1 + float64(len(statementRUSimpleSelectSQLForTest)), TiKV: 31}, finalized.engineRU)
 			if mode == config.RUReportModeFull {
 				requireStatementRUReportConservation(t, finalized)
-				require.Equal(t, float64(1), finalized.report.units[statementRUTiKV][statementRURangeScan].OperatorNum)
-				require.Equal(t, float64(10), finalized.report.units[statementRUTiKV][statementRUReader].ScanBytes)
+				require.Equal(t, float64(1), finalized.report.matrix()[statementRUTiKV][statementRURangeScan].OperatorNum)
+				require.Equal(t, float64(10), finalized.report.matrix()[statementRUTiKV][statementRUReader].ScanBytes)
 			} else {
 				require.Nil(t, finalized.report)
 			}
@@ -148,12 +156,61 @@ func TestStatementRUFullReportFreeze(t *testing.T) {
 			labels[label.GetName()] = label.GetValue()
 		}
 		require.Equal(t, map[string]string{"engine": "tidb", "opclass": "projection", "unit": "cpu_work"}, labels)
-		// A later zero contribution neither creates series nor removes accumulated work.
-		report.units[statementRUTiDB][statementRUProjection] = ruv2.StmtUnits{}
-		publishStatementRUFullMetrics(finalized)
+		// Publishing an all-zero report must preserve the existing series.
+		zero := &statementRUFullReport{}
+		zero.add(statementRUTiDB, statementRUProjection, ruv2.StmtUnits{})
+		publishStatementRUFullMetrics(statementRUFinalizedSnapshot{report: zero, calibrationState: statementRUCalibrationIncomplete})
 		after, err := registry.Gather()
 		require.NoError(t, err)
 		require.Equal(t, families, after)
+
+		// The same labels must now update the restored collector.
+		metrics.RUV2Unit = original
+		counter := original.WithLabelValues("tidb", "projection", metrics.LblRUV2UnitCPUWork)
+		before := testutil.ToFloat64(counter)
+		finalized.calibrationState = statementRUCalibrationComplete
+		complete := metrics.RUV2Statements.WithLabelValues("success", "complete")
+		completedBefore := testutil.ToFloat64(complete)
+		publishStatementRUFullMetrics(finalized)
+		require.Equal(t, before+3, testutil.ToFloat64(counter))
+		require.Equal(t, completedBefore+1, testutil.ToFloat64(complete))
+		after, err = registry.Gather()
+		require.NoError(t, err)
+		require.Equal(t, families, after)
+	})
+	t.Run("freeze adds three statement pairs at inline limit", func(t *testing.T) {
+		calculator := newStatementRUCalculator(statementRUCalculationSetup{fullReport: true, frontendCompileBytes: 11})
+		for _, op := range []statementRUOperator{statementRUProjection, statementRUSelection, statementRULimit, statementRUSort} {
+			calculator.report.add(statementRUTiDB, op, ruv2.StmtUnits{})
+		}
+		calculator.units.WriteStatement, calculator.units.WriteKeys = 1, 7
+		var frozen statementRUFinalizedSnapshot
+		allocs := testing.AllocsPerRun(100, func() {
+			frozen, _ = calculator.finalize()
+		})
+		// One allocation for the report and one for all three overflow entries.
+		require.LessOrEqual(t, allocs, 2.0)
+		require.Len(t, frozen.report.overflow, 3)
+		require.Empty(t, calculator.report.overflow)
+		requireStatementRUReportConservation(t, frozen)
+	})
+	t.Run("freeze overflow entries", func(t *testing.T) {
+		calculator := newStatementRUCalculator(statementRUCalculationSetup{fullReport: true})
+		// Pre-register frontend so finalize updates an existing entry: appending
+		// a new one could reallocate the overflow slice and hide an alias.
+		calculator.report.add(statementRUTiDB, statementRUFrontend, ruv2.StmtUnits{})
+		work := ruv2.StmtUnits{CPUWork: 1}
+		for _, op := range []statementRUOperator{statementRUProjection, statementRUSelection, statementRULimit, statementRUSort} {
+			calculator.units = calculator.units.Add(work)
+			calculator.recordOperatorUnits(statementRUTiDB, work)
+			calculator.report.add(statementRUTiDB, op, work)
+		}
+		require.Len(t, calculator.report.overflow, 1)
+		frozen, ok := calculator.finalize()
+		require.True(t, ok)
+		calculator.report.add(statementRUTiDB, statementRUSort, work)
+		require.Equal(t, 2.0, calculator.report.matrix()[statementRUTiDB][statementRUSort].CPUWork)
+		require.Equal(t, 1.0, frozen.report.matrix()[statementRUTiDB][statementRUSort].CPUWork)
 	})
 	calculator := newStatementRUCalculator(statementRUCalculationSetup{fullReport: true, frontendCompileBytes: 11})
 	local := ruv2.StmtUnits{CPUWork: 2, HashStateRows: 3, JoinOutputRows: 5, OperatorNum: 7}
@@ -170,9 +227,9 @@ func TestStatementRUFullReportFreeze(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, first, second)
 	requireStatementRUReportConservation(t, first)
-	require.Equal(t, float64(1), first.report.units[statementRUTiDB][statementRUWrite].WriteStatement)
-	require.Equal(t, float64(31), first.report.units[statementRUTiKV][statementRUKVWrite].WriteKeys)
-	require.Equal(t, float64(37), first.report.units[statementRUTiKV][statementRUKVWrite].WriteBytes)
+	require.Equal(t, float64(1), first.report.matrix()[statementRUTiDB][statementRUWrite].WriteStatement)
+	require.Equal(t, float64(31), first.report.matrix()[statementRUTiKV][statementRUKVWrite].WriteKeys)
+	require.Equal(t, float64(37), first.report.matrix()[statementRUTiKV][statementRUKVWrite].WriteBytes)
 	calculator.report.add(statementRUTiDB, statementRUHashAgg, local)
 	require.Equal(t, first, second)
 	requireStatementRUReportConservation(t, first)

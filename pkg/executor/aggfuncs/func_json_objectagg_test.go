@@ -15,6 +15,7 @@
 package aggfuncs_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -253,6 +254,105 @@ func TestMemJsonObjectagg(t *testing.T) {
 		}
 		for _, test := range tests {
 			testMultiArgsAggMemFunc(t, test)
+		}
+	}
+}
+
+func TestMemJsonObjectaggReplacement(t *testing.T) {
+	large := strings.Repeat("x", 4096)
+	smallJSON := types.CreateBinaryJSON("a")
+	largeJSON := types.CreateBinaryJSON(large)
+	smallJSONSize, largeJSONSize := int64(len(smallJSON.Value)+1), int64(len(largeJSON.Value)+1)
+	tests := []struct {
+		name         string
+		valueType    *types.FieldType
+		values       []any
+		payloadSizes []int64
+	}{
+		{
+			name:         "string",
+			valueType:    types.NewFieldType(mysql.TypeVarString),
+			values:       []any{nil, "a", large, "b", "c", nil, nil, "d"},
+			payloadSizes: []int64{0, 1, 4096, 1, 1, 0, 0, 1},
+		},
+		{
+			name:         "json",
+			valueType:    types.NewFieldType(mysql.TypeJSON),
+			values:       []any{nil, smallJSON, largeJSON, smallJSON, smallJSON, nil, nil, smallJSON},
+			payloadSizes: []int64{0, smallJSONSize, largeJSONSize, smallJSONSize, smallJSONSize, 0, 0, smallJSONSize},
+		},
+		{
+			name:         "opaque",
+			valueType:    types.NewFieldTypeBuilder().SetType(mysql.TypeBlob).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+			values:       []any{nil, []byte("a"), []byte(large), []byte("b"), []byte("c"), nil, nil, []byte("d")},
+			payloadSizes: []int64{0, 2, 4097, 2, 2, 0, 0, 2},
+		},
+		{
+			name:         "integer",
+			valueType:    types.NewFieldType(mysql.TypeLonglong),
+			values:       []any{nil, int64(1), int64(2), nil, nil, int64(3)},
+			payloadSizes: []int64{0, aggfuncs.DefInt64Size, aggfuncs.DefInt64Size, 0, 0, aggfuncs.DefInt64Size},
+		},
+	}
+	for _, test := range tests {
+		for _, mode := range []string{"update", "merge", "batch"} {
+			t.Run(test.name+"/"+mode, func(t *testing.T) {
+				ctx := mock.NewContext()
+				keyType := types.NewFieldType(mysql.TypeVarString)
+				args := []expression.Expression{
+					&expression.Column{Index: 0, RetType: keyType},
+					&expression.Column{Index: 1, RetType: test.valueType},
+				}
+				desc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncJsonObjectAgg, args, false)
+				require.NoError(t, err)
+				fn := aggfuncs.Build(ctx, desc, 0)
+				pr, _ := fn.AllocPartialResult()
+				const key = "duplicate"
+				input := chunk.NewChunkWithCapacity([]*types.FieldType{keyType, test.valueType}, len(test.values))
+				rows := make([]chunk.Row, 0, len(test.values))
+				for i, value := range test.values {
+					input.AppendString(0, key)
+					datum := types.NewDatum(value)
+					input.AppendDatum(1, &datum)
+					rows = append(rows, input.GetRow(i))
+				}
+				// Repeating after reset also checks that old payloads are no longer charged.
+				for range 2 {
+					if mode == "batch" {
+						delta, err := fn.UpdatePartialResult(ctx, rows, pr)
+						require.NoError(t, err)
+						require.Equal(t, int64(len(key))+aggfuncs.DefInterfaceSize+test.payloadSizes[len(rows)-1], delta)
+					} else {
+						for i, row := range rows {
+							var delta int64
+							if mode == "merge" {
+								src, _ := fn.AllocPartialResult()
+								_, err = fn.UpdatePartialResult(ctx, []chunk.Row{row}, src)
+								require.NoError(t, err)
+								delta, err = fn.MergePartialResult(ctx, src, pr)
+							} else {
+								delta, err = fn.UpdatePartialResult(ctx, []chunk.Row{row}, pr)
+							}
+							require.NoError(t, err)
+							expected := test.payloadSizes[i]
+							if i == 0 {
+								expected += int64(len(key)) + aggfuncs.DefInterfaceSize
+							} else {
+								expected -= test.payloadSizes[i-1]
+							}
+							require.Equal(t, expected, delta, "value %d", i)
+						}
+					}
+					value := test.values[len(rows)-1]
+					if buf, ok := value.([]byte); ok {
+						value = types.Opaque{TypeCode: test.valueType.GetType(), Buf: buf}
+					}
+					output := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+					require.NoError(t, fn.AppendFinalResult2Chunk(ctx, pr, output))
+					require.Equal(t, types.CreateBinaryJSON(map[string]any{key: value}), output.GetRow(0).GetJSON(0))
+					fn.ResetPartialResult(pr)
+				}
+			})
 		}
 	}
 }

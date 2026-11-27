@@ -15,6 +15,7 @@
 package domain
 
 import (
+	"github.com/pingcap/tidb/pkg/statistics/handle"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
 
@@ -26,4 +27,13 @@ func GetDomain(ctx contextutil.ValueStoreContext) *Domain {
 		return v
 	}
 	return nil
+}
+
+// GetAnalyzeStatsHandle returns the stats handle that ANALYZE uses in the session.
+func GetAnalyzeStatsHandle(ctx contextutil.ValueStoreContext) *handle.AnalyzeHandle {
+	h := GetDomain(ctx).StatsHandle()
+	if h == nil {
+		return nil
+	}
+	return h.AnalyzeHandle()
 }

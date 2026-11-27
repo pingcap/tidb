@@ -780,6 +780,20 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if err != nil {
 		return ver, err
 	}
+	pi := tblInfo.GetPartitionInfo()
+	if tblInfo.Affinity != nil &&
+		tblInfo.Affinity.Level == ast.TableAffinityLevelPartition && pi != nil &&
+		len(args.NewPartitionIDs) < len(pi.Definitions) {
+		// Reserve additional IDs and persist them with the job before creating
+		// external groups. A failed truncate must not retain rolled-back IDs.
+		moreIDs, err := metaMut.GenGlobalIDs(len(pi.Definitions) - len(args.NewPartitionIDs))
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		args.NewPartitionIDs = append(args.NewPartitionIDs, moreIDs...)
+		job.FillArgs(args)
+		return 0, nil
+	}
 	if jobCtx.oldDDLCtx != nil {
 		if err := w.truncateTTLTableInExternalWorkload(jobCtx.ctx, job, oldTblInfo, args.NewTableID); err != nil {
 			return ver, err
@@ -911,21 +925,18 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	}
 	preSplitAndScatterTable(w.sess.Context, jobCtx.store, tblInfo, scatterScope)
 
-	// Create new affinity groups first (critical operation - must succeed)
+	// Create new affinity groups first (critical operation - must succeed).
+	// If the job is cancelled, deleteAffinityGroupsOfCancelledJob deletes the
+	// replacement groups, including groups PD created before it failed.
 	if tblInfo.Affinity != nil {
 		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 	}
-
-	// Delete old affinity groups (best-effort cleanup - ignore errors)
-	// TRUNCATE TABLE: always try to delete old table's affinity groups
-	if oldTblInfo.Affinity != nil {
-		if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
-			logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
-		}
-	}
+	// Keep the old table's affinity groups until this step commits. A later
+	// failure can still cancel the job and restore the old table metadata.
+	// cleanupTruncateTableAffinityGroupsAfterCommit deletes them afterwards.
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -943,6 +954,28 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	args.NewPartitionIDs = newPartitionIDs
 	job.FillFinishedArgs(args)
 	return ver, nil
+}
+
+// cleanupTruncateTableAffinityGroupsAfterCommit deletes the affinity groups of
+// the table replaced by a TRUNCATE TABLE job that has committed as done. It is
+// best effort: a failure leaves an unused group on the old table ID.
+func cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx *jobContext, job *model.Job) {
+	newTblInfo := job.BinlogInfo.TableInfo
+	if newTblInfo == nil || newTblInfo.Affinity == nil {
+		return
+	}
+	args, err := model.GetFinishedTruncateTableArgs(job)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to decode truncate table args for post-commit affinity cleanup",
+			zap.Int64("jobID", job.ID), zap.Error(err))
+		return
+	}
+	// TRUNCATE TABLE keeps the affinity level, and job.TableID is the old table ID.
+	oldTblInfo := &model.TableInfo{ID: job.TableID, Name: newTblInfo.Name, Affinity: newTblInfo.Affinity}
+	oldDefs := partitionDefinitionsFromIDs(args.OldPartitionIDs)
+	if err := deleteTableAffinityGroupsWithTimeout(jobCtx, oldTblInfo, oldDefs); err != nil {
+		logutil.DDLLogger().Warn("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+	}
 }
 
 func (w *worker) truncateTTLTableInExternalWorkload(
@@ -1174,7 +1207,7 @@ func (w *worker) onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
 	}
-	if err = w.updateMaskingPolicyNamesAfterRename(jobCtx.stepCtx, tblInfo.ID,
+	if err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tblInfo.ID,
 		oldSchemaName, newDB.Name, oldTableName, tableName); err != nil {
 		return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 	}
@@ -1226,7 +1259,7 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 			job.State = model.JobStateCancelled
 			return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", info.NewSchemaID))
 		}
-		if err = w.updateMaskingPolicyNamesAfterRename(jobCtx.stepCtx, tblInfo.ID,
+		if err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tblInfo.ID,
 			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName); err != nil {
 			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 		}
@@ -2244,7 +2277,7 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	oldTblInfo := tblInfo.Clone()
+	oldAffinity := tblInfo.Affinity
 
 	if err = validateTableAffinity(tblInfo, args.Affinity); err != nil {
 		job.State = model.JobStateCancelled
@@ -2252,24 +2285,13 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	}
 	tblInfo.Affinity = args.Affinity
 
-	// Create new affinity groups first (critical operation - must succeed)
+	// Create new affinity groups first (critical operation - must succeed).
+	// If the job is cancelled, deleteAffinityGroupsOfCancelledJob deletes the
+	// groups of a new level, including groups PD created before it failed.
 	if tblInfo.Affinity != nil {
 		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
-		}
-	}
-
-	// Delete old affinity groups (best-effort cleanup - ignore errors)
-	// ALTER TABLE AFFINITY: only delete when old table had affinity configuration
-	// This ensures 'ALTER TABLE AFFINITY = 'none'' correctly cleans up stale affinity groups
-	// Skip deletion if the affinity level remains the same to ensure idempotency
-	if oldTblInfo.Affinity != nil {
-		// Only delete if affinity is removed or level changed (same level means same group IDs)
-		if tblInfo.Affinity == nil || oldTblInfo.Affinity.Level != tblInfo.Affinity.Level {
-			if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
-				logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
-			}
 		}
 	}
 
@@ -2279,7 +2301,35 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	// The groups of the old level stay until the job commits, because a later
+	// failure in this step can still cancel the job and keep the old affinity.
+	// cleanupAlterTableAffinityGroupsAfterCommit deletes them afterwards.
+	args.OldAffinity = oldAffinity
+	job.FillArgs(args)
 	return ver, nil
+}
+
+// cleanupAlterTableAffinityGroupsAfterCommit deletes the groups of the old
+// affinity level after an ALTER TABLE ... AFFINITY job has committed as done.
+// It is best effort: a failure leaves the old groups in PD.
+func cleanupAlterTableAffinityGroupsAfterCommit(jobCtx *jobContext, job *model.Job) {
+	newTblInfo := job.BinlogInfo.TableInfo
+	args, err := model.GetAlterTableAffinityArgs(job)
+	if err != nil || newTblInfo == nil {
+		logutil.DDLLogger().Warn("failed to get alter table affinity args for post-commit affinity cleanup",
+			zap.Int64("jobID", job.ID), zap.Error(err))
+		return
+	}
+	oldAffinity := args.OldAffinity
+	// Groups of an unchanged level are the table's current groups.
+	if oldAffinity == nil || (newTblInfo.Affinity != nil && newTblInfo.Affinity.Level == oldAffinity.Level) {
+		return
+	}
+	// ALTER TABLE ... AFFINITY keeps the table ID and partitions.
+	oldTblInfo := &model.TableInfo{ID: newTblInfo.ID, Name: newTblInfo.Name, Affinity: oldAffinity, Partition: newTblInfo.Partition}
+	if err := deleteTableAffinityGroupsWithTimeout(jobCtx, oldTblInfo, nil); err != nil {
+		logutil.DDLLogger().Warn("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+	}
 }
 
 func (w *worker) onAlterTableSetRegionSplitPolicy(jobCtx *jobContext, job *model.Job) (ver int64, err error) {

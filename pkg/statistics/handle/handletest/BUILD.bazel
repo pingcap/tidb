@@ -20,7 +20,6 @@ go_test(
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/cache",
         "//pkg/statistics/handle/ddl/testutil",
-        "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/table",
         "//pkg/testkit",

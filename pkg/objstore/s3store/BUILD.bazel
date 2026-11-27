@@ -73,6 +73,7 @@ go_test(
     deps = [
         "//br/pkg/errors",
         "//pkg/objstore",
+        "//pkg/objstore/compressedio",
         "//pkg/objstore/objectio",
         "//pkg/objstore/recording",
         "//pkg/objstore/s3like",
@@ -86,6 +87,7 @@ go_test(
         "@com_github_aws_aws_sdk_go_v2_service_s3//types",
         "@com_github_aws_smithy_go//:smithy-go",
         "@com_github_aws_smithy_go//transport/http",
+        "@com_github_ks3sdklib_aws_sdk_go//aws",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",

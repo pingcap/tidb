@@ -1470,13 +1470,13 @@ func TestPurgeMaterializedViewLogUpdatesStatsMetaRowCount(t *testing.T) {
 	mlogID := mlogTable.Meta().ID
 
 	tk.MustExec("insert into t_purge_stats_meta values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(true))
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", mlogID)).
 		Check(testkit.Rows("5 5"))
 
 	tk.MustExec("purge materialized view log on t_purge_stats_meta")
 	tk.MustQuery("select count(*) from `$mlog$t_purge_stats_meta`").Check(testkit.Rows("0"))
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(true))
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", mlogID)).
 		Check(testkit.Rows("10 0"))
 }
@@ -1620,7 +1620,7 @@ func TestPurgeMaterializedViewLogInternalSQLNoScheduleSetsNextUnixSecondsNull(t 
 	)).Check(testkit.Rows("auto"))
 }
 
-func TestMViewEnableControlsMLogCommitTSAccessAndPurge(t *testing.T) {
+func TestMViewCommitTSAccessIndependentOfMViewEnable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1631,12 +1631,18 @@ func TestMViewEnableControlsMLogCommitTSAccessAndPurge(t *testing.T) {
 
 	tk.MustQuery("select _tidb_commit_ts > 0 from `$mlog$t_mlog_commit_ts_gate`").Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_mview_enable = off")
-	err := tk.ExecToErr("select _tidb_commit_ts from `$mlog$t_mlog_commit_ts_gate`")
-	require.ErrorContains(t, err, "Usage of column name '_tidb_commit_ts' is not supported for now")
+	tk.MustQuery("select _tidb_commit_ts > 0 from `$mlog$t_mlog_commit_ts_gate`").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t_mlog_commit_ts_gate where _tidb_commit_ts = 0")
+	tk.MustQuery("select count(*) from t_mlog_commit_ts_gate").Check(testkit.Rows("1"))
 
-	// Pooled purge sessions start from the default global value (OFF), so a
-	// successful purge proves they enable the same session capability locally.
+	// Pooled purge sessions start from the default global value (OFF).
+	// A commit_ts predicate that matches nothing must leave the log row in place.
 	tk.MustExec("set tidb_mview_enable = on")
+	mustExecMViewPurgeInternal(t, tk, "delete from `$mlog$t_mlog_commit_ts_gate` where _tidb_commit_ts = 0")
+	tk.MustQuery("select count(*) from `$mlog$t_mlog_commit_ts_gate`").Check(testkit.Rows("1"))
+	mustExecMViewPurgeInternal(t, tk, "delete from `$mlog$t_mlog_commit_ts_gate` where _tidb_commit_ts > 0 limit 1")
+	tk.MustQuery("select count(*) from `$mlog$t_mlog_commit_ts_gate`").Check(testkit.Rows("0"))
+	tk.MustExec("insert into t_mlog_commit_ts_gate values (2, 20)")
 	tk.MustExec("purge materialized view log on t_mlog_commit_ts_gate")
 	tk.MustQuery("select count(*) from `$mlog$t_mlog_commit_ts_gate`").Check(testkit.Rows("0"))
 }

@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -218,7 +218,7 @@ func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context,
 	if len(targetIDs) == 0 {
 		return false, nil
 	}
-	return true, domain.GetDomain(sctx).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
+	return true, domain.GetDomain(sctx).StatsHandle().Usage().DumpStatsDeltaToKV(true, targetIDs...)
 }
 
 func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
@@ -308,7 +308,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 			metrics.ManualAnalyzeCounter.WithLabelValues("succ").Inc()
 		}
 	}()
-	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(e.Ctx())
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
 	ctx, stop := e.buildAnalyzeKillCtx(ctx)
@@ -478,7 +478,7 @@ func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, results
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
-func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
+func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *statshandle.AnalyzeHandle, is infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
 	var (
 		filteredTasks       []*analyzeTask
 		skippedTables       []string
@@ -542,7 +542,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is 
 }
 
 // getLockedTableAndPartitionIDs queries the locked tables and partitions.
-func getLockedTableAndPartitionIDs(statsHandle *handle.Handle, tasks []*analyzeTask) (map[int64]struct{}, error) {
+func getLockedTableAndPartitionIDs(statsHandle *statshandle.AnalyzeHandle, tasks []*analyzeTask) (map[int64]struct{}, error) {
 	tidAndPids := make([]int64, 0, len(tasks))
 	// Check the locked tables in one transaction.
 	// We need to check all tables and its partitions.
@@ -787,7 +787,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	globalStatsMap globalStatsMap,
 	resultsCh <-chan *statistics.AnalyzeResults,
 ) error {
-	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(e.Ctx())
 	wg := util.NewWaitGroupPool(e.gp)
 	saveResultsCh := make(chan *statistics.AnalyzeResults, saveStatsConcurrency)
 	errCh := make(chan error, saveStatsConcurrency)
@@ -890,7 +890,7 @@ func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error 
 
 // trySendAnalyzeResult may drop and destroy result when the statement is already
 // aborting, so callers should not reuse result after calling it.
-func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
+func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *statshandle.AnalyzeHandle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
 	select {
 	case resultsCh <- result:
 		failpoint.InjectCall("analyzeResultSent")
@@ -914,7 +914,7 @@ func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *han
 // ctx must be from AnalyzeExec.buildAnalyzeKillCtx
 func (e *AnalyzeExec) analyzeWorker(ctx context.Context, taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
-	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(e.Ctx())
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -985,14 +985,14 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	} else {
 		instance = net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
 	}
-	statsHandle := domain.GetDomain(ctx).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(ctx)
 	err = statsHandle.InsertAnalyzeJob(job, instance, ctx.GetSessionVars().ConnectionID)
 	if err != nil {
 		statslogutil.StatsErrVerboseLogger().Error("failed to insert analyze job", zap.Error(err))
 	}
 }
 
-func finishJobWithLog(statsHandle *handle.Handle, job *statistics.AnalyzeJob, analyzeErr error) {
+func finishJobWithLog(statsHandle *statshandle.AnalyzeHandle, job *statistics.AnalyzeJob, analyzeErr error) {
 	statsHandle.FinishAnalyzeJob(job, analyzeErr, statistics.TableAnalysisJob)
 	if job != nil {
 		var state string
