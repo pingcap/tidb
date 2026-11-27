@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -117,6 +118,60 @@ func TestSessionStatesReadTimestamps(t *testing.T) {
 		dst.MustExec("set time_zone='America/New_York'")
 		dst.MustExec("set session_states " + strconv.Quote(state))
 		require.Equal(t, wantTS, dst.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
+	})
+	t.Run("snapshot schema", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		writer := testkit.NewTestKit(t, store)
+		writer.MustExec("insert into mysql.tidb values ('tikv_gc_safe_point', '20160102-15:04:05 -0700', '') on duplicate key update variable_value='20160102-15:04:05 -0700'")
+		writer.MustExec("create table test.snapshot_schema (id int primary key, a int)")
+		writer.MustExec("insert into test.snapshot_schema values (1, 11)")
+		writer.MustQuery("select sleep(0.01)").Check(testkit.Rows("0"))
+		src := testkit.NewTestKit(t, store)
+		src.MustExec("set @snap=now(6)")
+		src.MustExec("set tidb_snapshot=@snap")
+		state := src.MustQuery("show session_states").Rows()[0][0].(string)
+		// Recreate the table with another schema after the snapshot.
+		writer.MustExec("drop table test.snapshot_schema")
+		writer.MustExec("create table test.snapshot_schema (id int primary key, a int, b int)")
+		writer.MustExec("insert into test.snapshot_schema values (2, 22, 222)")
+		src.MustQuery("select * from test.snapshot_schema").Check(testkit.Rows("1 11"))
+
+		// The restored session reads the snapshot with the snapshot's schema.
+		dst := testkit.NewTestKit(t, store)
+		dst.MustExec("set session_states " + strconv.Quote(state))
+		require.Equal(t, src.Session().GetSessionVars().SnapshotTS, dst.Session().GetSessionVars().SnapshotTS)
+		dst.MustQuery("select * from test.snapshot_schema").Check(testkit.Rows("1 11"))
+	})
+	t.Run("snapshot schema load fails", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("insert into mysql.tidb values ('tikv_gc_safe_point', '20160102-15:04:05 -0700', '') on duplicate key update variable_value='20160102-15:04:05 -0700'")
+		tk.MustQuery("select sleep(0.01)").Check(testkit.Rows("0"))
+		uncached := tk.MustQuery("select now(6)").Rows()[0][0].(string)
+		// Evict the schema version of that timestamp from the schema cache.
+		for i := range vardef.SchemaVersionCacheLimit.Load() + 1 {
+			tk.MustExec(fmt.Sprintf("create table test.evict_%d (a int)", i))
+		}
+		tk.MustQuery("select sleep(0.01)").Check(testkit.Rows("0"))
+		tk.MustExec("set @snap=now(6)")
+		tk.MustExec("set tidb_snapshot=@snap")
+		vars := tk.Session().GetSessionVars()
+		oldTS, oldSchema := vars.SnapshotTS, vars.SnapshotInfoschema
+		require.NotNil(t, oldSchema)
+		// Restore the uncached snapshot, and make loading its schema fail.
+		state := tk.MustQuery("show session_states").Rows()[0][0].(string)
+		snap := tk.MustQuery("select @@tidb_snapshot").Rows()[0][0].(string)
+		require.Contains(t, state, snap)
+		state = strings.Replace(state, snap, uncached, 1)
+		fp := "github.com/pingcap/tidb/pkg/infoschema/issyncer/failed-fetch-schemas-with-tables"
+		require.NoError(t, failpoint.Enable(fp, "return"))
+		_, err := tk.Exec("set session_states " + strconv.Quote(state))
+		require.NoError(t, failpoint.Disable(fp))
+		require.ErrorContains(t, err, "failed to fetch schemas with tables")
+		// The timestamp and the schema still belong to the same snapshot.
+		require.Equal(t, oldTS, vars.SnapshotTS)
+		require.Same(t, oldSchema, vars.SnapshotInfoschema)
+		tk.MustQuery("select @@tidb_snapshot").Check(testkit.Rows(snap))
 	})
 	store := testkit.CreateMockStore(t)
 	writer := testkit.NewTestKit(t, store)
