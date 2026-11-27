@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -383,4 +384,172 @@ func TestIndexJoinInnerCTEStorageConcurrentBuild(t *testing.T) {
 	for range 20 {
 		tk.MustQuery(sql).Check(testkit.Rows(fmt.Sprintf("%d", rowCount)))
 	}
+}
+
+// TestKillDuringIndexHashJoinProbe checks that an index hash join can be killed while it
+// compares rows, even when its result chunk never fills (issue#72481). It covers
+// semi, anti semi, and left outer semi joins, on a hot key (one long chain of
+// outer rows) and on distinct keys (many short chains).
+func TestKillDuringIndexHashJoinProbe(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@cte_max_recursion_depth = 10000")
+	for _, table := range []string{"t_hot_outer", "t_distinct_outer"} {
+		tk.MustExec("create table " + table + " (id bigint primary key, k bigint not null, v bigint not null)")
+	}
+	for _, table := range []string{"t_hot_inner", "t_distinct_inner"} {
+		tk.MustExec("create table " + table + " (k bigint not null, id bigint not null, primary key (k, id) clustered)")
+	}
+	// Hot key: every row has k = 1, so each inner row is compared with all
+	// 4096 outer rows in one chain.
+	tk.MustExec("insert into t_hot_outer with recursive s(n) as (select 1 union all select n + 1 from s where n < 4096) select n, 1, n from s")
+	tk.MustExec("insert into t_hot_inner with recursive s(n) as (select 1 union all select n + 1 from s where n < 8) select 1, n from s")
+	// Distinct keys: each inner row matches one outer row, so every chain is
+	// short and the compares only add up across rows.
+	tk.MustExec("insert into t_distinct_outer with recursive s(n) as (select 1 union all select n + 1 from s where n < 4096) select n, n, n from s")
+	tk.MustExec("insert into t_distinct_inner with recursive s(n) as (select 1 union all select n + 1 from s where n < 4096) select n, n from s")
+	tk.MustExec("analyze table t_hot_outer, t_hot_inner, t_distinct_outer, t_distinct_inner")
+
+	hot := func(q string) string {
+		return fmt.Sprintf(q, "t_hot_outer", "t_hot_inner")
+	}
+	distinct := func(q string) string {
+		return fmt.Sprintf(q, "t_distinct_outer", "t_distinct_inner")
+	}
+	const (
+		exists      = "select /*+ INL_HASH_JOIN(i@sel_2) */ count(*) from %s o where exists (select 1 from %s i where i.k = o.k and i.id <> o.v)"
+		existsNone  = "select /*+ INL_HASH_JOIN(i@sel_2) */ count(*) from %s o where exists (select 1 from %s i where i.k = o.k and mod(i.id, 2) > mod(o.v, 2) + 5)"
+		notExists   = "select /*+ INL_HASH_JOIN(i@sel_2) */ count(*) from %s o where not exists (select 1 from %s i where i.k = o.k and i.id <> o.v)"
+		in          = "select /*+ INL_HASH_JOIN(i@sel_2) */ count(*) from %s o where o.k in (select i.k from %s i where i.id <> o.v)"
+		notIn       = "select /*+ INL_HASH_JOIN(i@sel_2) */ count(*) from %s o where o.k not in (select i.k from %s i where i.id <> o.v)"
+		inSelect    = "select /*+ INL_HASH_JOIN(i@sel_2) */ sum(o.k in (select i.k from %s i where i.id <> o.v)) from %s o"
+		notInSelect = "select /*+ INL_HASH_JOIN(i@sel_2) */ sum(o.k not in (select i.k from %s i where i.id <> o.v)) from %s o"
+	)
+	queries := []string{
+		// Hot key, semi join: most outer rows match, so a few rows are output early and then none.
+		hot(exists),
+		// Hot key, semi join: no outer row matches, so the join outputs nothing at all.
+		// The condition can't become a scan range or a hash key, so every pair is still compared.
+		hot(existsNone),
+		// Hot key, anti semi join.
+		hot(notExists),
+		// Hot key, semi and anti semi joins from IN and NOT IN.
+		hot(in),
+		hot(notIn),
+		// Hot key, left outer semi and anti left outer semi joins: IN and NOT IN in the select list.
+		fmt.Sprintf(inSelect, "t_hot_inner", "t_hot_outer"),
+		fmt.Sprintf(notInSelect, "t_hot_inner", "t_hot_outer"),
+		// Distinct keys, semi join: no outer row matches (i.id = o.v for every pair).
+		distinct(exists),
+		// Distinct keys, anti semi join.
+		distinct(notExists),
+	}
+	for _, q := range queries {
+		tk.MustHavePlan(q, "IndexHashJoin")
+	}
+	// The join keeps the outer order when the outer scan keeps order and no sort
+	// is added above the join.
+	mustKeepOrder := func(q string) {
+		tk.MustHavePlan(q, "IndexHashJoin")
+		tk.MustNotHavePlan(q, "Sort")
+		tk.MustNotHavePlan(q, "TopN")
+		tk.MustQuery("explain format = 'brief' " + q).CheckContain("keep order:true")
+	}
+	// Hot key, semi join that keeps the outer order.
+	ordered := hot("select /*+ INL_HASH_JOIN(i@sel_2) */ o.id from %s o where exists (select 1 from %s i where i.k = o.k and i.id <> o.v) order by o.id")
+	mustKeepOrder(ordered)
+	queries = append(queries, ordered)
+
+	fp := "github.com/pingcap/tidb/pkg/executor/join/killedDuringIndexHashJoinProbe"
+	require.NoError(t, failpoint.Enable(fp, "return(true)"))
+	for _, q := range queries {
+		err := tk.QueryToErr(q)
+		require.Equal(t, exeerrors.ErrQueryInterrupted, err, q)
+	}
+	require.NoError(t, failpoint.Disable(fp))
+
+	// Hot key, semi join that keeps the outer order and matches no row, so every
+	// pair is checked when matching the collected inner rows of each outer row.
+	orderedNone := hot("select /*+ INL_HASH_JOIN(i@sel_2) */ o.id from %s o where exists (select 1 from %s i where i.k = o.k and mod(i.id, 2) > mod(o.v, 2) + 5) order by o.id")
+	mustKeepOrder(orderedNone)
+	fp = "github.com/pingcap/tidb/pkg/executor/join/killedDuringIndexHashJoinMatchInOrder"
+	require.NoError(t, failpoint.Enable(fp, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fp))
+	}()
+	err := tk.QueryToErr(orderedNone)
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err, orderedNone)
+}
+
+// TestIndexHashJoinSemiJoinResult checks that index hash semi joins return the
+// same rows as hash joins on hot and distinct keys (issue#72481). The join keys
+// are not null, so IN and NOT IN can use an index join instead of a cartesian join.
+func TestIndexHashJoinSemiJoinResult(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@cte_max_recursion_depth = 10000")
+	for _, table := range []string{"t_outer", "t_outer_early", "t_outer_distinct"} {
+		tk.MustExec("create table " + table + " (id int primary key, k int not null, v int)")
+	}
+	for _, table := range []string{"t_inner", "t_inner_distinct", "t_inner_long"} {
+		tk.MustExec("create table " + table + " (id int primary key, k int not null, w int, index(k))")
+	}
+	// Rows with key 2 never match, so no task stops probing early.
+	tk.MustExec("insert into t_outer with recursive s(n) as (select 1 union all select n + 1 from s where n < 300) select n, mod(n, 3), if(mod(n, 50) = 0, null, n) from s")
+	// Most rows match early and one in 50 matches late, so tasks stop probing
+	// early, except the last ones, which have NULLs.
+	tk.MustExec("insert into t_outer_early with recursive s(n) as (select 1 union all select n + 1 from s where n < 300) select n, mod(n, 2), if(n > 250 and mod(n, 10) = 0, null, if(mod(n, 50) = 25, 15, mod(n, 3))) from s")
+	tk.MustExec("insert into t_inner with recursive s(n) as (select 1 union all select n + 1 from s where n < 20) select n, mod(n, 2), n from s")
+	// One outer row per key. Keys above 250 have no inner rows, and every 40th key
+	// gets a NULL from its first inner row, which its second row matches or not.
+	tk.MustExec("insert into t_outer_distinct with recursive s(n) as (select 1 union all select n + 1 from s where n < 300) select n, n, if(mod(n, 50) = 0, null, n) from s")
+	tk.MustExec("insert into t_inner_distinct with recursive s(n) as (select 1 union all select n + 1 from s where n < 250) select n, n, if(mod(n, 40) = 0, null, n) from s")
+	tk.MustExec("insert into t_inner_distinct with recursive s(n) as (select 1 union all select n + 1 from s where n < 250) select n + 1000, n, if(mod(n, 80) = 0, null, n) from s")
+	// 4500 inner rows per key, more than one batch of 2000 when matching in outer
+	// order. The first 2000 of each key never match and one of them is NULL.
+	tk.MustExec("insert into t_inner_long with recursive s(n) as (select 1 union all select n + 1 from s where n < 9000) select n, mod(n, 2), if(n <= 4000, if(n = 7, null, 0), n) from s")
+	tk.MustExec("analyze table t_outer, t_outer_early, t_outer_distinct, t_inner, t_inner_distinct, t_inner_long")
+	// Several tasks, each with more rows per key than fit in a chunk.
+	tk.MustExec("set @@tidb_index_join_batch_size = 256")
+	tk.MustExec("set @@tidb_max_chunk_size = 32")
+
+	const (
+		exists      = "select /*+ %[1]s(i@sel_2) */ o.id from %[2]s o where exists (select 1 from %[3]s i where i.k = o.k and i.w > mod(o.v, 25))"
+		notExists   = "select /*+ %[1]s(i@sel_2) */ o.id from %[2]s o where not exists (select 1 from %[3]s i where i.k = o.k and i.w > mod(o.v, 25))"
+		in          = "select /*+ %[1]s(i@sel_2) */ o.id from %[2]s o where o.k in (select i.k from %[3]s i where i.w > mod(o.v, 25))"
+		notIn       = "select /*+ %[1]s(i@sel_2) */ o.id from %[2]s o where o.k not in (select i.k from %[3]s i where i.w > mod(o.v, 25))"
+		inSelect    = "select /*+ %[1]s(i@sel_2) */ o.id, o.k in (select i.k from %[3]s i where i.w > mod(o.v, 25)) from %[2]s o"
+		notInSelect = "select /*+ %[1]s(i@sel_2) */ o.id, o.k not in (select i.k from %[3]s i where i.w > mod(o.v, 25)) from %[2]s o"
+	)
+	check := func() {
+		for _, tables := range [][2]string{{"t_outer", "t_inner"}, {"t_outer_early", "t_inner"}, {"t_outer_distinct", "t_inner_distinct"}, {"t_outer", "t_inner_long"}} {
+			for _, q := range []string{exists, notExists, in, notIn, inSelect, notInSelect} {
+				for _, order := range []string{"", " order by o.id"} {
+					inlSQL := fmt.Sprintf(q, "INL_HASH_JOIN", tables[0], tables[1]) + order
+					hashSQL := fmt.Sprintf(q, "HASH_JOIN", tables[0], tables[1]) + order
+					tk.MustHavePlan(inlSQL, "IndexHashJoin")
+					if order != "" {
+						// The join keeps the outer order: no sort above it.
+						tk.MustNotHavePlan(inlSQL, "Sort")
+						tk.MustNotHavePlan(inlSQL, "TopN")
+						tk.MustQuery("explain format = 'brief' " + inlSQL).CheckContain("keep order:true")
+					}
+					tk.MustNotHavePlan(hashSQL, "IndexHashJoin")
+					if order != "" {
+						// o.id is unique, so the order of the rows must match too.
+						tk.MustQuery(inlSQL).Check(tk.MustQuery(hashSQL).Rows())
+						continue
+					}
+					expected := tk.MustQuery(hashSQL).Sort().Rows()
+					tk.MustQuery(inlSQL).Sort().Check(expected)
+				}
+			}
+		}
+	}
+	check()
+	// Make IN and NOT IN return NULL for unmatched rows with key 1.
+	tk.MustExec("insert into t_inner values (21, 1, null)")
+	check()
 }
