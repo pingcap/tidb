@@ -5566,3 +5566,41 @@ fn test_panic_on_stmt_rollback_killed_txn() {
         );
     }
 }
+
+/// Go realtikv pessimistic_test.go's rows from 754bede38a0: an unchanged
+/// REPLACE locks the physical row, in a partitioned table too, under READ
+/// COMMITTED and REPEATABLE READ.
+#[test]
+fn test_unchanged_replace_locks_the_physical_row() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(5301)).unwrap();
+    let mut tk2 = stack.factory.open_session(session_context(5302)).unwrap();
+    rows(&mut tk, "use test");
+    rows(&mut tk2, "use test");
+    rows(&mut tk, "create table unchanged (id int)");
+    for isolation in ["READ COMMITTED", "REPEATABLE READ"] {
+        for partition in ["", " partition by range(id) (partition p0 values less than (1000), partition p1 values less than (maxvalue))"] {
+            rows(&mut tk, "drop table unchanged");
+            rows(&mut tk, &format!("create table unchanged (id bool zerofill primary key clustered){partition}"));
+            rows(&mut tk, "insert into unchanged values (false), (true)");
+            rows(&mut tk, &format!("set session transaction isolation level {isolation}"));
+            rows(&mut tk, "begin pessimistic");
+            rows(&mut tk, "replace into unchanged values (false)");
+            assert_eq!(displayed(rows(&mut tk, "select row_count()")), [["1"]], "{isolation}{partition}");
+            rows(&mut tk2, "begin pessimistic");
+            let error = tk2
+                .node_conn()
+                .execute("select * from unchanged where id = 0 for update nowait")
+                .map(|_| ())
+                .unwrap_err();
+            assert_eq!(error.code, 3572, "{isolation}{partition}: {}", error.message);
+            rows(&mut tk2, "rollback");
+            // Go's realtikv test then has an autocommit UPDATE wait out
+            // innodb_lock_wait_timeout (1205); that answer is TiKV's, not
+            // the embedded store's.
+            rows(&mut tk, "rollback");
+            rows(&mut tk2, "update unchanged set id = id + 19 where id = '' or id >= -1598653439");
+            assert_eq!(displayed(rows(&mut tk2, "select id from unchanged order by id")), [["19"], ["20"]]);
+        }
+    }
+}
