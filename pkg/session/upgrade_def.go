@@ -1367,7 +1367,7 @@ func upgradeToVer62(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer63(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_Tablespace_Priv` ENUM('N','Y') NOT NULL DEFAULT 'N'", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
 }
 
