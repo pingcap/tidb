@@ -9,6 +9,7 @@ go_library(
         "rule_collect_plan_stats.go",
         "rule_column_pruning.go",
         "rule_constant_propagation.go",
+        "rule_eliminate_projection.go",
         "rule_init.go",
         "rule_join_key_type_cast.go",
         "rule_max_min_eliminate.go",
