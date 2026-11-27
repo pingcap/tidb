@@ -1,0 +1,29 @@
+create table day_source(n bigint);
+insert into day_source values(3652424),(3652425);
+create table nullable_dates(d date);
+create table primary_dates(d date primary key);
+set tidb_enable_vectorized_expression=0;
+insert into nullable_dates select from_days(n) from day_source;
+select d from nullable_dates order by d;
+d
+NULL
+9999-12-31
+insert into primary_dates select from_days(n) from day_source;
+Error 1048 (23000): Column 'd' cannot be null
+select count(*) from primary_dates;
+count(*)
+0
+truncate table nullable_dates;
+set tidb_enable_vectorized_expression=1;
+insert into nullable_dates select from_days(n) from day_source;
+select d from nullable_dates order by d;
+d
+NULL
+9999-12-31
+insert into primary_dates select from_days(n) from day_source;
+Error 1048 (23000): Column 'd' cannot be null
+select count(*) from primary_dates;
+count(*)
+0
+drop table day_source, nullable_dates, primary_dates;
+set tidb_enable_vectorized_expression=default;
