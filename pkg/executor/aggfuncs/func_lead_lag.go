@@ -63,7 +63,7 @@ type lead struct {
 func (v *lead) AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4LeadLag)(pr)
 	var err error
-	if p.curIdx+v.offset < uint64(len(p.rows)) {
+	if p.curIdx < uint64(len(p.rows)) && v.offset < uint64(len(p.rows))-p.curIdx {
 		_, err = v.evaluateRow(sctx, v.args[0], p.rows[p.curIdx+v.offset])
 	} else {
 		_, err = v.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])

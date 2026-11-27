@@ -15,6 +15,7 @@
 package aggfuncs_test
 
 import (
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
@@ -110,6 +111,67 @@ func TestLeadLag(t *testing.T) {
 			[]expression.Expression{three, defaultArg}, 0, numRows, 0, 1, 2),
 		buildWindowTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
 			[]expression.Expression{million, defaultArg}, 0, numRows, 0, 1, 2),
+	}
+	for _, test := range tests {
+		testWindowFunc(t, test)
+	}
+}
+
+func TestLeadLagLargeOffset(t *testing.T) {
+	newUint64Const := func(v uint64) *expression.Constant {
+		ft := types.NewFieldType(mysql.TypeLonglong)
+		ft.AddFlag(mysql.UnsignedFlag)
+		return &expression.Constant{
+			Value:   types.NewUintDatum(v),
+			RetType: ft,
+		}
+	}
+
+	two := newUint64Const(2)
+	four := newUint64Const(4)
+	maxInt64 := newUint64Const(math.MaxInt64)
+	maxUint64 := newUint64Const(math.MaxUint64)
+	maxUint64Minus1 := newUint64Const(math.MaxUint64 - 1)
+	maxUint64Minus2 := newUint64Const(math.MaxUint64 - 2)
+	defaultConst := &expression.Constant{
+		Value:   types.NewDatum(1000000),
+		RetType: types.NewFieldType(mysql.TypeLong),
+	}
+	defaultArg := &expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}
+
+	numRows := 5
+	tests := []windowTest{
+		// Normal offset and boundary offset == len(rows)-1 for LEAD.
+		buildWindowTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
+			[]expression.Expression{two}, 0, numRows, 2, 3, 4, nil, nil),
+		buildWindowTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
+			[]expression.Expression{four}, 0, numRows, 4, nil, nil, nil, nil),
+		buildWindowTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
+			[]expression.Expression{four, defaultConst}, 0, numRows, 4, 1000000, 1000000, 1000000, 1000000),
+
+		// Large offsets near 2^64 must not overflow uint64 addition in LEAD.
+		buildWindowTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
+			[]expression.Expression{maxInt64}, 0, numRows, nil, nil, nil, nil, nil),
+		buildWindowTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
+			[]expression.Expression{maxUint64}, 0, numRows, nil, nil, nil, nil, nil),
+		buildWindowTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
+			[]expression.Expression{maxUint64Minus1}, 0, numRows, nil, nil, nil, nil, nil),
+		buildWindowTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
+			[]expression.Expression{maxUint64Minus2}, 0, numRows, nil, nil, nil, nil, nil),
+		buildWindowTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
+			[]expression.Expression{maxUint64, defaultConst}, 0, numRows, 1000000, 1000000, 1000000, 1000000, 1000000),
+		buildWindowTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
+			[]expression.Expression{maxUint64Minus1, defaultConst}, 0, numRows, 1000000, 1000000, 1000000, 1000000, 1000000),
+		buildWindowTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
+			[]expression.Expression{maxUint64Minus2, defaultArg}, 0, numRows, 0, 1, 2, 3, 4),
+
+		// Corresponding large offsets for LAG.
+		buildWindowTesterWithArgs(ast.WindowFuncLag, mysql.TypeLonglong,
+			[]expression.Expression{maxUint64}, 0, numRows, nil, nil, nil, nil, nil),
+		buildWindowTesterWithArgs(ast.WindowFuncLag, mysql.TypeLonglong,
+			[]expression.Expression{maxUint64Minus1}, 0, numRows, nil, nil, nil, nil, nil),
+		buildWindowTesterWithArgs(ast.WindowFuncLag, mysql.TypeLonglong,
+			[]expression.Expression{maxUint64Minus2, defaultConst}, 0, numRows, 1000000, 1000000, 1000000, 1000000, 1000000),
 	}
 	for _, test := range tests {
 		testWindowFunc(t, test)
