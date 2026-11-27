@@ -644,6 +644,11 @@ func TestIndexUsageTable(t *testing.T) {
 			"test|idt1|idx_3",
 			"test|idt1|primary"))
 	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3'").Check(
+		testkit.Rows())
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3' collate utf8mb4_general_ci").Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_3"))
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'idx_3'").Check(
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_3"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
@@ -1070,18 +1075,26 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 		}
 	}
 
-	// Test the PRIMARY constraint filter
+	// Test the PRIMARY constraint filter (TABLE_SCHEMA uses binary collation).
 	rows := tk.MustQuery("select constraint_name, table_schema from information_schema.table_constraints where constraint_name = 'PRIMARY' and table_schema = 'db0';").Rows()
-	require.Equal(t, 2, len(rows))
-	for _, row := range rows {
-		require.Equal(t, "PRIMARY", row[0].(string))
-		require.Equal(t, "Db0", row[1].(string))
+	require.Empty(t, rows)
+	for _, pred := range []string{"table_schema = 'Db0'", "table_schema = 'db0' collate utf8mb4_general_ci"} {
+		rows = tk.MustQuery("select constraint_name, table_schema from information_schema.table_constraints where constraint_name = 'PRIMARY' and " + pred + ";").Rows()
+		require.Equal(t, 2, len(rows))
+		for _, row := range rows {
+			require.Equal(t, "PRIMARY", row[0].(string))
+			require.Equal(t, "Db0", row[1].(string))
+		}
 	}
 	rows = tk.MustQuery("select constraint_name, table_schema from information_schema.key_column_usage where constraint_name = 'PRIMARY' and table_schema = 'db1';").Rows()
-	require.Equal(t, 2, len(rows))
-	for _, row := range rows {
-		require.Equal(t, "PRIMARY", row[0].(string))
-		require.Equal(t, "Db1", row[1].(string))
+	require.Empty(t, rows)
+	for _, pred := range []string{"table_schema = 'Db1'", "table_schema = 'db1' collate utf8mb4_general_ci"} {
+		rows = tk.MustQuery("select constraint_name, table_schema from information_schema.key_column_usage where constraint_name = 'PRIMARY' and " + pred + ";").Rows()
+		require.Equal(t, 2, len(rows))
+		for _, row := range rows {
+			require.Equal(t, "PRIMARY", row[0].(string))
+			require.Equal(t, "Db1", row[1].(string))
+		}
 	}
 
 	// Test the `partition_name` filter

@@ -837,58 +837,74 @@ drop table if exists r;
 create table r(a int);
 explain format='plan_tree' select * from information_schema.tables where table_name='t';
 id	task	access object	operator info
-MemTableScan	root	table:TABLES	table_name:["t"]
+Selection	root		eq(Column, "t")
+└─MemTableScan	root	table:TABLES	table_name:["t"]
 explain format='plan_tree' select * from information_schema.tables where lower(table_name)='t';
 id	task	access object	operator info
-MemTableScan	root	table:TABLES	table_name:["t"]
+Selection	root		eq(lower(Column), "t")
+└─MemTableScan	root	table:TABLES	table_name:["t"]
 explain format='plan_tree' select * from information_schema.tables where upper(table_name)=upper('t');
 id	task	access object	operator info
-MemTableScan	root	table:TABLES	table_name:["t"]
+Selection	root		eq(upper(Column), "T")
+└─MemTableScan	root	table:TABLES	table_name:["t"]
 explain format='plan_tree' select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name='t';
 id	task	access object	operator info
-MemTableScan	root	table:REFERENTIAL_CONSTRAINTS	table_name:["t"]
+Selection	root		eq(Column, "t")
+└─MemTableScan	root	table:REFERENTIAL_CONSTRAINTS	table_name:["t"]
 explain format='plan_tree' select * from information_schema.KEY_COLUMN_USAGE where table_name='t';
 id	task	access object	operator info
-MemTableScan	root	table:KEY_COLUMN_USAGE	table_name:["t"]
+Selection	root		eq(Column, "t")
+└─MemTableScan	root	table:KEY_COLUMN_USAGE	table_name:["t"]
 explain format='plan_tree' select * from information_schema.STATISTICS where table_name='t';
 id	task	access object	operator info
-MemTableScan	root	table:STATISTICS	table_name:["t"]
+Selection	root		eq(Column, "t")
+└─MemTableScan	root	table:STATISTICS	table_name:["t"]
 explain format='plan_tree' select * from information_schema.STATISTICS where table_name='t' and table_name='r';
 id	task	access object	operator info
 MemTableScan	root	table:STATISTICS	skip_request:true
 explain format='plan_tree' select * from information_schema.STATISTICS where table_name='t' or table_name='r';
 id	task	access object	operator info
-MemTableScan	root	table:STATISTICS	table_name:["r","t"]
+Selection	root		or(eq(Column, "t"), eq(Column, "r"))
+└─MemTableScan	root	table:STATISTICS	table_name:["r","t"]
 explain format='plan_tree' select * from information_schema.tables where table_schema='t';
 id	task	access object	operator info
-MemTableScan	root	table:TABLES	table_schema:["t"]
+Selection	root		eq(Column, "t")
+└─MemTableScan	root	table:TABLES	table_schema:["t"]
 explain format='plan_tree' select * from information_schema.KEY_COLUMN_USAGE where table_schema='s1';
 id	task	access object	operator info
-MemTableScan	root	table:KEY_COLUMN_USAGE	table_schema:["s1"]
+Selection	root		eq(Column, "s1")
+└─MemTableScan	root	table:KEY_COLUMN_USAGE	table_schema:["s1"]
 explain format='plan_tree' select * from information_schema.STATISTICS where table_schema='s1';
 id	task	access object	operator info
-MemTableScan	root	table:STATISTICS	table_schema:["s1"]
+Selection	root		eq(Column, "s1")
+└─MemTableScan	root	table:STATISTICS	table_schema:["s1"]
 explain format='plan_tree' select * from information_schema.STATISTICS where table_schema='s1' and table_schema='test';
 id	task	access object	operator info
 MemTableScan	root	table:STATISTICS	skip_request:true
 explain format='plan_tree' select * from information_schema.STATISTICS where table_name='s1' and table_schema='test';
 id	task	access object	operator info
-MemTableScan	root	table:STATISTICS	table_name:["s1"], table_schema:["test"]
+Selection	root		eq(Column, "s1"), eq(Column, "test")
+└─MemTableScan	root	table:STATISTICS	table_name:["s1"], table_schema:["test"]
 explain format='plan_tree' select * from information_schema.STATISTICS where table_schema='s1' or table_schema='test';
 id	task	access object	operator info
-MemTableScan	root	table:STATISTICS	table_schema:["s1","test"]
+Selection	root		or(eq(Column, "s1"), eq(Column, "test"))
+└─MemTableScan	root	table:STATISTICS	table_schema:["s1","test"]
 explain format='plan_tree' SELECT column_name FROM information_schema.statistics WHERE index_name = 'idx1' AND table_schema = DATABASE () AND table_name = 't' ORDER BY seq_in_index;
 id	task	access object	operator info
 Projection	root		Column
 └─Sort	root		Column
-  └─MemTableScan	root	table:STATISTICS	index_name:["idx1"], table_name:["t"], table_schema:["plan_cache"]
+  └─Selection	root		eq(Column, "idx1"), eq(Column, "plan_cache"), eq(Column, "t")
+    └─MemTableScan	root	table:STATISTICS	index_name:["idx1"], table_name:["t"], table_schema:["plan_cache"]
 explain format='plan_tree' SELECT table_comment FROM information_schema.tables WHERE table_schema = DATABASE () AND table_name = 't';
 id	task	access object	operator info
-MemTableScan	root	table:TABLES	table_name:["t"], table_schema:["plan_cache"]
+Projection	root		Column
+└─Selection	root		eq(Column, "plan_cache"), eq(Column, "t")
+  └─MemTableScan	root	table:TABLES	table_name:["t"], table_schema:["plan_cache"]
 explain format='plan_tree' SELECT * FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage fk USING (constraint_schema, constraint_name) WHERE fk.referenced_column_name != 't' AND fk.table_schema = DATABASE () AND fk.table_name = 't' AND rc.constraint_schema = DATABASE () AND rc.table_name = 't';
 id	task	access object	operator info
 Projection	root		Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column
 └─HashJoin	root		inner join, equal:[eq(Column, Column) eq(Column, Column)]
-  ├─Selection(Build)	root		ne(Column, "t")
+  ├─Selection(Build)	root		eq(Column, "plan_cache"), eq(Column, "plan_cache"), eq(Column, "t"), ne(Column, "t")
   │ └─MemTableScan	root	table:KEY_COLUMN_USAGE	constraint_schema:["plan_cache"], table_name:["t"], table_schema:["plan_cache"]
-  └─MemTableScan(Probe)	root	table:REFERENTIAL_CONSTRAINTS	constraint_schema:["plan_cache"], table_name:["t"]
+  └─Selection(Probe)	root		eq(Column, "plan_cache"), eq(Column, "t")
+    └─MemTableScan	root	table:REFERENTIAL_CONSTRAINTS	constraint_schema:["plan_cache"], table_name:["t"]

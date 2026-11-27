@@ -1934,31 +1934,38 @@ func TestColumns(t *testing.T) {
 		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where lower(column_name)=lower('T');`,
 			columnName: set.NewStringSet("t"),
+			remained:   "[eq(lower(Column#4), t)]",
 		},
 		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name=lower('T');`,
 			columnName: set.NewStringSet("t"),
+			remained:   "[eq(Column#4, t)]",
 		},
 		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name='T';`,
 			columnName: set.NewStringSet("t"),
+			remained:   "[eq(Column#4, T)]",
 		},
 		{
 			sql:         `select * from INFORMATION_SCHEMA.COLUMNS where table_schema='TEST';`,
 			tableSchema: set.NewStringSet("test"),
+			remained:    "[eq(Column#2, TEST)]",
 		},
 		{
 			sql:       `select * from INFORMATION_SCHEMA.COLUMNS where table_name='TEST';`,
 			tableName: set.NewStringSet("test"),
+			remained:  "[eq(Column#3, TEST)]",
 		},
 		{
 			sql:        "select * from information_schema.COLUMNS where table_name in ('TEST','t') and column_name in ('A','b')",
 			columnName: set.NewStringSet("a", "b"),
 			tableName:  set.NewStringSet("test", "t"),
+			remained:   "[in(Column#3, TEST, t) in(Column#4, A, b)]",
 		},
 		{
 			sql:       `select * from information_schema.COLUMNS where table_name='a' and table_name in ('a', 'B');`,
 			tableName: set.NewStringSet("a"),
+			remained:  "[eq(Column#3, a)]",
 		},
 		{
 			sql:         `select * from information_schema.COLUMNS where table_name='a' and table_name='B';`,

@@ -126,6 +126,8 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 's'").Check(
 		testkit.Rows("s 13"))
 	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 'S'").Check(
+		testkit.Rows())
+	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 'S' collate utf8mb4_general_ci").Check(
 		testkit.Rows("s 13"))
 	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 's2'").Check(
 		testkit.Rows("s2 30"))
