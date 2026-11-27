@@ -39,7 +39,19 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
+
+func s3ClientLogMode(logger *zap.Logger) aws.ClientLogMode {
+	mode := aws.LogRetries | aws.LogDeprecatedUsage
+	// aws.LogRequest triggers httputil.DumpRequestOut unconditionally inside
+	// smithy-go, which reads and buffers ContentLength placeholder bytes on
+	// every upload even when zap drops Debug logs.
+	if logger.Core().Enabled(zapcore.DebugLevel) {
+		mode |= aws.LogRequest | aws.LogResponse
+	}
+	return mode
+}
 
 const (
 	defaultRegion = "us-east-1"
@@ -82,10 +94,11 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 		zap.String("context", "s3"),
 		zap.String("provider", qs.Provider),
 	)
+	logMode := s3ClientLogMode(logger)
 	configOpts = append(configOpts,
 		config.WithRegion(region),
 		config.WithLogger(newLogger(logger)),
-		config.WithClientLogMode(aws.LogRequest|aws.LogRetries|aws.LogResponse|aws.LogDeprecatedUsage),
+		config.WithClientLogMode(logMode),
 		config.WithLogConfigurationWarnings(true),
 	)
 
@@ -145,8 +158,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	s3Opts = append(s3Opts, func(o *s3.Options) {
 		o.Logger = newLogger(logger)
 		o.DisableLogOutputChecksumValidationSkipped = true
-		// These logs will be printed when log level is `DEBUG`.
-		o.ClientLogMode |= aws.LogRetries | aws.LogRequest | aws.LogResponse | aws.LogDeprecatedUsage
+		// Request/response dumping is only enabled when log level is `DEBUG`.
+		o.ClientLogMode |= logMode
 	})
 	if gcsS3Compatible {
 		s3Opts = append(s3Opts, func(o *s3.Options) {

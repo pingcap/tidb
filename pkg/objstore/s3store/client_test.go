@@ -35,6 +35,8 @@ import (
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestClientEncryptionContextRequests(t *testing.T) {
@@ -785,4 +787,28 @@ func TestMultipartWriterAliasRouting(t *testing.T) {
 	require.True(t, initiated)
 	require.True(t, completed)
 	require.Equal(t, map[string]string{"1": "first part", "2": "second part"}, parts)
+}
+
+func TestS3ClientLogMode(t *testing.T) {
+	infoLogger := zap.New(zapcore.NewCore(
+		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
+		zapcore.AddSync(io.Discard),
+		zapcore.InfoLevel,
+	))
+	infoMode := s3ClientLogMode(infoLogger)
+	require.True(t, infoMode.IsRetries())
+	require.True(t, infoMode.IsDeprecatedUsage())
+	require.False(t, infoMode.IsRequest())
+	require.False(t, infoMode.IsResponse())
+
+	debugLogger := zap.New(zapcore.NewCore(
+		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
+		zapcore.AddSync(io.Discard),
+		zapcore.DebugLevel,
+	))
+	debugMode := s3ClientLogMode(debugLogger)
+	require.True(t, debugMode.IsRetries())
+	require.True(t, debugMode.IsDeprecatedUsage())
+	require.True(t, debugMode.IsRequest())
+	require.True(t, debugMode.IsResponse())
 }
