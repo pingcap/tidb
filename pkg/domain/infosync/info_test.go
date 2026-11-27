@@ -79,6 +79,10 @@ func TestAffinityCreatePDHTTPStatus(t *testing.T) {
 					w.WriteHeader(http.StatusInternalServerError)
 				case req.Method == http.MethodGet:
 					getCalls.Add(1)
+					ids := req.URL.Query()["ids"]
+					if len(ids) != 1 || ids[0] != "g1" {
+						t.Errorf("expected GET with ids=g1, got ids=%v", ids)
+					}
 					_, _ = io.WriteString(w, `{"affinity_groups":{"g1":{"id":"g1","range_count":1}}}`)
 				case req.Method == http.MethodPost && req.URL.Query().Get("skip_exist_check") == "true":
 					if tt.truncated {
@@ -101,11 +105,12 @@ func TestAffinityCreatePDHTTPStatus(t *testing.T) {
 				"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
 			}
 			err := affinity.NewPDManager(client).CreateAffinityGroupsIfNotExists(context.Background(), groups)
-			require.Zero(t, getCalls.Load())
 			if tt.status == http.StatusConflict {
+				require.EqualValues(t, 1, getCalls.Load())
 				require.NoError(t, err)
 				return
 			}
+			require.Zero(t, getCalls.Load())
 			require.EqualError(t, err, "[domain:8243]"+tt.body)
 			require.True(t, ErrHTTPServiceError.Equal(err))
 			var statusError interface{ HTTPStatusCode() int }
