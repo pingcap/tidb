@@ -9,6 +9,14 @@ select TABLE_NAME from information_schema.columns where table_schema = 'PLANNER_
 select column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and (column_name like 'i%' or column_name like '%d');
 select column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and (column_name like 'abc%' and column_name like '%time');
 select TABLE_NAME, column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like '%time';
+create table newline_col (`a
+b` int);
+select hex(column_name), column_name like '%', column_name like 'a_b', column_name like 'a%b'
+from information_schema.columns where table_schema = 'planner__core__memtable_predicate_extractor' and table_name = 'newline_col';
+select count(*) from information_schema.columns where table_schema = 'planner__core__memtable_predicate_extractor' and table_name = 'newline_col' and column_name like '%';
+select count(*) from information_schema.columns where table_schema = 'planner__core__memtable_predicate_extractor' and table_name = 'newline_col' and column_name like 'a_b';
+select count(*) from information_schema.columns where table_schema = 'planner__core__memtable_predicate_extractor' and table_name = 'newline_col' and column_name like 'a%b';
+drop table newline_col;
 describe t;
 describe t id;
 describe t ID;
