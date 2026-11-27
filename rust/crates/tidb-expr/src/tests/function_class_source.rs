@@ -16,7 +16,9 @@
 //! [`crate::builtin::funcs`] holds, against the node [`new_function`] builds.
 //!
 //! `testdata/function_class_matrix.txt` is Go's own answer from
-//! `NewFunction(mock.NewContext(), name, types.NewFieldType(mysql.TypeUnspecified), args...)`:
+//! `NewFunction(mock.NewContext(), name, types.NewFieldType(mysql.TypeUnspecified), args...)`
+//! (its REGEXP_LIKE / REGEXP_INSTR coercibility rows follow Go master
+//! e7c11282c9c: NUMERIC / ASCII, `5,1`):
 //!
 //! - `T`, a number and a field type as
 //!   `type,flag,flen,decimal,charset,collation`: the types the other lines
