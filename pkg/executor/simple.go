@@ -3634,7 +3634,13 @@ func (e *SimpleExec) executeSetSessionStates(ctx context.Context, s *ast.SetSess
 	if err := decoder.Decode(&sessionStates); err != nil {
 		return errors.Trace(err)
 	}
-	return e.Ctx().DecodeStates(ctx, &sessionStates)
+	if err := e.Ctx().DecodeStates(ctx, &sessionStates); err != nil {
+		return err
+	}
+	// SET tidb_snapshot loads the schema of the snapshot in SetExecutor, so
+	// do the same for a restored tidb_snapshot. Otherwise the session reads
+	// the snapshot's data with the current schema.
+	return loadSnapshotInfoSchemaIfNeeded(e.Ctx(), e.Ctx().GetSessionVars().SnapshotTS)
 }
 
 func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
