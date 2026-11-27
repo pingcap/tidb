@@ -1736,7 +1736,8 @@ func (b *builtinTimestampAddSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		v := nums[i]
 		arg := ds[i]
 
-		tm1, err := arg.GoTime(time.Local)
+		// Keep calendar arithmetic independent of the server's local time zone.
+		tm1, err := arg.GoTime(time.UTC)
 		if err != nil {
 			tc := typeCtx(ctx)
 			tc.AppendWarning(err)

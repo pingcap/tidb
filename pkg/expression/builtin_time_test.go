@@ -2945,6 +2945,45 @@ func TestToDays(t *testing.T) {
 
 func TestTimestampAdd(t *testing.T) {
 	ctx := createContext(t)
+	t.Run("timestamp result is datetime", func(t *testing.T) {
+		ctx := createContext(t)
+		loc, err := time.LoadLocation("Europe/Amsterdam")
+		require.NoError(t, err)
+		ctx.ResetSessionAndStmtTimeZone(loc)
+		for _, test := range []struct {
+			unit, input, expected string
+			interval              float64
+		}{
+			{"HOUR", "2025-03-30 01:59:59", "2025-03-30 02:59:59", 1},
+			{"DAY", "2025-03-29 02:59:59", "2025-03-30 02:59:59", 1},
+			{"HOUR", "2025-03-30 03:59:59", "2025-03-30 02:59:59", -1},
+			{"SECOND", "2025-03-30 01:59:59.123456", "2025-03-30 02:00:00.123456", 1},
+			{"YEAR", "2037-01-01 00:00:00", "2039-01-01 00:00:00", 2},
+		} {
+			t.Run(test.unit+test.input, func(t *testing.T) {
+				input, err := types.ParseTime(typeCtx(ctx), test.input, mysql.TypeTimestamp, types.MaxFsp)
+				require.NoError(t, err)
+				args := datumsToConstants([]types.Datum{types.NewStringDatum(test.unit), types.NewFloat64Datum(test.interval), types.NewTimeDatum(input)})
+				f, err := funcs[ast.TimestampAdd].getFunction(ctx, args)
+				require.NoError(t, err)
+				require.True(t, f.isChildrenVectorized())
+				t.Run("scalar", func(t *testing.T) {
+					value, isNull, err := f.evalString(ctx, chunk.Row{})
+					require.NoError(t, err)
+					require.False(t, isNull)
+					require.Equal(t, test.expected, value)
+				})
+				t.Run("vector", func(t *testing.T) {
+					rows := chunk.NewChunkWithCapacity(nil, 1)
+					rows.SetNumVirtualRows(1)
+					result := chunk.NewColumn(types.NewFieldType(mysql.TypeVarString), 1)
+					require.NoError(t, f.vecEvalString(ctx, rows, result))
+					require.False(t, result.IsNull(0))
+					require.Equal(t, test.expected, result.GetString(0))
+				})
+			})
+		}
+	})
 	tests := []struct {
 		unit     string
 		interval float64
@@ -2966,6 +3005,12 @@ func TestTimestampAdd(t *testing.T) {
 		{"MINUTE", 1.5, "1995-05-01 00:00:00", "1995-05-01 00:02:00"},
 		{"MINUTE", 1.5, "1995-05-01 00:00:00.000000", "1995-05-01 00:02:00"},
 		{"MICROSECOND", -100, "1995-05-01 00:00:00.0001", "1995-05-01 00:00:00"},
+		// Calendar arithmetic must not depend on the server's local DST rules.
+		{"HOUR", 1, "2025-03-30 01:59:59", "2025-03-30 02:59:59"},
+		{"HOUR", 1, "2025-03-30 02:59:59", "2025-03-30 03:59:59"},
+		{"HOUR", 1, "2025-10-26 02:59:59", "2025-10-26 03:59:59"},
+		{"SECOND", 0, "0001-01-01 00:00:00", "0001-01-01 00:00:00"},
+		{"HOUR", 1, "9999-12-31 22:59:59", "9999-12-31 23:59:59"},
 
 		// issue 41052
 		{"MONTH", 1, "2024-01-31", "2024-02-29 00:00:00"},
