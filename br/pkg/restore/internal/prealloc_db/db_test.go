@@ -555,6 +555,38 @@ func TestDB_ExecDDL(t *testing.T) {
 		err = db.ExecDDL(ctx, ddlJob)
 		assert.NoError(t, err)
 	}
+
+	t.Run("alter database without a name", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, s.Mock.Storage)
+		tk.MustExec("create database alter_db_target collate utf8mb4_general_ci")
+		tk.MustExec("create database alter_db_other collate utf8mb4_general_ci")
+		// The job of `USE alter_db_target; ALTER DATABASE COLLATE utf8mb4_bin`.
+		job := &model.Job{
+			Type:       model.ActionModifySchemaCharsetAndCollate,
+			SchemaName: "alter_db_target",
+			Query:      "ALTER DATABASE COLLATE utf8mb4_bin",
+			BinlogInfo: &model.HistoryInfo{},
+		}
+		collation := func(name string) string {
+			dbInfo, ok := s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr(name))
+			require.True(t, ok)
+			return dbInfo.Collate
+		}
+
+		// A new session has no current database.
+		replayDB, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "")
+		require.NoError(t, err)
+		defer replayDB.Close()
+		require.NoError(t, replayDB.ExecDDL(ctx, job))
+		require.Equal(t, "utf8mb4_bin", collation("alter_db_target"))
+
+		// A session that used another database for an earlier job.
+		tk.MustExec("alter database alter_db_target collate utf8mb4_general_ci")
+		require.NoError(t, replayDB.Session().Execute(ctx, "use alter_db_other"))
+		require.NoError(t, replayDB.ExecDDL(ctx, job))
+		require.Equal(t, "utf8mb4_bin", collation("alter_db_target"))
+		require.Equal(t, "utf8mb4_general_ci", collation("alter_db_other"))
+	})
 }
 
 func TestDB_ExecDDL2(t *testing.T) {
