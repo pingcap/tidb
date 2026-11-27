@@ -16,11 +16,16 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 )
 
@@ -122,4 +127,68 @@ func TestTimeoutRecvCanceled(t *testing.T) {
 	tctx, trecv := StartTimeoutRecv(cctx, time.Hour, 0)
 	trecv.Stop()
 	require.Equal(t, "context canceled", tctx.Err().Error())
+}
+
+func TestBackupResponseObservedBeforeCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		errPb    *backuppb.Error
+		category string
+		code     string
+	}{
+		{
+			name:     "memory pressure",
+			errPb:    &backuppb.Error{Msg: "resource is not enough Memory usage too high, usage: 512 bytes, mem limit 256 bytes"},
+			category: "tikv_memory_pressure",
+			code:     "BR:KV:ErrKVStorage",
+		},
+		{
+			name:     "disk full",
+			errPb:    &backuppb.Error{Detail: &backuppb.Error_RegionError{RegionError: &errorpb.Error{DiskFull: &errorpb.DiskFull{}}}},
+			category: "disk_full",
+			code:     "BR:KV:ErrKVDiskFull",
+		},
+		{
+			name:  "lock resolution",
+			errPb: &backuppb.Error{Detail: &backuppb.Error_KvError{KvError: &kvrpcpb.KeyError{Locked: &kvrpcpb.LockInfo{}}}},
+		},
+		{
+			name:     "cluster mismatch",
+			errPb:    &backuppb.Error{Detail: &backuppb.Error_ClusterIdError{ClusterIdError: &backuppb.ClusterIDError{}}},
+			category: "configuration",
+			code:     "BR:KV:ErrKVClusterIDMismatch",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			summary.InitCollector(false)
+			t.Cleanup(func() { summary.InitCollector(false) })
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			err := startBackup(ctx, 7, NewResourceMemoryLimiter(100), backuppb.BackupRequest{}, &MockBackupClient{
+				recvFunc: func(context.Context) (*backuppb.BackupResponse, error) {
+					cancel()
+					return &backuppb.BackupResponse{Error: test.errPb}, nil
+				},
+			}, 1, nil)
+			require.ErrorIs(t, err, context.Canceled)
+			encoder := zapcore.NewMapObjectEncoder()
+			for _, field := range summary.FailureFields(err, func(text string) string { return text }) {
+				field.AddTo(encoder)
+			}
+			require.Equal(t, "canceled", encoder.Fields["error-category"])
+			if test.category == "" {
+				require.NotContains(t, encoder.Fields, "observed-errors")
+				return
+			}
+			data, err := json.Marshal(encoder.Fields["observed-errors"])
+			require.NoError(t, err)
+			var observations []map[string]any
+			require.NoError(t, json.Unmarshal(data, &observations))
+			require.Len(t, observations, 1)
+			require.Equal(t, test.category, observations[0]["category"])
+			require.Equal(t, test.code, observations[0]["error-code"])
+			require.Equal(t, float64(7), observations[0]["store-id"])
+			require.Equal(t, float64(1), observations[0]["count"])
+		})
+	}
 }
