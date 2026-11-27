@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -2096,6 +2097,9 @@ func isRetryableError(err error, retryUnknown bool) bool {
 		if strings.Contains(errMsg, m) {
 			return true
 		}
+	}
+	if common.IsRetryableError(err) {
+		return true
 	}
 	originErr := errors.Cause(err)
 	if pderr.ErrClientCreateTSOStream.Equal(originErr) || pderr.ErrClientTSOStreamClosed.Equal(originErr) {
