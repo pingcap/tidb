@@ -1839,3 +1839,65 @@ func TestCastAsCharFieldType(t *testing.T) {
 		})
 	}
 }
+
+func TestCastFloatOverflow(t *testing.T) {
+	ctx := createContext(t)
+	for _, tc := range []struct {
+		name     string
+		tp       byte
+		values   []types.Datum
+		expected []float64
+	}{
+		{"real", mysql.TypeDouble, types.MakeDatums(math.MaxFloat32, math.Nextafter(math.MaxFloat32, math.Inf(1)), -math.MaxFloat32, -math.MaxFloat64), []float64{math.MaxFloat32, 0, -math.MaxFloat32, 0}},
+		{"decimal", mysql.TypeNewDecimal, types.MakeDatums(types.NewDecFromInt(1), types.NewDecFromStringForTest("400000000000000000000000000000000000000"), types.NewDecFromInt(-1), types.NewDecFromStringForTest("-400000000000000000000000000000000000000")), []float64{1, 0, -1, 0}},
+		{"json", mysql.TypeJSON, types.MakeDatums(types.CreateBinaryJSON(float64(1)), types.CreateBinaryJSON(float64(1e308)), types.CreateBinaryJSON(float64(-1)), types.CreateBinaryJSON(float64(-1e308))), []float64{1, 0, -1, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			argType := types.NewFieldType(tc.tp)
+			for _, retType := range []byte{mysql.TypeFloat, mysql.TypeDouble} {
+				fc := &castAsRealFunctionClass{tp: types.NewFieldType(retType)}
+				fc.minArgs, fc.maxArgs = 1, 1
+				f, err := fc.getFunction(ctx, []Expression{&Column{RetType: argType, Index: 0}})
+				require.NoError(t, err)
+				if retType == mysql.TypeFloat {
+					require.Equal(t, "Unspecified", f.PbCode().String())
+				} else {
+					require.NotEqual(t, "Unspecified", f.PbCode().String())
+				}
+				_, isNull, err := f.evalReal(ctx, chunk.MutRowFromDatums([]types.Datum{{}}).ToRow())
+				require.NoError(t, err)
+				require.True(t, isNull)
+				for i, value := range tc.values {
+					row := chunk.MutRowFromDatums([]types.Datum{value}).ToRow()
+					res, isNull, err := f.evalReal(ctx, row)
+					if retType == mysql.TypeFloat && i%2 == 1 {
+						require.True(t, types.ErrOverflow.Equal(err), "scalar: %v", err)
+					} else {
+						require.NoError(t, err)
+						require.False(t, isNull)
+						if i%2 == 0 {
+							require.Equal(t, tc.expected[i], res)
+						}
+					}
+					input := chunk.NewChunkWithCapacity([]*types.FieldType{argType}, 2)
+					input.AppendNull(0)
+					input.AppendRow(row)
+					result := chunk.NewColumn(types.NewFieldType(mysql.TypeDouble), 2)
+					cloned := f.Clone()
+					require.True(t, cloned.isChildrenVectorized())
+					err = cloned.vecEvalReal(ctx, input, result)
+					if retType == mysql.TypeFloat && i%2 == 1 {
+						require.True(t, types.ErrOverflow.Equal(err), "vector: %v", err)
+					} else {
+						require.NoError(t, err)
+						require.True(t, result.IsNull(0))
+						require.False(t, result.IsNull(1))
+						if i%2 == 0 {
+							require.Equal(t, tc.expected[i], result.Float64s()[1])
+						}
+					}
+				}
+			}
+		})
+	}
+}
