@@ -4412,7 +4412,14 @@ func (c *weightStringFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 		if !ok {
 			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(ctx, errors.RedactLogDisable), c.funcName)
 		}
-		length = int(c2.Value.GetInt64())
+		if c2.Value.Kind() == types.KindUint64 && c2.Value.GetUint64() > math.MaxInt64 {
+			// Lengths of 2^63 and above don't fit in an int; treat them as the
+			// largest length so they hit the max_allowed_packet check instead
+			// of wrapping around to a negative slice bound.
+			length = math.MaxInt64
+		} else {
+			length = int(c2.Value.GetInt64())
+		}
 		if length == 0 {
 			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].StringWithCtx(ctx, errors.RedactLogDisable), c.funcName)
 		}

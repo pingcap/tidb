@@ -2922,6 +2922,25 @@ func TestWeightString(t *testing.T) {
 	}
 }
 
+func TestWeightStringHugeUnsignedLength(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.WeightString]
+	for _, padding := range []string{"CHAR", "BINARY"} {
+		for _, length := range []uint64{9223372036854775808, 12345678901234567890, 18446744073709551615} {
+			args := datumsToConstants([]types.Datum{types.NewDatum("ab"), types.NewDatum(padding), types.NewUintDatum(length)})
+			f, err := fc.getFunction(ctx, args)
+			require.NoError(t, err)
+			ctx.GetSessionVars().StmtCtx.ResetForRetry()
+			result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			require.NoError(t, err, "%s(%d)", padding, length)
+			require.True(t, result.IsNull(), "%s(%d)", padding, length)
+			warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Len(t, warns, 1)
+			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, warns[0].Err), "%v", warns[0].Err)
+		}
+	}
+}
+
 func TestTranslate(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
