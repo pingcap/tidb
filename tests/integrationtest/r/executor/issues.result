@@ -1041,3 +1041,21 @@ DELETE FROM test_62458 PARTITION (p1) WHERE c1 = 15;
 CREATE TABLE test_62457 (c INT) PARTITION BY RANGE (c) (PARTITION p VALUES LESS THAN (10));
 ALTER TABLE test_62457 ADD COLUMN c2 INT AS (JSON_EXTRACT(c, '$.number')) VIRTUAL;
 Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_extract; a JSON string or JSON type is required.
+drop table if exists t73561;
+create table t73561 (a int);
+select * from t73561 order by a limit 3 offset 9223372036854775808;
+a
+insert into t73561 values (1), (2);
+select * from t73561 order by a limit 3 offset 9223372036854775808;
+a
+select * from t73561 order by a desc limit 2 offset 12345678901234567890;
+a
+select * from t73561 order by a limit 3 offset 18446744073709551614;
+a
+select * from t73561 order by a limit 9223372036854775808, 3;
+a
+select * from (select * from t73561 order by a limit 3 offset 9223372036854775808) x;
+a
+select * from t73561 order by a limit 3 offset 1;
+a
+2
