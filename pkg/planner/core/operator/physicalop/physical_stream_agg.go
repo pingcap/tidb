@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -110,6 +112,15 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
 	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties.Orders)*(len(allTaskTypes)-1)+len(allTaskTypes))
+	vars := la.SCtx().GetSessionVars()
+	// Read the switch last because the getter records it as relevant to the plan.
+	enableSkipScan := len(groupByCols) > 0 && prop.IndexJoinProp == nil &&
+		vars.SQLMode.HasOnlyFullGroupBy() && vars.GetEnableSkipScan()
+	var skipTarget *expression.Column
+	var skipDesc bool
+	if enableSkipScan {
+		skipTarget, skipDesc, enableSkipScan = getSkipScanAggRequirement(la.AggFuncs, groupByCols, desc)
+	}
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt:   math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
 		NoCopPushDown: prop.NoCopPushDown,
@@ -119,7 +130,8 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 		return nil
 	}
 	for _, possibleChildProperty := range la.PossibleProperties.Orders {
-		childProp.SortItems = property.SortItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
+		groupOrder := possibleChildProperty[:len(groupByCols)]
+		childProp.SortItems = property.SortItemsFromCols(groupOrder, desc)
 		if !prop.IsPrefix(childProp) {
 			continue
 		}
@@ -141,17 +153,25 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 			copiedChildProperty.TaskTp = taskTp
 
-			newGbyItems := make([]expression.Expression, len(la.GroupByItems))
-			copy(newGbyItems, la.GroupByItems)
-			newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
-			copy(newAggFuncs, la.AggFuncs)
-
-			baseAgg := &BasePhysicalAgg{
-				GroupByItems: newGbyItems,
-				AggFuncs:     newAggFuncs,
+			makeStreamAgg := func(child *property.PhysicalProperty) base.PhysicalPlan {
+				baseAgg := BasePhysicalAgg{
+					GroupByItems: append([]expression.Expression(nil), la.GroupByItems...),
+					AggFuncs:     append([]*aggregation.AggFuncDesc(nil), la.AggFuncs...),
+				}
+				return baseAgg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), child)
 			}
-			streamAgg := baseAgg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), copiedChildProperty)
-			streamAggs = append(streamAggs, streamAgg)
+			streamAggs = append(streamAggs, makeStreamAgg(copiedChildProperty))
+			if enableSkipScan {
+				req := copiedChildProperty.CloneEssentialFields()
+				req.SortItems = property.SortItemsFromCols(groupOrder, skipDesc)
+				if prop.IsPrefix(req) {
+					req.SkipScanInfo = &property.SkipScanInfo{
+						GroupByCols: append([]*expression.Column(nil), groupOrder...),
+						TargetCol:   skipTarget,
+					}
+					streamAggs = append(streamAggs, makeStreamAgg(req))
+				}
+			}
 		}
 	}
 	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
@@ -160,6 +180,62 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 		streamAggs = append(streamAggs, getEnforcedStreamAggs(la, prop)...)
 	}
 	return streamAggs
+}
+
+// getSkipScanAggRequirement checks whether the aggregate expressions can use Skip Scan.
+// 1. It accepts MIN, MAX, and FIRST_ROW without DISTINCT or an aggregate ORDER BY.
+// 2. Each with one non-virtual column argument
+// 3. All arguments outside GROUP BY must refer to the same target column.
+// 4. MIN and MAX on the target cannot be combined.
+// 5. The type of column cannot be ENUM or SET
+// 6. The scan matcher verifies that the grouping columns form a full-length leftmost key prefix
+//
+// With an index on (a, b), SELECT a, MIN(b) FROM t GROUP BY a uses a as the
+// grouping prefix, returns b as the target column, and requires an ascending scan.
+//
+// Aggregates on grouping columns can use any representative row. For example,
+// SELECT a, MIN(a) FROM t GROUP BY a returns target == nil and ok == true. The scan
+// needs only the grouping prefix, and scanDesc retains the input desc.
+func getSkipScanAggRequirement(aggs []*aggregation.AggFuncDesc, groupBy []*expression.Column, desc bool) (target *expression.Column, scanDesc bool, ok bool) {
+	schema := expression.NewSchema(groupBy...)
+	var hasMin, hasMax bool
+	for _, agg := range aggs {
+		switch agg.Name {
+		case ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncFirstRow:
+		default:
+			return nil, false, false
+		}
+		if agg.HasDistinct || len(agg.OrderByItems) != 0 || len(agg.Args) != 1 {
+			return nil, false, false
+		}
+		col, ok := agg.Args[0].(*expression.Column)
+		if !ok || col.VirtualExpr != nil {
+			return nil, false, false
+		}
+		if schema.Contains(col) {
+			// Aggregates on grouping keys can use any representative row in the group.
+			continue
+		}
+		if target != nil && !target.EqualColumn(col) {
+			return nil, false, false
+		}
+		target = col
+		if agg.Name != ast.AggFuncFirstRow {
+			// ENUM and SET extrema use name order, unlike index traversal.
+			if tp := col.RetType.GetType(); tp == mysql.TypeEnum || tp == mysql.TypeSet {
+				return nil, false, false
+			}
+			hasMin = hasMin || agg.Name == ast.AggFuncMin
+			hasMax = hasMax || agg.Name == ast.AggFuncMax
+		}
+	}
+	if hasMin && hasMax {
+		return nil, false, false
+	}
+	if hasMin || hasMax {
+		desc = hasMax
+	}
+	return target, desc, true
 }
 
 // GetPointer return inner base physical agg.

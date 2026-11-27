@@ -1527,6 +1527,9 @@ func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) ba
 					cop.FinishIndexPlan()
 				}
 			}
+			if cop.SkipScan {
+				setSkipScanRows(p, cop.Plan().StatsCount())
+			}
 			copTask := attachPlan2Task(p, cop)
 			return copTask
 		}
@@ -1538,6 +1541,9 @@ func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) ba
 		}
 	}
 	t = t.ConvertToRootTask(p.SCtx())
+	if p.RequiresSkipScan() {
+		setSkipScanRows(p, t.Plan().StatsCount())
+	}
 	t = attachPlan2Task(p, t)
 	return t
 }
@@ -1708,6 +1714,7 @@ func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) bas
 	p := pp.(*physicalop.PhysicalStreamAgg)
 	t := tasks[0].Copy()
 	if cop, ok := t.(*physicalop.CopTask); ok {
+		skip := cop.SkipScan
 		// We should not push agg down across
 		//  1. double read, since the data of second read is ordered by handle instead of index. The `extraHandleCol` is added
 		//     if the double read needs to keep order. So we just use it to decided
@@ -1715,6 +1722,9 @@ func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) bas
 		//  2. the case that there's filters should be calculated on TiDB side.
 		//  3. the case of index merge
 		if (cop.IndexPlan != nil && cop.TablePlan != nil && cop.KeepOrder) || len(cop.RootTaskConds) > 0 || len(cop.IdxMergePartPlans) > 0 {
+			if skip {
+				return base.InvalidTask
+			}
 			t = cop.ConvertToRootTask(p.SCtx())
 			attachPlan2Task(p, t)
 		} else {
@@ -1724,7 +1734,13 @@ func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) bas
 				return base.InvalidTask
 			}
 			partialAgg, finalAgg := p.NewPartialAggregate(storeType, false)
+			if skip && partialAgg == nil {
+				return base.InvalidTask
+			}
 			if partialAgg != nil {
+				if skip && partialAgg.StatsCount() > cop.Plan().StatsCount() {
+					setSkipScanRows(partialAgg, cop.Plan().StatsCount())
+				}
 				if cop.TablePlan != nil {
 					cop.FinishIndexPlan()
 					// the partialAgg attachment didn't follow the attachPlan2Task function, so here we actively call
@@ -1760,6 +1776,23 @@ func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) bas
 		attachPlan2Task(p, t)
 	}
 	return t
+}
+
+// setSkipScanRows updates the row estimate and caps existing NDVs at the new row count.
+// DataSource and partial aggregation can both emit more rows than estimated when
+// the same grouping prefix appears in multiple Regions.
+func setSkipScanRows(plan base.PhysicalPlan, rows float64) {
+	stats := *plan.StatsInfo()
+	stats.RowCount = rows
+	stats.ColNDVs = make(map[int64]float64, len(stats.ColNDVs))
+	for id, ndv := range plan.StatsInfo().ColNDVs {
+		stats.ColNDVs[id] = min(ndv, rows)
+	}
+	stats.GroupNDVs = append([]property.GroupNDV(nil), stats.GroupNDVs...)
+	for i := range stats.GroupNDVs {
+		stats.GroupNDVs[i].NDV = min(stats.GroupNDVs[i].NDV, rows)
+	}
+	plan.SetStats(&stats)
 }
 
 func attach2TaskForMpp1Phase(p *physicalop.PhysicalHashAgg, mpp *physicalop.MppTask) base.Task {

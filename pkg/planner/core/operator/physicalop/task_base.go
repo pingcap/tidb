@@ -427,6 +427,9 @@ type CopTask struct {
 	// Set by convertToIndexScan when a prefix index provides partial order for TopN.
 	PartialOrderMatchResult *property.PartialOrderMatchResult
 
+	// SkipScan records that the single-read subtree contains a skip scan.
+	SkipScan bool
+
 	// Warnings passed through different task copy attached with more upper operator specific Warnings. (not concurrent safe)
 	Warnings SimpleWarnings
 }
@@ -474,7 +477,7 @@ func (t *CopTask) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = size.SizeOfInterface*(2+int64(cap(t.IdxMergePartPlans)+cap(t.RootTaskConds))) + size.SizeOfBool*3 + size.SizeOfUint64 +
+	sum = size.SizeOfInterface*(2+int64(cap(t.IdxMergePartPlans)+cap(t.RootTaskConds))) + size.SizeOfBool*4 + size.SizeOfUint64 +
 		size.SizeOfPointer*(4+int64(cap(t.CommonHandleCols)+cap(t.TblCols))) + size.SizeOfSlice*4 + t.PhysPlanPartInfo.MemoryUsage()
 	if t.IndexPlan != nil {
 		sum += t.IndexPlan.MemoryUsage()

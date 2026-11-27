@@ -1240,7 +1240,6 @@ func getTableScanPenalty(p *physicalop.PhysicalTableScan, rows float64) (rowPena
 	hasUnreliableStats := tblColHists.Pseudo || originalRows < 1
 	// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
 	hasHighModifyCount := tblColHists.ModifyCount > originalRows
-	// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
 	hasLowEstimate := rows > 1 && tblColHists.ModifyCount < originalRows && int64(rows) <= tblColHists.ModifyCount
 	// preferRangeScan check here is same as in skylinePruning
 	preferRangeScanCondition := allowPreferRangeScan && (hasUnreliableStats || hasHighModifyCount || hasLowEstimate)

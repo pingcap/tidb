@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,162 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/stretchr/testify/require"
 )
+
+func TestStreamAggSkipScan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table skip_idx (g int, n int, key idx(g, n))")
+	tk.MustExec("create table skip_pk (g int, n int, primary key(g, n) clustered, key idx(g, n))")
+	tk.MustExec("create table skip_pk_only (g int, n int, primary key(g, n) clustered)")
+	tk.MustExec("create table skip_pseudo (g int, n int, key idx(g, n))")
+	tk.MustExec("insert into skip_pseudo values (0, 1), (0, 2), (1, 3)")
+	tk.MustExec("create table skip_nullable (a int, b int, c int, d int, key idx(a, b, c, d))")
+	for _, table := range []string{"skip_idx", "skip_pk", "skip_pk_only"} {
+		values := make([]string, 0, 120)
+		for i := range 120 {
+			values = append(values, fmt.Sprintf("(%d,%d)", i%3, i))
+		}
+		tk.MustExec("insert into " + table + " values " + strings.Join(values, ","))
+		tk.MustExec("analyze table " + table)
+	}
+	values := make([]string, 0, 120)
+	for i := range 40 {
+		// The first group has a NULL key and a mix of NULL and non-NULL
+		// targets; the second group has only NULL targets.
+		c := fmt.Sprint(i)
+		if i%2 == 0 {
+			c = "null"
+		}
+		values = append(values,
+			fmt.Sprintf("(null, 1, %s, %d)", c, i),
+			fmt.Sprintf("(1, 1, null, %d)", i),
+			fmt.Sprintf("(2, null, %d, %d)", i, i))
+	}
+	tk.MustExec("insert into skip_nullable values " + strings.Join(values, ","))
+	tk.MustExec("analyze table skip_nullable")
+	explain := func(sql string) string {
+		return fmt.Sprint(tk.MustQuery("explain format='verbose' " + sql).Rows())
+	}
+	indexSQL := "select /*+ stream_agg() */ g from skip_idx group by g"
+	tableSQL := "select /*+ stream_agg() */ g from skip_pk_only group by g"
+	tk.MustExec("set session sql_mode = 'ONLY_FULL_GROUP_BY'")
+	require.NotContains(t, explain(indexSQL), "skip scan:true")
+	require.NotContains(t, explain(tableSQL), "skip scan:true")
+
+	tk.MustExec("set session tidb_opt_enable_skip_scan = ON")
+	scanCost := func(sql, name string, expectSkip, desc bool) float64 {
+		t.Helper()
+		rows := tk.MustQuery("explain format='verbose' " + sql).Rows()
+		for _, row := range rows {
+			if strings.Contains(fmt.Sprint(row[0]), name) {
+				if expectSkip {
+					require.Contains(t, fmt.Sprint(row), "skip scan:true, prefix column count:1", "%s", sql)
+					require.Equal(t, desc, strings.Contains(fmt.Sprint(row), "keep order:true, desc"), "%s", sql)
+					require.Equal(t, "3.00", row[1])
+				} else {
+					require.NotContains(t, fmt.Sprint(row), "skip scan:true")
+					require.Equal(t, "120.00", row[1])
+				}
+				var cost float64
+				_, err := fmt.Sscan(fmt.Sprint(row[2]), &cost)
+				require.NoError(t, err)
+				return cost
+			}
+		}
+		require.FailNow(t, "missing scan", "expected %s in %v", name, rows)
+		return 0
+	}
+	for _, version := range []int{1, 2} {
+		tk.MustExec(fmt.Sprintf("set tidb_cost_model_version = %d", version))
+		for _, tc := range []struct {
+			sql, scan string
+			desc      bool
+		}{
+			{indexSQL, "IndexFullScan", false},
+			{tableSQL, "TableFullScan", false},
+			{"select /*+ stream_agg() */ g, min(g) from skip_idx group by g", "IndexFullScan", false},
+			{"select /*+ stream_agg() */ g, min(g), max(g) from skip_pk_only group by g", "TableFullScan", false},
+			{"select /*+ stream_agg() */ g, min(n) from skip_idx group by g", "IndexFullScan", false},
+			{"select /*+ stream_agg() */ g, max(n) from skip_idx group by g", "IndexFullScan", true},
+			{"select /*+ stream_agg() */ g, min(n) from skip_pk_only group by g", "TableFullScan", false},
+			{"select /*+ stream_agg() */ g, max(n) from skip_pk_only group by g", "TableFullScan", true},
+		} {
+			skipCost := scanCost(tc.sql, tc.scan, true, tc.desc)
+			tk.MustExec("set session tidb_opt_enable_skip_scan = OFF")
+			normalCost := scanCost(tc.sql, tc.scan, false, false)
+			tk.MustExec("set session tidb_opt_enable_skip_scan = ON")
+			require.Less(t, skipCost, normalCost)
+		}
+	}
+	for _, tc := range []struct {
+		selectList string
+		desc       bool
+	}{
+		{"a, b", false},
+		{"a, b, min(c)", false},
+		{"a, b, max(c)", true},
+		{"a, b, min(a), max(c)", true},
+	} {
+		rows := tk.MustQuery("explain format='verbose' select /*+ stream_agg() */ " + tc.selectList + " from skip_nullable group by a, b").Rows()
+		var found bool
+		for _, row := range rows {
+			if strings.Contains(fmt.Sprint(row[0]), "IndexFullScan") {
+				found = true
+				require.Contains(t, fmt.Sprint(row), "skip scan:true, prefix column count:2")
+				require.Equal(t, tc.desc, strings.Contains(fmt.Sprint(row), "keep order:true, desc"))
+				require.Equal(t, "3.00", row[1])
+			}
+		}
+		require.True(t, found, "%v", rows)
+	}
+	tk.MustExec("set session sql_mode = ''")
+	require.NotContains(t, explain(indexSQL), "skip scan:true")
+	require.NotContains(t, explain(tableSQL), "skip scan:true")
+	require.NotContains(t, explain("select /*+ stream_agg() */ a, b, c from skip_nullable group by a, b"), "skip scan:true")
+	tk.MustExec("set session sql_mode = 'ONLY_FULL_GROUP_BY'")
+	orderedMax := explain("select /*+ stream_agg() */ g, max(n) from skip_idx group by g order by g asc")
+	if strings.Contains(orderedMax, "skip scan:true") {
+		// A reverse skip scan needs an upper sort to provide ascending order.
+		require.Contains(t, orderedMax, "keep order:true, desc")
+		require.Contains(t, orderedMax, "Sort")
+	}
+	// Apply keeps the outer aggregation at root, while its scan can run a Skip Scan in TiKV.
+	for _, tc := range []struct{ table, scan string }{{"skip_idx", "IndexFullScan"}, {"skip_pk_only", "TableFullScan"}} {
+		sql := "select q.g, (select /*+ no_decorrelate() */ count(*) from skip_pseudo where n = q.n) " +
+			"from (select /*+ stream_agg() */ g, min(n) as n from " + tc.table + " group by g) q"
+		require.Contains(t, explain(sql), "Apply", "%s", sql)
+		scanCost(sql, tc.scan, true, false)
+	}
+	bothSQL := "select /*+ stream_agg() */ g from skip_pk group by g"
+	// Both paths satisfy the same required property and compete on scan cost.
+	tk.MustExec("set tidb_opt_index_scan_cost_factor = 1000")
+	plan := explain(bothSQL)
+	require.Contains(t, plan, "TableFullScan")
+	require.Contains(t, plan, "skip scan:true")
+	tk.MustExec("set tidb_opt_index_scan_cost_factor = 0.001")
+	plan = explain(bothSQL)
+	require.Contains(t, plan, "IndexFullScan")
+	require.Contains(t, plan, "skip scan:true")
+	for _, sql := range []string{
+		"select /*+ stream_agg() */ g from skip_idx where n > 0 group by g",
+		"select /*+ stream_agg() */ g from skip_idx where g > 0 group by g",
+		"select /*+ stream_agg() */ n from skip_idx group by n",
+		"select /*+ stream_agg() */ g, min(n), max(n) from skip_idx group by g",
+		"select /*+ stream_agg() */ a, b, min(d) from skip_nullable group by a, b",
+		"select /*+ stream_agg() */ a, b, min(c), min(d) from skip_nullable group by a, b",
+		"select /*+ stream_agg() */ b, c from skip_nullable group by b, c",
+		"select /*+ stream_agg() */ g, count(*) from skip_idx group by g",
+		"select /*+ stream_agg() */ a.g from skip_idx a join skip_idx b on a.g=b.g group by a.g",
+		"select /*+ stream_agg() */ g from skip_pseudo group by g",
+	} {
+		require.NotContains(t, explain(sql), "skip scan:true", sql)
+	}
+	tk.MustExec("set tidb_opt_stream_agg_cost_factor = 10000")
+	plan = explain("select g from skip_pk group by g")
+	require.Contains(t, plan, "HashAgg")
+	require.NotContains(t, plan, "skip scan:true")
+}
 
 func TestEncodeDecodePlan(t *testing.T) {
 	store := testkit.CreateMockStore(t)

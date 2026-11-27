@@ -500,6 +500,16 @@ func GetStatsInfo(i any) map[string]uint64 {
 // Some logical plans will convert the children to the physical plans in different ways, and return the one
 // With the lowest cost and how many plans are found in this function.
 func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask base.Task, err error) {
+	if prop != nil && prop.SkipScanInfo != nil {
+		if prop.CanAddEnforcer || prop.IndexJoinProp != nil || prop.IsSortItemEmpty() {
+			return base.InvalidTask, nil
+		}
+		switch e.GetWrappedLogicalPlan().(type) {
+		case *logicalop.DataSource, *logicalop.LogicalProjection:
+		default:
+			return base.InvalidTask, nil
+		}
+	}
 	// since different logical operator may have different findBestTask before like:
 	// 	utilfuncp.FindBestTask4BaseLogicalPlan = findBestTask
 	//	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE

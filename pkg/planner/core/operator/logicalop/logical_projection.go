@@ -534,6 +534,32 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 		}
 	}
 
+	if skip := prop.SkipScanInfo; skip != nil {
+		// A computed expression may vary among rows of the same prefix.
+		for _, expr := range p.Exprs {
+			col, ok := expr.(*expression.Column)
+			if !ok || col.VirtualExpr != nil {
+				return nil, false
+			}
+		}
+		cols := make([]*expression.Column, 0, len(skip.GroupByCols))
+		for _, col := range skip.GroupByCols {
+			idx := p.Schema().ColumnIndex(col)
+			if idx < 0 {
+				return nil, false
+			}
+			cols = append(cols, p.Exprs[idx].(*expression.Column))
+		}
+		newSkip := &property.SkipScanInfo{GroupByCols: cols}
+		if skip.TargetCol != nil {
+			idx := p.Schema().ColumnIndex(skip.TargetCol)
+			if idx < 0 {
+				return nil, false
+			}
+			newSkip.TargetCol = p.Exprs[idx].(*expression.Column)
+		}
+		newProp.SkipScanInfo = newSkip
+	}
 	return newProp, true
 }
 

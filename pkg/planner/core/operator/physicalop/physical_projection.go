@@ -64,7 +64,7 @@ func ExhaustPhysicalPlans4LogicalProjection(super base.LogicalPlan, prop *proper
 	pushDownCtx := util.GetPushDownCtx(ctx)
 	sessionVars := ctx.GetSessionVars()
 	// lift the recursive check of canPushToCop(tiFlash)
-	if util.ShouldCheckTiFlashPushDown(ctx, logicalop.GetHasTiFlash(p)) &&
+	if newProp.SkipScanInfo == nil && util.ShouldCheckTiFlashPushDown(ctx, logicalop.GetHasTiFlash(p)) &&
 		newProp.TaskTp != property.MppTaskType && sessionVars.IsMPPAllowed() &&
 		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiFlash) {
 		mppProp := newProp.CloneEssentialFields()
@@ -196,4 +196,9 @@ func (p *PhysicalProjection) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTy
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalProjection(p, tasks...)
+}
+
+// RequiresSkipScan reports whether the projection was planned over a Skip Scan subtree.
+func (p *PhysicalProjection) RequiresSkipScan() bool {
+	return len(p.childrenReqProps) > 0 && p.childrenReqProps[0] != nil && p.childrenReqProps[0].SkipScanInfo != nil
 }

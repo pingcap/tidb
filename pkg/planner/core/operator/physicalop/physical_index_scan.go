@@ -80,6 +80,13 @@ type PhysicalIndexScan struct {
 	IsPartition bool
 	Desc        bool
 	KeepOrder   bool
+	// SkipScan enables storage-side skipping of duplicate index prefixes. The
+	// property is copied into the IndexScan request when the tipb protocol
+	// provides the corresponding fields.
+	SkipScan bool
+	// SkipScanPrefixColumnCount is the number of leading index columns that
+	// form the prefix used by SkipScan.
+	SkipScanPrefixColumnCount int
 	// ByItems only for partition table with orderBy + pushedLimit
 	ByItems []*util.ByItems
 
@@ -297,6 +304,10 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
 	if p.Desc {
 		buffer.WriteString(", desc")
+	}
+	if p.SkipScan {
+		buffer.WriteString(", skip scan:true, prefix column count:")
+		buffer.WriteString(strconv.Itoa(p.SkipScanPrefixColumnCount))
 	}
 	if !normalized {
 		if p.UsedStatsInfo != nil {
