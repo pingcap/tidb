@@ -259,7 +259,7 @@ func (wb *writeBatch) Commit(key []byte, lock *mvcc.Lock) {
 	if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
 		log.Info("removing a pessimistic lock when committing", zap.Binary("key", key), zap.Uint64("startTS", wb.startTS), zap.Uint64("commitTS", wb.commitTS))
 		// Write nothing as if PessimisticRollback is called.
-	} else if lock.Op != uint8(kvrpcpb.Op_Lock) {
+	} else if lock.Op != uint8(kvrpcpb.Op_Lock) && lock.Op != uint8(kvrpcpb.Op_SharedLock) {
 		wb.dbBatch.set(k, lock.Value, userMeta)
 	} else if bytes.Equal(key, lock.Primary) {
 		opLockKey := y.KeyWithTs(mvcc.EncodeExtraTxnStatusKey(key, wb.startTS), wb.startTS)

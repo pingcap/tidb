@@ -952,6 +952,18 @@ func TestPrimaryKeyOpLock(t *testing.T) {
 	getVal, _, err = store.newReqCtx().getDBReader().Get(pk(), 130)
 	require.NoError(t, err)
 	require.Equal(t, val2, getVal)
+	// A shared primary contributes a status record while readers retain the last put.
+	err = store.MvccStore.Prewrite(store.newReqCtx(), &kvrpcpb.PrewriteRequest{
+		Mutations:   []*kvrpcpb.Mutation{newMutation(kvrpcpb.Op_SharedLock, pk(), nil)},
+		PrimaryLock: pk(), StartVersion: 140, LockTtl: lockTTL,
+	})
+	require.NoError(t, err)
+	MustGetVal(pk(), val2, 145, store)
+	require.NoError(t, store.MvccStore.Commit(store.newReqCtx(), [][]byte{pk()}, 140, 150))
+	_, commitTS, _, err = CheckTxnStatus(pk(), 140, 160, 160, false, store)
+	require.NoError(t, err)
+	require.EqualValues(t, 150, commitTS)
+	MustGetVal(pk(), val2, 160, store)
 }
 
 func TestMvccTxnRead(t *testing.T) {

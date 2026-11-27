@@ -88,7 +88,7 @@ func EncodeLockCFValue(lock *Lock) ([]byte, []byte) {
 		data = append(data, LockTypePut)
 	case byte(kvrpcpb.Op_Del):
 		data = append(data, LockTypeDelete)
-	case byte(kvrpcpb.Op_Lock):
+	case byte(kvrpcpb.Op_Lock), byte(kvrpcpb.Op_SharedLock):
 		data = append(data, LockTypeLock)
 	case byte(kvrpcpb.Op_PessimisticLock):
 		data = append(data, LockTypePessimistic)
