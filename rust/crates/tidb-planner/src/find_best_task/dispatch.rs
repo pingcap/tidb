@@ -4761,11 +4761,17 @@ fn find_best_task_4_logical_data_source_paths(
                     ctx.forced_partial_order_paths.insert(path_key);
                 }
                 // Go `buildDataSource2IndexScanByIndexJoinProp`: an index-join
-                // probe keeps order only when `matchProperty` matches; an
-                // unmatched order still builds the probe, without order.
+                // probe keeps order only when `matchProperty` matches.
                 let probe_order_match = (prop.index_join_prop.is_some() && ordered).then(|| {
                     index_path_matches_order(ds, source_index, prop, index_join_probe.is_none().then_some(&ranges))
                 });
+                // Go `getBestIndexJoinInnerTaskByProp`: this path bypasses
+                // normal property enforcement, so an ordered parent such as
+                // StreamAgg must not consume a probe task that cannot
+                // preserve the required order.
+                if probe_order_match.as_ref().is_some_and(|order_match| !order_match.matched()) {
+                    continue 'paths;
+                }
                 let keep_order = match &probe_order_match {
                     Some(order_match) => order_match.matched(),
                     None => ordered || partial_order_match.is_some(),

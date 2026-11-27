@@ -11441,3 +11441,37 @@ fn test_union_string_cast_length() {
     )
     .check(["1592"]);
 }
+
+/// Go `TestIndexJoin...`'s "prefix index inner aggregation" (710e9404923):
+/// an ordered parent (StreamAgg over a semi join's probe) does not take an
+/// index-join probe that cannot keep order, so the answers stay complete.
+#[test]
+fn test_prefix_index_inner_aggregation() {
+    let mut tk = Session::new();
+    for (column_type, index_column) in [("blob(54)", "c0(58)"), ("blob(54)", "c0(11)"), ("varbinary(54)", "c0")] {
+        for sql in [
+            format!("create table t0(c0 {column_type} not null)"),
+            format!("create table t1(c0 {column_type} not null)"),
+            "insert into t0 values (unhex('')),(unhex('')),(unhex('302E36313136373338343339313134343736')),(unhex('2D5E097B69')),(unhex('2D31353234393434393733')),(unhex('3147')),(unhex('')),(unhex('534A4959EC92A54F5075'))".to_owned(),
+            format!("insert into t1 values {}('-1524944973')", "(''),".repeat(32)),
+            format!("create index i0 on t0({index_column})"),
+            "analyze table t0,t1".to_owned(),
+            "drop stats t0".to_owned(),
+            "drop stats t1".to_owned(),
+        ] {
+            tk.run(&sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        }
+        let mut expected = vec![vec![String::new()]; 33];
+        expected[32] = vec!["-1524944973".to_owned()];
+        expected.sort();
+        for sql in [
+            "select t1.c0 from t1 where t1.c0 in (select t0.c0 from t0)",
+            "select ref0 from (select t1.c0 as ref0,t1.c0 in (select t0.c0 from t0) as ref1 from t1) s where ref1",
+        ] {
+            let mut got = row_text(tk.run(sql));
+            got.sort();
+            assert_eq!(got, expected, "{column_type} {index_column}: {sql}");
+        }
+        tk.run("drop table t0,t1").unwrap();
+    }
+}
