@@ -397,3 +397,54 @@ c0
 NULL
 drop table t0;
 set @@tidb_hash_join_version = default;
+drop table if exists t_probe, t_build;
+create table t_probe(id int primary key, k int, flag int not null);
+create table t_build(id int primary key, k int, pad varchar(256) not null);
+insert into t_build values (1, 1, repeat('x', 200)), (2, 2, repeat('x', 200)), (3, 3, repeat('x', 200)), (4, 4, repeat('x', 200));
+insert into t_build select id + 4, k + 4, pad from t_build;
+insert into t_build select id + 8, k + 8, pad from t_build;
+insert into t_build select id + 16, k + 16, pad from t_build;
+insert into t_build select id + 32, k + 32, pad from t_build;
+insert into t_build select id + 64, k + 64, pad from t_build;
+insert into t_build select id + 128, k + 128, pad from t_build;
+insert into t_build select id + 256, k + 256, pad from t_build;
+insert into t_probe values (1, null, 1), (2, 1, 0), (3, 9999, 1), (4, 2, 1);
+analyze table t_probe, t_build;
+set @@tidb_hash_join_version = optimized;
+set global tidb_mem_oom_action = 'LOG';
+set @@tidb_executor_concurrency = 4;
+set @@tidb_mem_quota_query = 4096;
+select /*+ HASH_JOIN_BUILD(t_build) */ t_probe.id, t_build.id from t_probe left join t_build on t_probe.k = t_build.k and t_probe.flag = 1 order by t_probe.id;
+id	id
+1	NULL
+2	NULL
+3	NULL
+4	2
+select /*+ HASH_JOIN_BUILD(t_build) */ t_probe.id, t_build.id from t_build right join t_probe on t_probe.k = t_build.k and t_probe.flag = 1 order by t_probe.id;
+id	id
+1	NULL
+2	NULL
+3	NULL
+4	2
+select t_probe.id from t_probe where not exists (select /*+ HASH_JOIN_BUILD(t_build) */ 1 from t_build where t_build.k = t_probe.k and t_probe.flag = 1) order by t_probe.id;
+id
+1
+2
+3
+select t_probe.id, exists (select /*+ HASH_JOIN_BUILD(t_build) */ 1 from t_build where t_build.k = t_probe.k and t_probe.flag = 1) as matched from t_probe order by t_probe.id;
+id	matched
+1	0
+2	0
+3	0
+4	1
+select t_probe.id, not exists (select /*+ HASH_JOIN_BUILD(t_build) */ 1 from t_build where t_build.k = t_probe.k and t_probe.flag = 1) as unmatched from t_probe order by t_probe.id;
+id	unmatched
+1	1
+2	1
+3	1
+4	0
+set @@tidb_mem_quota_query = default;
+set @@tidb_executor_concurrency = default;
+set global tidb_mem_oom_action = default;
+set @@tidb_hash_join_version = default;
+drop table t_probe, t_build;

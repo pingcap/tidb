@@ -1035,3 +1035,90 @@ func TestIssue56825(t *testing.T) {
 		tk.MustQuery("select * from t1 right join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t2.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "<nil> <nil> 3 4 5 6 7 8", "<nil> <nil> 4 5 6 7 8 9"))
 	}
 }
+
+func TestHashJoinV2AllPartitionsSpilledUnmatchedProbeRows(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists a, b, a_notnull, dst")
+	tk.MustExec("create table a(id int primary key, k int, flag int not null, v int not null)")
+	tk.MustExec("create table a_notnull(id int primary key, k int not null, flag int not null)")
+	tk.MustExec("create table b(id int primary key, k int, v int not null, pad varchar(256) not null)")
+	tk.MustExec("create table dst(aid int, bid int)")
+
+	var sb strings.Builder
+	sb.WriteString("insert into b values ")
+	for i := 1; i <= 512; i++ {
+		if i > 1 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, "(%d, %d, %d, repeat('x', 200))", i, i, i*10)
+	}
+	tk.MustExec(sb.String())
+
+	// Probe rows covering:
+	// - id=1,2: NULL join key
+	// - id=3: non-NULL matching key rejected by probe-side ON filter (a.flag = 1)
+	// - id=4: non-NULL unmatched key (spilled & restored)
+	// - id=5: non-NULL matching key (spilled & restored, matched)
+	// - id=6: non-NULL matching key rejected by cross-side OtherCondition (a.v > b.v)
+	tk.MustExec("insert into a values (1, null, 1, 100), (2, null, 0, 100), (3, 1, 0, 100), (4, 9999, 1, 100), (5, 2, 1, 100), (6, 3, 1, 5)")
+	tk.MustExec("insert into a_notnull values (1, 1, 0), (2, 2, 1), (3, 9999, 0), (4, 9998, 1)")
+	tk.MustExec("analyze table a, a_notnull, b")
+
+	queries := []string{
+		// LEFT JOIN with NULL probe keys
+		"select /*+ HASH_JOIN_BUILD(b) */ a.id, b.id from a left join b on a.k = b.k order by a.id",
+		// LEFT JOIN with probe-side ON filter + NULL probe keys
+		"select /*+ HASH_JOIN_BUILD(b) */ a.id, b.id from a left join b on a.k = b.k and a.flag = 1 order by a.id",
+		// LEFT JOIN on NOT NULL join keys where probe-side ON filter rejects probe rows
+		"select /*+ HASH_JOIN_BUILD(b) */ a_notnull.id, b.id from a_notnull left join b on a_notnull.k = b.k and a_notnull.flag = 1 order by a_notnull.id",
+		// LEFT JOIN with probe-side ON filter + cross-table OtherCondition
+		"select /*+ HASH_JOIN_BUILD(b) */ a.id, b.id from a left join b on a.k = b.k and a.flag = 1 and a.v > b.v order by a.id",
+		// RIGHT JOIN with build on left (b) and probe on right (a)
+		"select /*+ HASH_JOIN_BUILD(b) */ a.id, b.id from b right join a on a.k = b.k and a.flag = 1 order by a.id",
+		// NOT EXISTS -> AntiSemiJoin with right (b) as build side
+		"select a.id from a where not exists (select /*+ HASH_JOIN_BUILD(b) */ 1 from b where b.k = a.k and a.flag = 1) order by a.id",
+		// Scalar EXISTS -> LeftOuterSemiJoin
+		"select a.id, exists (select /*+ HASH_JOIN_BUILD(b) */ 1 from b where b.k = a.k and a.flag = 1) from a order by a.id",
+		// Scalar NOT EXISTS -> AntiLeftOuterSemiJoin
+		"select a.id, not exists (select /*+ HASH_JOIN_BUILD(b) */ 1 from b where b.k = a.k and a.flag = 1) from a order by a.id",
+	}
+
+	// Collect ground-truth results without spill.
+	tk.MustExec("set @@tidb_hash_join_version = 'legacy'")
+	tk.MustExec("set @@tidb_mem_quota_query = -1")
+	expected := make([][][]any, len(queries))
+	for i, q := range queries {
+		expected[i] = tk.MustQuery(q).Rows()
+	}
+
+	// Force HashJoinV2 to spill every partition (4/4) under tight memory quota.
+	tk.MustExec("set global tidb_mem_oom_action = 'LOG'")
+	defer tk.MustExec("set global tidb_mem_oom_action = default")
+	tkSpill := testkit.NewTestKit(t, store)
+	tkSpill.MustExec("use test")
+	tkSpill.MustExec("set @@tidb_hash_join_version = 'optimized'")
+	tkSpill.MustExec("set @@tidb_executor_concurrency = 4")
+	tkSpill.MustExec("set @@tidb_mem_quota_query = 4096")
+
+	explainRows := tkSpill.MustQuery("explain analyze " + queries[1]).Rows()
+	foundAllPartitionsSpilled := false
+	for _, r := range explainRows {
+		line := fmt.Sprint(r)
+		if strings.Contains(line, "HashJoin") && strings.Contains(line, "spilled_partition_num_per_round:[4/4") {
+			foundAllPartitionsSpilled = true
+			break
+		}
+	}
+	require.True(t, foundAllPartitionsSpilled, "expected HashJoinV2 to spill all 4/4 partitions, got explain analyze: %v", explainRows)
+
+	for i, q := range queries {
+		tkSpill.MustQuery(q).Check(expected[i])
+	}
+
+	// Verify INSERT INTO ... SELECT preserves all unmatched skipped probe rows as well.
+	tkSpill.MustExec("insert into dst select /*+ HASH_JOIN_BUILD(b) */ a.id, b.id from a left join b on a.k = b.k and a.flag = 1")
+	tkSpill.MustExec("set @@tidb_mem_quota_query = -1")
+	tkSpill.MustQuery("select aid, bid from dst order by aid").Check(expected[1])
+}

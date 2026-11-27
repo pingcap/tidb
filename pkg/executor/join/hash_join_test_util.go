@@ -42,6 +42,7 @@ type hashJoinInfo struct {
 	buildKeys             []*expression.Column
 	probeKeys             []*expression.Column
 	conditions            expression.CNFExprs
+	probeFilter           expression.CNFExprs
 	lUsed                 []int
 	rUsed                 []int
 	otherCondition        expression.CNFExprs
@@ -68,6 +69,7 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 	e.HashJoinCtxV2.JoinType = info.joinType
 	e.HashJoinCtxV2.Concurrency = uint(concurrency)
 	e.HashJoinCtxV2.BuildFilter = info.conditions
+	e.HashJoinCtxV2.ProbeFilter = info.probeFilter
 	e.HashJoinCtxV2.SetupPartitionInfo()
 	e.ChunkAllocPool = e.AllocPool
 	e.RightAsBuildSide = info.rightAsBuildSide
