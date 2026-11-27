@@ -809,6 +809,8 @@ func TestSameTableNameInTwoSchemas(t *testing.T) {
 		Check(testkit.Rows(fmt.Sprintf("test1 t %d", t1ID)))
 	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'test1' and tidb_table_id = %d;", t1ID)).
 		Check(testkit.Rows(fmt.Sprintf("test1 t %d", t1ID)))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'test1 ' and table_name = 't ' and tidb_table_id = %d;", t1ID)).
+		Check(testkit.Rows(fmt.Sprintf("test1 t %d", t1ID)))
 	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_name = 'unknown' and tidb_table_id = %d;", t1ID)).
 		Check(testkit.Rows())
 	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'unknown' and tidb_table_id = %d;", t1ID)).
@@ -848,6 +850,18 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 		"add index|public|t3|synced",
 		"create table|public|t3|synced",
 	))
+	// The comparisons use a PAD SPACE collation, so trailing spaces in the
+	// constants are ignored.
+	for _, cond := range []string{
+		`db_name = "d0 " and table_name = "t3"`,
+		`db_name = "d0" and table_name = "t3  "`,
+		`db_name in ("d0 ", "d9") and table_name = "t3"`,
+		`(db_name = "d0 " or db_name = "d9") and table_name = "t3"`,
+	} {
+		tk2.MustQuery(`SELECT JOB_TYPE, table_name FROM information_schema.ddl_jobs WHERE ` + cond + ` ORDER BY JOB_ID DESC`).
+			Check(testkit.Rows("add index t3", "create table t3"))
+	}
+	tk2.MustQuery(`SELECT JOB_TYPE FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = " t3"`).Check(testkit.Rows())
 
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 					FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.Rows())

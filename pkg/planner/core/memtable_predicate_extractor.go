@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -92,7 +93,27 @@ func (extractHelper) extractColInConsExpr(ctx base.PlanContext, extractCols map[
 		}
 		results = append(results, v)
 	}
-	return name.ColName.L, results
+	return name.ColName.L, trimPadSpaceDatums(expr, results)
+}
+
+// trimPadSpaceDatums removes the trailing spaces of the string values that
+// expr compares with a PAD SPACE collation. Such a comparison ignores
+// trailing spaces, so `c = 'a '` matches the value 'a'. It is only for the
+// values of `=` and `IN`: LIKE and REGEXP keep their trailing spaces.
+func trimPadSpaceDatums(expr *expression.ScalarFunction, datums []types.Datum) []types.Datum {
+	if _, coll := expr.CharsetAndCollation(); !collate.IsPadSpaceCollation(coll) {
+		return datums
+	}
+	for i := range datums {
+		switch datums[i].Kind() {
+		case types.KindString, types.KindBytes:
+			s := datums[i].GetString()
+			if trimmed := strings.TrimRight(s, " "); len(trimmed) != len(s) {
+				datums[i].SetString(trimmed, datums[i].Collation())
+			}
+		}
+	}
+	return datums
 }
 
 func (helper *extractHelper) setColumnPushedDownFn(
@@ -267,7 +288,7 @@ func (helper *extractHelper) extractColOrExpr(ctx base.PlanContext, extractCols 
 		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
 			colName, datums, _ := helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
-			return colName, datums
+			return colName, trimPadSpaceDatums(fn, datums)
 		case ast.LogicOr:
 			return helper.extractColOrExpr(ctx, extractCols, fn)
 		case ast.In:
@@ -340,6 +361,7 @@ func (helper *extractHelper) extractCol(
 		case ast.EQ:
 			helper.enableScalarPushDown = true
 			colName, datums, _ = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+			datums = trimPadSpaceDatums(fn, datums)
 			if colName == extractColName {
 				helper.setColumnPushedDownFn(colName, extractCols, fn)
 			}
@@ -490,7 +512,13 @@ func (helper extractHelper) extractLikePattern(
 	}
 	switch fn.FuncName.L {
 	case ast.EQ:
-		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$", false
+		s := datums[0].GetString()
+		// A PAD SPACE comparison ignores trailing spaces, so the pattern accepts
+		// any number of them. Under NO PAD it stays exact.
+		if _, coll := fn.CharsetAndCollation(); collate.IsPadSpaceCollation(coll) {
+			return true, "^" + regexp.QuoteMeta(strings.TrimRight(s, " ")) + " *$", false
+		}
+		return true, "^" + regexp.QuoteMeta(s) + "$", false
 	case ast.Like, ast.Ilike:
 		// The pushed-down pattern must honour the LIKE ESCAPE so it does not
 		// diverge from the original predicate (issue #69653). The escape has to
