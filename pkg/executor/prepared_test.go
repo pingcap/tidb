@@ -162,6 +162,32 @@ func TestParameterPushDown(t *testing.T) {
 	}
 }
 
+func TestPreparedCaseFloatResult(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c float)")
+	tk.MustExec("insert into t values (100000030)")
+	tk.MustExec("set @result = false")
+	tk.MustExec("prepare stmt from 'select c from t where c not like case when false then ? else c end'")
+	tk.MustQuery("execute stmt using @result").Check(testkit.Rows())
+	tk.MustExec("deallocate prepare stmt")
+
+	tk.MustExec("set @condition = true")
+	tk.MustExec("prepare control from 'select case when ? then 1 else 2 end'")
+	tk.MustQuery("execute control using @condition").Check(testkit.Rows("1"))
+	tk.MustExec("set @condition = false")
+	tk.MustQuery("execute control using @condition").Check(testkit.Rows("2"))
+	tk.MustExec("deallocate prepare control")
+
+	tk.MustExec("set @selected = 1")
+	tk.MustExec("prepare selected from 'select case when true then ? else 2 end'")
+	tk.MustQuery("execute selected using @selected").Check(testkit.Rows("1"))
+	tk.MustExec("set @selected = 3")
+	tk.MustQuery("execute selected using @selected").Check(testkit.Rows("3"))
+	tk.MustExec("deallocate prepare selected")
+}
+
 func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
