@@ -2727,7 +2727,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 	}
 
 	if job.IsRollingback() {
-		return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob, tblInfo)
+		rollbackErr := error(dbterror.ErrCancelledDDLJob)
+		if job.Error != nil {
+			rollbackErr = job.Error
+		}
+		return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, rollbackErr, tblInfo)
 	}
 
 	failpoint.Inject("truncatePartCancel1", func(val failpoint.Value) {
@@ -2741,14 +2745,19 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 	switch job.SchemaState {
 	case model.StatePublic:
 		// A queued job can still reference partitions a previous DDL has replaced.
-		_, replacements := replaceTruncatePartitions(slices.Clone(pi.Definitions), oldIDs, newIDs)
-		// Prepare the replacement groups while cancellation is still safe.
-		// Publishing new partition IDs before this succeeds can lose data if a
-		// later PD failure cancels the job instead of finishing the truncate.
-		if tblInfo.Affinity != nil && len(replacements) > 0 {
-			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo, replacements...); err != nil {
+		postDefs := slices.Clone(pi.Definitions)
+		_, replacements := replaceTruncatePartitions(postDefs, oldIDs, newIDs)
+		// Prepare the full post-truncate affinity group set while cancellation is
+		// still safe. Publishing new partition IDs before this succeeds can lose
+		// data if a later PD failure cancels the job instead of finishing the
+		// truncate, and passing postDefs also backfills missing groups for
+		// untouched partitions (e.g. tables created before PD supported affinity).
+		if tblInfo.Affinity != nil {
+			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo, postDefs...); err != nil {
 				return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, err, tblInfo)
 			}
+			args.AffinityGroupsPrepared = true
+			job.FillArgs(args)
 		}
 		// IDsInDDLToIgnore uses these IDs to filter global index entries.
 		pi.NewPartitionIDs = getPartitionIDsFromDefinitions(replacements)
@@ -2759,6 +2768,19 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		// We can still rollback here, since we have not yet started to write to the new partitions!
+		// During a rolling upgrade, an older DDL owner can advance a job to
+		// StateWriteOnly without preparing affinity groups. Prepare them here
+		// before publishing new partition IDs so PD errors can still roll back
+		// cleanly instead of retrying indefinitely in StateDeleteReorganization.
+		if tblInfo.Affinity != nil && !args.AffinityGroupsPrepared {
+			postDefs := slices.Clone(pi.Definitions)
+			replaceTruncatePartitions(postDefs, oldIDs, newIDs)
+			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo, postDefs...); err != nil {
+				return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, err, tblInfo)
+			}
+			args.AffinityGroupsPrepared = true
+			job.FillArgs(args)
+		}
 		oldDefinitions, newDefinitions := replaceTruncatePartitions(pi.Definitions, oldIDs, newIDs)
 		if len(newDefinitions) > 0 {
 			if err = clearTruncatePartitionTiflashStatus(tblInfo, newDefinitions, getPartitionIDsFromDefinitions(oldDefinitions)); err != nil {
@@ -2836,10 +2858,10 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DDLState = model.StateNone
 		pi.DDLAction = model.ActionNone
 
-		// Also prepare groups for jobs started by an older TiDB version. The
-		// replacement is already visible, so failures here must retry rather
-		// than cancel the job and leave the partition metadata unfinished.
-		if tblInfo.Affinity != nil {
+		// Backfill groups for all current partitions if an older owner already
+		// published the replacement without preparing affinity groups.
+		// Retry on failure because the replacement is already visible.
+		if tblInfo.Affinity != nil && !args.AffinityGroupsPrepared {
 			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
 				return ver, errors.Trace(err)
 			}

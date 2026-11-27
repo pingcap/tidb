@@ -968,16 +968,19 @@ func TestDetectAndUpdateClassicCompatibility(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	d := &ddl{ddlCtx: &ddlCtx{ctx: ctx, store: store}}
 
+	originalJobVersion := model.GetJobVerInUse()
+	originalGlobalIndexV1 := model.GetGlobalIndexV1Supported()
 	originalDisabled := vardef.IsLegacyECDSASessionTokenDisabled()
+	t.Cleanup(func() {
+		model.SetJobVerInUse(originalJobVersion)
+		model.SetGlobalIndexV1Supported(originalGlobalIndexV1)
+		vardef.SetLegacyECDSASessionTokenDisabled(originalDisabled)
+	})
 	reset := func() {
 		model.SetJobVerInUse(model.JobVersion1)
 		model.SetGlobalIndexV1Supported(false)
 		vardef.SetLegacyECDSASessionTokenDisabled(kerneltype.IsNextGen())
 	}
-	t.Cleanup(func() {
-		reset()
-		vardef.SetLegacyECDSASessionTokenDisabled(originalDisabled)
-	})
 	// other ut in the same address space might change it
 	reset()
 	require.Equal(t, model.JobVersion1, model.GetJobVerInUse())

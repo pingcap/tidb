@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -67,6 +68,9 @@ type truncateAffinityPDClient struct {
 	lastCreatedGroups atomic.Value
 	createCalls       atomic.Int64
 	createFailures    atomic.Int64
+	notFoundCreates   atomic.Int64
+	legacyPD          atomic.Bool
+	attemptedGroups   sync.Map
 	deleteCalls       atomic.Int64
 	nilDeleteContext  atomic.Bool
 	deleteHasDeadline atomic.Bool
@@ -74,9 +78,9 @@ type truncateAffinityPDClient struct {
 	// labelRules maps a group ID to its key ranges. PD stores them in a label
 	// rule that is created and force-deleted together with the group.
 	labelRules sync.Map
-	// partialCreateLimit, when positive, makes a creation request commit at
-	// most that many of its groups and then fail, after partialCreateSkip
-	// requests have succeeded. partialCreatedIDs records the committed IDs.
+	// partialCreateLimit, when positive, fails a request once it commits that
+	// many groups, after partialCreateSkip requests have succeeded.
+	// partialCreatedIDs records the committed IDs.
 	partialCreateLimit atomic.Int64
 	partialCreateSkip  atomic.Int64
 	partialCreatedIDs  atomic.Value
@@ -90,6 +94,19 @@ func (c *truncateAffinityPDClient) requireEverCreated(t *testing.T, groups map[s
 		_, ok := c.everCreated.Load(id)
 		require.True(t, ok, "group %s must have been created before the job was cancelled", id)
 	}
+}
+
+// newlyRequestedGroups excludes groups that already belonged to the table.
+func newlyRequestedGroups(
+	requested, original map[string][]pdhttp.AffinityGroupKeyRange,
+) map[string][]pdhttp.AffinityGroupKeyRange {
+	newGroups := make(map[string][]pdhttp.AffinityGroupKeyRange)
+	for id, ranges := range requested {
+		if _, exists := original[id]; !exists {
+			newGroups[id] = ranges
+		}
+	}
+	return newGroups
 }
 
 func (c *truncateAffinityPDClient) labelRule(id string) ([]pdhttp.AffinityGroupKeyRange, bool) {
@@ -109,6 +126,10 @@ func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, gro
 		c.retryFailures.Add(-1)
 		return nil, c.retryError.Load().(error)
 	}
+	if c.notFoundCreates.Load() > 0 {
+		c.notFoundCreates.Add(-1)
+		return nil, fmt.Errorf("request pd http api failed with status: '404 Not Found', body: 'unsupported affinity POST'")
+	}
 	if c.fail503Once.Swap(false) {
 		c.createFailures.Add(1)
 		return nil, fmt.Errorf("request pd http api failed with status: '503 Service Unavailable', body: 'injected transient creation failure'")
@@ -118,23 +139,38 @@ func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, gro
 		return nil, fmt.Errorf("injected affinity creation failure")
 	}
 	if c.partialCreateLimit.Load() > 0 && c.partialCreateSkip.Add(-1) < 0 {
-		return nil, c.createPartially(ctx, groups, int(c.partialCreateLimit.Swap(0)))
+		return c.createPartially(ctx, groups, int(c.partialCreateLimit.Swap(0)))
 	}
-	err := c.manager.CreateAffinityGroupsIfNotExists(ctx, groups)
-	if err == nil {
-		for id, ranges := range groups {
-			c.labelRules.LoadOrStore(id, ranges)
-			c.everCreated.Store(id, struct{}{})
+	if c.legacyPD.Load() {
+		conflict := false
+		for id := range groups {
+			c.attemptedGroups.Store(id, struct{}{})
+			_, exists := c.labelRules.Load(id)
+			conflict = conflict || exists
 		}
-		c.lastCreatedGroups.Store(groups)
-		if c.failAfterCreate.Swap(false) {
-			return nil, c.exhaustCreationRetries(fmt.Errorf("injected response loss after affinity creation"))
-		}
-		if c.afterCreate != nil {
-			return nil, c.afterCreate(ctx)
+		if conflict {
+			return nil, fmt.Errorf("request pd http api failed with status: '409 Conflict', body: 'affinity group already exists'")
 		}
 	}
-	return nil, err
+	if err := c.manager.CreateAffinityGroupsIfNotExists(ctx, groups); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(groups))
+	for id, ranges := range groups {
+		ids = append(ids, id)
+		c.labelRules.LoadOrStore(id, ranges)
+		c.everCreated.Store(id, struct{}{})
+	}
+	c.lastCreatedGroups.Store(groups)
+	if c.failAfterCreate.Swap(false) {
+		return nil, c.exhaustCreationRetries(fmt.Errorf("injected response loss after affinity creation"))
+	}
+	if c.afterCreate != nil {
+		if err := c.afterCreate(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return c.manager.GetAffinityGroups(ctx, ids)
 }
 
 func (c *truncateAffinityPDClient) exhaustCreationRetries(err error) error {
@@ -143,10 +179,10 @@ func (c *truncateAffinityPDClient) exhaustCreationRetries(err error) error {
 	return err
 }
 
-// createPartially commits the first limit groups in ID order and then fails.
+// createPartially commits groups in ID order and fails if it reaches limit.
 // PD does this when a request spans several etcd transactions and a later one
 // fails after the earlier ones have committed.
-func (c *truncateAffinityPDClient) createPartially(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange, limit int) error {
+func (c *truncateAffinityPDClient) createPartially(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange, limit int) (map[string]*pdhttp.AffinityGroupState, error) {
 	ids := make([]string, 0, len(groups))
 	for id := range groups {
 		ids = append(ids, id)
@@ -158,14 +194,17 @@ func (c *truncateAffinityPDClient) createPartially(ctx context.Context, groups m
 		committed[id] = groups[id]
 	}
 	if err := c.manager.CreateAffinityGroupsIfNotExists(ctx, committed); err != nil {
-		return err
+		return nil, err
 	}
 	for id, ranges := range committed {
 		c.labelRules.LoadOrStore(id, ranges)
 		c.everCreated.Store(id, struct{}{})
 	}
 	c.partialCreatedIDs.Store(committedIDs)
-	return c.exhaustCreationRetries(fmt.Errorf("injected affinity creation failure after %d of %d groups", len(committedIDs), len(ids)))
+	if len(committedIDs) == limit {
+		return nil, c.exhaustCreationRetries(fmt.Errorf("injected affinity creation failure after %d of %d groups", limit, len(ids)))
+	}
+	return c.manager.GetAffinityGroups(ctx, committedIDs)
 }
 
 func (c *truncateAffinityPDClient) BatchDeleteAffinityGroups(ctx context.Context, ids []string, _ bool) error {
@@ -409,11 +448,11 @@ func TestAffinityCancelledTruncateOnEntryTooLarge(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, version, job.Version)
 				require.Equal(t, model.JobStateCancelled, job.State)
-				groups := replacementGroups.Load().(map[string][]pdhttp.AffinityGroupKeyRange)
-				s.cli.requireEverCreated(t, groups)
-				for id := range groups {
-					require.NotContains(t, originalGroups, id)
+				groups := newlyRequestedGroups(replacementGroups.Load().(map[string][]pdhttp.AffinityGroupKeyRange), originalGroups)
+				if tc.action == model.ActionTruncateTablePartition {
+					require.Len(t, groups, 1)
 				}
+				s.cli.requireEverCreated(t, groups)
 
 				persisted := s.persisted(t, before.ID)
 				if tc.updatedState == model.StateNone {
@@ -489,11 +528,9 @@ func TestAffinityTruncatePartitionCreateResponseLoss(t *testing.T) {
 			require.Equal(t, persistedBefore, s.persisted(t, before.ID))
 			s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("1", "11"))
 			requireAffinityGroupsWithLabelRules(t, s.cli, originalGroups, true, "cleanup must preserve both original partition groups")
-			replacementGroups := s.cli.lastCreatedGroups.Load().(map[string][]pdhttp.AffinityGroupKeyRange)
-			require.Len(t, replacementGroups, 1, "the PD request must contain only the replacement partition group")
-			for id := range replacementGroups {
-				require.NotContains(t, originalGroups, id)
-			}
+			requested := s.cli.lastCreatedGroups.Load().(map[string][]pdhttp.AffinityGroupKeyRange)
+			replacementGroups := newlyRequestedGroups(requested, originalGroups)
+			require.Len(t, replacementGroups, 1, "the PD request must contain exactly one replacement group")
 			requireAffinityGroupsWithLabelRules(t, s.cli, replacementGroups, failDelete, "failed cleanup must not prevent cancellation")
 		})
 	}
@@ -540,9 +577,17 @@ func TestAffinityTruncatePartitionWithStaleIDs(t *testing.T) {
 			db, ok := s.dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 			require.True(t, ok)
 			job, args := buildTruncatePartitionJob(db, before, oldIDs, nil)
+			s.cli.legacyPD.Store(true)
+			beforeCalls := s.cli.createCalls.Load()
 			s.tk.MustExec("alter table p truncate partition p0")
 			afterFirst := s.persisted(t, before.ID)
-			require.NotEqual(t, oldIDs[0], afterFirst.Partition.Definitions[0].ID)
+			firstID := afterFirst.Partition.Definitions[0].ID
+			require.NotEqual(t, oldIDs[0], firstID)
+			_, attempted := s.cli.attemptedGroups.Load(ddl.GetPartitionAffinityGroupID(s.store.GetCodec(), before.ID, firstID))
+			require.True(t, attempted)
+			_, attempted = s.cli.attemptedGroups.Load(ddl.GetPartitionAffinityGroupID(s.store.GetCodec(), before.ID, before.Partition.Definitions[1].ID))
+			require.True(t, attempted, "preparation includes untouched groups so missing groups can be backfilled")
+			require.Equal(t, int64(2), s.cli.createCalls.Load()-beforeCalls, "preparation retries with the replacement only after a batch conflict")
 			s.tk.MustExec("insert into p values (2,2)")
 
 			var writeOnlyTable atomic.Pointer[model.TableInfo]
@@ -561,7 +606,9 @@ func TestAffinityTruncatePartitionWithStaleIDs(t *testing.T) {
 			se := s.tk.Session()
 			se.SetValue(sessionctx.QueryString, "alter table p truncate partition "+tc.partitionNames)
 			exec := s.dom.DDLExecutor().(ddl.ExecutorForTest)
+			beforeCalls = s.cli.createCalls.Load()
 			require.NoError(t, exec.DoDDLJobWrapper(se, ddl.NewJobWrapperWithArgs(job, args, false)))
+			require.Equal(t, int64(len(oldIDs)), s.cli.createCalls.Load()-beforeCalls, "after the preparation batch conflicts, only missing groups need another POST")
 			require.Eventually(t, func() bool { return len(events) == 2 }, 10*time.Second, 10*time.Millisecond)
 			// Discard the notification for the first truncate, which made p0's queued ID stale.
 			<-events
@@ -1251,19 +1298,9 @@ func TestAffinityTruncatePartitionFailure(t *testing.T) {
 	tk.MustExec("admin check table p")
 	checkAffinityGroupsInPD(t, dom, "test", "p", true)
 
-	// A failure after replacement is visible must retry, never cancel the job.
-	// This also protects jobs that were started by an older TiDB version.
-	var injected atomic.Bool
 	const beforeStep = "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep"
-	testfailpoint.EnableCall(t, beforeStep, func(job *model.Job) {
-		if job.Type == model.ActionTruncateTablePartition && job.SchemaState == model.StateDeleteReorganization && injected.CompareAndSwap(false, true) {
-			cli.failOnce.Store(true)
-		}
-	})
 	tk.MustExec("alter table p truncate partition p0")
-	testfailpoint.Disable(t, beforeStep)
-	require.True(t, injected.Load())
-	require.Equal(t, int64(5), cli.createFailures.Load(), "four exhausted attempts before replacement and one during finalization")
+	require.Equal(t, int64(4), cli.createFailures.Load(), "only the exhausted attempts before replacement failed")
 	after, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("p"))
 	require.NoError(t, err)
 	require.NotEqual(t, beforeMeta.Partition.Definitions[0].ID, after.Meta().Partition.Definitions[0].ID)
@@ -1281,9 +1318,6 @@ func TestAffinityTruncatePartitionFailure(t *testing.T) {
 		rows := tk.MustQuery(fmt.Sprintf("select count(*) from (select end_key from mysql.gc_delete_range union all select end_key from mysql.gc_delete_range_done) ranges_to_delete where end_key='%x'", []byte(tablecodec.EncodeTablePrefix(beforeMeta.Partition.Definitions[0].ID+1)))).Rows()
 		return rows[0][0] == "1"
 	}, 5*time.Second, 10*time.Millisecond)
-	// Both the failed attempt and the successful retry should reach PD.
-	require.Greater(t, cli.createCalls.Load(), int64(2))
-
 	for _, scenario := range []string{"delete succeeds", "delete fails", "metadata not committed"} {
 		t.Run(scenario, func(t *testing.T) {
 			tk.MustExec("drop table if exists pc")
@@ -1369,6 +1403,151 @@ func TestAffinityTruncatePartitionFailure(t *testing.T) {
 				require.Empty(t, groups, "successful rollback must remove replacement groups")
 			}
 		})
+	}
+}
+
+func TestAffinityTruncatePartitionPreparation(t *testing.T) {
+	originalVersion := model.GetJobVerInUse()
+	t.Cleanup(func() { model.SetJobVerInUse(originalVersion) })
+	const beforeStep = "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep"
+	for _, version := range []model.JobVersion{model.JobVersion1, model.JobVersion2} {
+		for _, scenario := range []string{"prepared", "legacy write only", "legacy finalization"} {
+			t.Run(fmt.Sprintf("v%d/%s", version, scenario), func(t *testing.T) {
+				s := newAffinityDDLTest(t)
+				model.SetJobVerInUse(version)
+				s.tk.MustExec("create table p(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+				s.tk.MustExec("insert into p values (1),(11)")
+				before := s.persisted(t, s.tableInfo(t, "p").ID)
+				untouchedID := ddl.GetPartitionAffinityGroupID(s.store.GetCodec(), before.ID, before.Partition.Definitions[1].ID)
+				if scenario == "prepared" {
+					// Groups can be missing when the table was created before PD supported affinity.
+					require.NoError(t, s.cli.BatchDeleteAffinityGroups(context.Background(), []string{untouchedID}, true))
+					// Both groups fit below the injection limit, so the partial path succeeds.
+					s.cli.partialCreateLimit.Store(3)
+				}
+				const retryWait = 60 * time.Millisecond
+				if scenario == "legacy finalization" {
+					errorLimit := vardef.GetDDLErrorCountLimit()
+					t.Cleanup(func() { vardef.SetDDLErrorCountLimit(errorLimit) })
+					s.tk.MustExec("set global tidb_ddl_error_count_limit = 1")
+					ddl.SetWaitTimeWhenErrorOccurred(retryWait)
+				}
+				var finalAttemptsMu sync.Mutex
+				var finalAttempts []time.Time
+				var injected atomic.Bool
+				var rollbackArgs atomic.Pointer[model.TruncateTableArgs]
+				var originalArgs atomic.Pointer[model.TruncateTableArgs]
+				var jobID atomic.Int64
+				testfailpoint.EnableCall(t, beforeStep, func(job *model.Job) {
+					if job.Type != model.ActionTruncateTablePartition {
+						return
+					}
+					if job.IsRollingback() {
+						args, err := model.GetTruncateTableArgs(job)
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						rollbackArgs.Store(args)
+						return
+					}
+					state := model.StateDeleteReorganization
+					if scenario == "legacy write only" {
+						state = model.StateWriteOnly
+					}
+					if job.SchemaState != state {
+						return
+					}
+					if scenario == "legacy finalization" {
+						finalAttemptsMu.Lock()
+						finalAttempts = append(finalAttempts, time.Now())
+						finalAttemptsMu.Unlock()
+					}
+					if !injected.CompareAndSwap(false, true) {
+						return
+					}
+					jobID.Store(job.ID)
+					if scenario != "prepared" {
+						args, err := model.GetTruncateTableArgs(job)
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						// Re-encode the job with only the fields written by older owners.
+						legacyArgs := &model.TruncateTableArgs{
+							OldPartitionIDs: args.OldPartitionIDs,
+							NewPartitionIDs: args.NewPartitionIDs,
+						}
+						originalArgs.Store(legacyArgs)
+						job.FillArgs(legacyArgs)
+						if _, err := job.Encode(true); err != nil {
+							t.Error(err)
+							return
+						}
+						if scenario == "legacy finalization" {
+							replacementID := ddl.GetPartitionAffinityGroupID(
+								s.store.GetCodec(),
+								before.ID,
+								legacyArgs.NewPartitionIDs[0],
+							)
+							// Simulate missing groups on an owner upgrade.
+							err = s.cli.BatchDeleteAffinityGroups(
+								context.Background(),
+								[]string{replacementID, untouchedID},
+								true,
+							)
+							if err != nil {
+								t.Error(err)
+								return
+							}
+						}
+					}
+					if scenario == "legacy finalization" {
+						s.cli.notFoundCreates.Store(3)
+					} else {
+						s.cli.notFoundCreates.Store(1)
+					}
+				})
+				err := s.tk.ExecToErr("alter table p truncate partition p0")
+				require.True(t, injected.Load())
+				after := s.persisted(t, before.ID)
+				if scenario == "legacy write only" {
+					require.ErrorContains(t, err, "unsupported affinity POST")
+					require.Equal(t, before.Partition, after.Partition)
+					require.NotNil(t, rollbackArgs.Load())
+					require.Equal(t, originalArgs.Load(), rollbackArgs.Load())
+					history, err := ddl.GetHistoryJobByID(s.tk.Session(), jobID.Load())
+					require.NoError(t, err)
+					require.Equal(t, model.JobStateCancelled, history.State)
+					require.ErrorContains(t, history.Error, "unsupported affinity POST")
+					s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("1", "11"))
+				} else {
+					require.NoError(t, err)
+					require.NotEqual(t, before.Partition.Definitions[0].ID, after.Partition.Definitions[0].ID)
+					require.Equal(t, before.Partition.Definitions[1].ID, after.Partition.Definitions[1].ID)
+					if scenario == "prepared" {
+						require.EqualValues(t, 1, s.cli.notFoundCreates.Load(), "finalization must not send a create request")
+					} else {
+						require.Zero(t, s.cli.notFoundCreates.Load(), "legacy finalization must retry a failed create")
+						finalAttemptsMu.Lock()
+						times := slices.Clone(finalAttempts)
+						finalAttemptsMu.Unlock()
+						require.Len(t, times, 4)
+						for i := 1; i < len(times); i++ {
+							require.GreaterOrEqual(t, times[i].Sub(times[i-1]), retryWait,
+								"legacy finalization keeps backing off beyond the DDL error limit")
+						}
+						replacementID := ddl.GetPartitionAffinityGroupID(s.store.GetCodec(), before.ID, after.Partition.Definitions[0].ID)
+						created := s.cli.lastCreatedGroups.Load()
+						require.Contains(t, created, replacementID)
+						require.Contains(t, created, untouchedID)
+					}
+					requireAffinityGroupsWithLabelRules(t, s.cli, s.groupsOf(t, after), true, "all current partition groups must exist")
+					s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("11"))
+				}
+				s.tk.MustExec("admin check table p")
+			})
+		}
 	}
 }
 
@@ -1615,6 +1794,26 @@ func TestAffinityPDInteraction(t *testing.T) {
 		t.Error("post-commit ALTER cleanup must have a deadline")
 	}
 	checkAffinityGroupsInPD(t, dom, "test", "t1", false)
+
+	// A group can still conflict after PD has removed its last key range.
+	t.Run("alter rejects group with zero ranges", func(t *testing.T) {
+		ctx := context.Background()
+		tbl, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
+		require.NoError(t, err)
+		id := ddl.GetTableAffinityGroupID(store.GetCodec(), tbl.Meta().ID)
+		require.NoError(t, cli.manager.CreateAffinityGroupsIfNotExists(ctx, map[string][]pdhttp.AffinityGroupKeyRange{id: nil}))
+		cli.labelRules.Store(id, []pdhttp.AffinityGroupKeyRange(nil))
+		cli.legacyPD.Store(true)
+		t.Cleanup(func() {
+			cli.legacyPD.Store(false)
+			require.NoError(t, cli.BatchDeleteAffinityGroups(ctx, []string{id}, true))
+		})
+
+		require.ErrorContains(t, tk.ExecToErr("alter table t1 affinity = 'table'"), "409 Conflict")
+		tbl, err = dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
+		require.NoError(t, err)
+		require.Nil(t, tbl.Meta().Affinity, "failed ALTER must not publish affinity")
+	})
 
 	// Test 4: Alter table to add affinity back
 	tk.MustExec("alter table t1 affinity = 'table'")

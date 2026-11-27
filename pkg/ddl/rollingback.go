@@ -364,10 +364,11 @@ func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model
 		return ver, nil
 	}
 	pi := tblInfo.Partition
+	args, argsErr := model.GetTruncateTableArgs(job)
 	if tblInfo.Affinity != nil && tblInfo.Affinity.Level == ast.TableAffinityLevelPartition {
 		// PD may have created groups before the replacement IDs reached table metadata.
-		args, deleteErr := model.GetTruncateTableArgs(job)
-		if deleteErr == nil && len(args.NewPartitionIDs) != 0 {
+		deleteErr := argsErr
+		if deleteErr == nil && args != nil && len(args.NewPartitionIDs) != 0 {
 			deleteErr = deleteTableAffinityGroupsWithTimeout(jobCtx, tblInfo, partitionDefinitionsFromIDs(args.NewPartitionIDs))
 		}
 		if deleteErr != nil {
@@ -380,11 +381,18 @@ func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model
 		tblInfo.Partition.NewPartitionIDs = nil
 		tblInfo.Partition.DDLAction = model.ActionNone
 		tblInfo.Partition.DDLState = model.StateNone
+		// Transitioning into JobStateRollingback makes runOneJobStep re-encode job
+		// arguments, so refill the decoded args first to keep V1/V2 partition IDs intact.
+		if argsErr == nil && args != nil {
+			jobCtx.jobArgs = args
+			job.FillArgs(args)
+		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		return ver, nil
+		job.State = model.JobStateRollingback
+		return ver, errors.Trace(otherwiseErr)
 	}
 	// No change yet, just cancel the job.
 	job.State = model.JobStateCancelled

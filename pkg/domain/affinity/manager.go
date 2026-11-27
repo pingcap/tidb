@@ -16,6 +16,7 @@ package affinity
 
 import (
 	"context"
+	stderrors "errors"
 	"net/http"
 	"net/url"
 	"sort"
@@ -53,31 +54,36 @@ func NewPDManager(client pdhttp.Client) Manager {
 }
 
 // CreateAffinityGroupsIfNotExists creates affinity groups in PD.
-// It first uses the skip_exist_check API. If that behavior is rejected by an older
-// PD, it falls back to checking existing IDs and creating only missing groups.
-// This makes the operation safe for DDL job retries in mixed-version deployments.
+// It first uses skip_exist_check and validates the returned state for every group.
+// On conflict, it looks up existing groups and accepts them only if they have key ranges.
 func (m *pdManager) CreateAffinityGroupsIfNotExists(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange) error {
 	if len(groups) == 0 {
 		return nil
 	}
 
-	_, err := m.Client.CreateAffinityGroups(ctx, groups, pdhttp.WithSkipExistCheck())
+	states, err := m.Client.CreateAffinityGroups(ctx, groups, pdhttp.WithSkipExistCheck())
 	if err == nil {
-		return nil
+		return validateCreatedAffinityGroups(groups, states)
 	}
-	if !shouldFallbackCreateAffinityGroups(err) {
+	if !isPDHTTPStatusError(err, http.StatusConflict) {
 		return err
 	}
-
 	return m.createAffinityGroupsIfNotExistsByFiltering(ctx, groups)
 }
 
-// DeleteAffinityGroups deletes affinity groups in PD (force=true).
+// DeleteAffinityGroups force-deletes affinity groups in PD. It succeeds if the
+// groups are already absent or the PD version lacks the affinity endpoint.
 func (m *pdManager) DeleteAffinityGroups(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return m.Client.BatchDeleteAffinityGroups(ctx, ids, true)
+	err := m.Client.BatchDeleteAffinityGroups(ctx, ids, true)
+	// PD ignores missing group IDs for a forced batch delete. Older PD
+	// versions without the affinity endpoint return 404.
+	if isPDHTTPStatusError(err, http.StatusNotFound) {
+		return nil
+	}
+	return err
 }
 
 // GetAffinityGroups gets affinity groups from PD.
@@ -93,7 +99,7 @@ func (m *pdManager) GetAffinityGroups(ctx context.Context, ids []string) (map[st
 			continue
 		}
 		if affinityGroupIDsEscapedQueryLen([]string{id}) > maxAffinityGroupIDsQueryLen {
-			return m.getAffinityGroupsByScanningAll(ctx, ids)
+			return m.getAffinityGroupsByScanningAll(ctx, ids, nil)
 		}
 		idIndexes[id] = len(uniqueIDs)
 		uniqueIDs = append(uniqueIDs, id)
@@ -117,7 +123,7 @@ func (m *pdManager) GetAffinityGroups(ctx context.Context, ids []string) (map[st
 		groups, err := m.Client.GetAffinityGroups(ctx, uniqueIDs[start:end])
 		if err != nil {
 			if shouldFallbackGetAffinityGroups(err) {
-				return m.getAffinityGroupsByScanningAll(ctx, uniqueIDs)
+				return m.getAffinityGroupsByScanningAll(ctx, uniqueIDs, result)
 			}
 			return nil, err
 		}
@@ -147,9 +153,9 @@ func (m *pdManager) createAffinityGroupsIfNotExistsByFiltering(ctx context.Conte
 		return err
 	}
 
-	groupsToCreate := make(map[string][]pdhttp.AffinityGroupKeyRange, len(groups))
+	groupsToCreate := make(map[string][]pdhttp.AffinityGroupKeyRange)
 	for id, ranges := range groups {
-		if _, exists := existingGroups[id]; !exists {
+		if !isValidAffinityGroupState(id, existingGroups[id]) {
 			groupsToCreate[id] = ranges
 		}
 	}
@@ -157,13 +163,61 @@ func (m *pdManager) createAffinityGroupsIfNotExistsByFiltering(ctx context.Conte
 		return nil
 	}
 
-	_, err = m.Client.CreateAffinityGroups(ctx, groupsToCreate)
-	return err
+	states, err := m.Client.CreateAffinityGroups(ctx, groupsToCreate)
+	if isPDHTTPStatusError(err, http.StatusConflict) {
+		// Another caller may have created the missing groups since the lookup.
+		// Recheck even on the last attempt. If the scheduling service's view
+		// still lags, the caller retries within the existing budget.
+		existingGroups, readErr := m.GetAffinityGroups(ctx, groupIDs)
+		if readErr != nil {
+			return readErr
+		}
+		for _, id := range groupIDs {
+			if !isValidAffinityGroupState(id, existingGroups[id]) {
+				return &affinityGroupCreateConflict{error: err}
+			}
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return validateCreatedAffinityGroups(groupsToCreate, states)
 }
 
-func (m *pdManager) getAffinityGroupsByScanningAll(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error) {
+// affinityGroupCreateConflict marks the fallback POST conflict as retryable.
+type affinityGroupCreateConflict struct{ error }
+
+func (err *affinityGroupCreateConflict) Unwrap() error { return err.error }
+
+func isValidAffinityGroupState(id string, state *pdhttp.AffinityGroupState) bool {
+	return state != nil && state.ID == id && state.RangeCount > 0
+}
+
+func validateCreatedAffinityGroups(groups map[string][]pdhttp.AffinityGroupKeyRange, states map[string]*pdhttp.AffinityGroupState) error {
+	for id := range groups {
+		if !isValidAffinityGroupState(id, states[id]) {
+			return errors.Errorf("PD returned no valid affinity group state for group %q after creation", id)
+		}
+	}
+	return nil
+}
+
+func (m *pdManager) getAffinityGroupsByScanningAll(
+	ctx context.Context,
+	ids []string,
+	partial map[string]*pdhttp.AffinityGroupState,
+) (map[string]*pdhttp.AffinityGroupState, error) {
 	allGroups, err := m.Client.GetAllAffinityGroups(ctx)
 	if err != nil {
+		// Older PD versions do not serve affinity GETs. Keep any previously
+		// fetched states so SHOW AFFINITY can still report them.
+		if isPDHTTPStatusError(err, http.StatusNotFound) {
+			if partial != nil {
+				return partial, nil
+			}
+			return make(map[string]*pdhttp.AffinityGroupState), nil
+		}
 		return nil, err
 	}
 	return filterAffinityGroups(allGroups, ids), nil
@@ -185,12 +239,6 @@ func affinityGroupIDsEscapedQueryLen(ids []string) int {
 	return total
 }
 
-func shouldFallbackCreateAffinityGroups(err error) bool {
-	return isPDHTTPStatusError(err, http.StatusBadRequest) ||
-		isPDHTTPStatusError(err, http.StatusConflict) ||
-		isPDHTTPServiceErrorWithoutStatus(err)
-}
-
 func shouldFallbackGetAffinityGroups(err error) bool {
 	return isPDHTTPStatusError(err, http.StatusBadRequest) ||
 		isPDHTTPStatusError(err, http.StatusNotFound) ||
@@ -208,23 +256,26 @@ func extractPDHTTPStatusCode(err error) (int, bool) {
 		return 0, false
 	}
 
-	const statusPrefix = "status: '"
-	msg := err.Error()
-	idx := strings.Index(msg, statusPrefix)
-	if idx < 0 {
+	var statusErr interface{ HTTPStatusCode() int }
+	if stderrors.As(err, &statusErr) {
+		return statusErr.HTTPStatusCode(), true
+	}
+
+	const statusPrefix = "request pd http api failed with status: '"
+	status, ok := strings.CutPrefix(errors.Cause(err).Error(), statusPrefix)
+	if !ok {
 		return 0, false
 	}
 
-	start := idx + len(statusPrefix)
-	end := start
-	for end < len(msg) && msg[end] >= '0' && msg[end] <= '9' {
+	end := 0
+	for end < len(status) && status[end] >= '0' && status[end] <= '9' {
 		end++
 	}
-	if end == start {
+	if end == 0 {
 		return 0, false
 	}
 
-	code, convErr := strconv.Atoi(msg[start:end])
+	code, convErr := strconv.Atoi(status[:end])
 	if convErr != nil {
 		return 0, false
 	}
@@ -243,8 +294,7 @@ func isPDHTTPServiceErrorWithoutStatus(err error) bool {
 	if !ok {
 		return false
 	}
-	// TiDB's injected PD response handler returns ErrHTTPServiceError without the
-	// original HTTP status code in the message, so treat it as compatibility case.
+	// Preserve lookup compatibility for clients returning a bare service error.
 	return rootErr.Code() == errors.ErrCode(errno.ErrHTTPServiceError)
 }
 

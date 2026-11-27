@@ -313,9 +313,25 @@ func TestTruncateTableArgs(t *testing.T) {
 				require.Equal(t, true, args.FKCheck)
 			} else {
 				require.Equal(t, []int64{11, 2}, args.OldPartitionIDs)
+				require.False(t, args.AffinityGroupsPrepared)
 			}
 			require.Equal(t, []int64{2, 3}, args.NewPartitionIDs)
 		}
+	}
+
+	preparedArgs := &TruncateTableArgs{
+		OldPartitionIDs:        []int64{11, 2},
+		NewPartitionIDs:        []int64{2, 3},
+		AffinityGroupsPrepared: true,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, preparedArgs, v, ActionTruncateTablePartition)))
+		args, err := GetTruncateTableArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, []int64{11, 2}, args.OldPartitionIDs)
+		require.Equal(t, []int64{2, 3}, args.NewPartitionIDs)
+		require.True(t, args.AffinityGroupsPrepared)
 	}
 
 	inArgs = &TruncateTableArgs{

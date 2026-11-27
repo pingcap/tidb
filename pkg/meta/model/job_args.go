@@ -385,6 +385,9 @@ type TruncateTableArgs struct {
 	NewTableID      int64   `json:"new_table_id,omitempty"`
 	NewPartitionIDs []int64 `json:"new_partition_ids,omitempty"`
 	OldPartitionIDs []int64 `json:"old_partition_ids,omitempty"`
+	// AffinityGroupsPrepared records that TRUNCATE PARTITION already created
+	// the replacement affinity groups in PD before publishing their IDs.
+	AffinityGroupsPrepared bool `json:"affinity_groups_prepared,omitempty"`
 
 	// context vars
 	NewPartIDsWithPolicy           []int64 `json:"-"`
@@ -400,6 +403,9 @@ func (a *TruncateTableArgs) getArgsV1(job *Job) []any {
 		// number of new IDs to generate.
 		return []any{a.NewTableID, a.FKCheck, a.NewPartitionIDs, len(a.OldPartitionIDs)}
 	}
+	if a.AffinityGroupsPrepared {
+		return []any{a.OldPartitionIDs, a.NewPartitionIDs, a.AffinityGroupsPrepared}
+	}
 	return []any{a.OldPartitionIDs, a.NewPartitionIDs}
 }
 
@@ -407,7 +413,7 @@ func (a *TruncateTableArgs) decodeV1(job *Job) error {
 	if job.Type == ActionTruncateTable {
 		return errors.Trace(job.decodeArgs(&a.NewTableID, &a.FKCheck, &a.NewPartitionIDs))
 	}
-	return errors.Trace(job.decodeArgs(&a.OldPartitionIDs, &a.NewPartitionIDs))
+	return errors.Trace(job.decodeArgs(&a.OldPartitionIDs, &a.NewPartitionIDs, &a.AffinityGroupsPrepared))
 }
 
 func (a *TruncateTableArgs) getFinishedArgsV1(job *Job) []any {

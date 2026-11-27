@@ -109,13 +109,14 @@ State machine (`job.SchemaState`):
 
 Key behaviors:
 
-- Affinity groups for replacement partitions are prepared in `StatePublic`, before
-  new partition IDs are published. Preparation uses the replacement IDs for the
-  old IDs that still match a current partition. A queued job can carry IDs that
-  an earlier truncate has replaced. Preparation errors use the rollback cleanup
-  path because PD may have created groups before its response failed. Rollback
-  deletes only replacement partition groups and uses a 10-second timeout
-  derived from the DDL owner's context so it can run after step cancellation.
+- In `StatePublic`, the worker prepares the full set of affinity groups that
+  will be needed after the truncate. It uses replacement IDs only for partitions
+  that still match and backfills missing groups for untouched partitions. It
+  persists `AffinityGroupsPrepared` in the job arguments before publishing new
+  partition IDs. During an upgrade, `StateWriteOnly` prepares any job missing
+  this flag before publishing. Rollback deletes only replacement groups and
+  uses a 10-second timeout derived from the DDL owner's context so cleanup can
+  run after step cancellation.
 - It replaces old partition IDs with new ones in table metadata:
   - ID replacement helper: `pkg/ddl/partition.go:replaceTruncatePartitions`
 - During intermediate states, it sets flags to filter global index reads/writes correctly:
@@ -124,9 +125,13 @@ Key behaviors:
 - The job keeps the queued ID pairs for retries and cancellation. If none of the
   old IDs still match, no partition is replaced and existing rows are preserved.
 - At finalization, `DroppingDefinitions` limits global-index cleanup, the schema
-  diff, and delete-range GC to the partitions this job replaced. The truncate
-  notification pairs each dropped definition with the replacement ID originally
-  assigned to its old ID.
+  diff, and delete-range GC to the partitions this job replaced. Only jobs
+  published by an older owner without `AffinityGroupsPrepared` create groups in
+  this step. For partition affinity they request groups for all current
+  partitions, including untouched ones. They retry creation errors with a delay
+  because the replacement IDs are already visible. The truncate notification
+  pairs each dropped definition with the replacement ID originally assigned to
+  its old ID.
 
 ## REORGANIZE PARTITION (`ActionReorganizePartition`)
 
