@@ -123,12 +123,19 @@ func CutRowKeyPrefix(key kv.Key) []byte {
 // EncodeRecordKey encodes the recordPrefix, row handle into a kv.Key.
 func EncodeRecordKey(recordPrefix kv.Key, h kv.Handle) kv.Key {
 	buf := make([]byte, 0, len(recordPrefix)+h.Len())
+	return AppendRecordKey(buf, recordPrefix, h)
+}
+
+// AppendRecordKey appends the encoded record key into buf without allocating when buf has enough capacity.
+func AppendRecordKey(buf []byte, recordPrefix kv.Key, h kv.Handle) kv.Key {
 	if ph, ok := h.(kv.PartitionHandle); ok {
 		recordPrefix = GenTableRecordPrefix(ph.PartitionID)
 	}
 	buf = append(buf, recordPrefix...)
-	buf = append(buf, h.Encoded()...)
-	return buf
+	if h.IsInt() {
+		return codec.EncodeInt(buf, h.IntValue())
+	}
+	return append(buf, h.Encoded()...)
 }
 
 func hasTablePrefix(key kv.Key) bool {
@@ -1641,16 +1648,31 @@ func TempIndexValueIsUntouched(b []byte) bool {
 func GenIndexValuePortal(useNewCollate bool, loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, restoredData []types.Datum, buf []byte) ([]byte, error) {
+	return GenIndexValuePortalWithEncoder(useNewCollate, loc, tblInfo, idxInfo, needRestoredData, distinct,
+		untouched, indexedValues, h, partitionID, restoredData, buf, nil)
+}
+
+// GenIndexValuePortalWithEncoder generates an index value and reuses rowEncoder
+// for restored data encoding when it is non-nil.
+func GenIndexValuePortalWithEncoder(useNewCollate bool, loc *time.Location, tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo, needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum,
+	h kv.Handle, partitionID int64, restoredData []types.Datum, buf []byte,
+	rowEncoder *rowcodec.Encoder) ([]byte, error) {
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
-		return GenIndexValueForClusteredIndexVersion1(useNewCollate, loc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData, buf)
+		return genIndexValueForClusteredIndexVersion1(useNewCollate, loc, tblInfo, idxInfo, needRestoredData, distinct,
+			untouched, indexedValues, h, partitionID, restoredData, buf, rowEncoder)
 	}
-	return genIndexValueVersion0(loc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, buf)
+	return genIndexValueVersion0WithEncoder(loc, tblInfo, idxInfo, needRestoredData, distinct, untouched,
+		indexedValues, h, partitionID, buf, rowEncoder)
 }
 
 // TryGetCommonPkColumnRestoredIds get the IDs of primary key columns which need restored data if the table has common handle.
 // Caller need to make sure the table has common handle.
 func TryGetCommonPkColumnRestoredIds(useNewCollate bool, tbl *model.TableInfo) []int64 {
-	var pkColIDs []int64
+	return appendCommonPkColumnRestoredIds(nil, useNewCollate, tbl)
+}
+
+func appendCommonPkColumnRestoredIds(dst []int64, useNewCollate bool, tbl *model.TableInfo) []int64 {
 	var pkIdx *model.IndexInfo
 	for _, idx := range tbl.Indices {
 		if idx.Primary {
@@ -1659,20 +1681,28 @@ func TryGetCommonPkColumnRestoredIds(useNewCollate bool, tbl *model.TableInfo) [
 		}
 	}
 	if pkIdx == nil {
-		return pkColIDs
+		return dst
 	}
 	for _, idxCol := range pkIdx.Columns {
 		if types.NeedRestoredDataWithCollate(&tbl.Columns[idxCol.Offset].FieldType, useNewCollate) {
-			pkColIDs = append(pkColIDs, tbl.Columns[idxCol.Offset].ID)
+			dst = append(dst, tbl.Columns[idxCol.Offset].ID)
 		}
 	}
-	return pkColIDs
+	return dst
 }
 
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
 func GenIndexValueForClusteredIndexVersion1(useNewCollate bool, loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, handleRestoredData []types.Datum, buf []byte) ([]byte, error) {
+	return genIndexValueForClusteredIndexVersion1(useNewCollate, loc, tblInfo, idxInfo, idxValNeedRestoredData,
+		distinct, untouched, indexedValues, h, partitionID, handleRestoredData, buf, nil)
+}
+
+func genIndexValueForClusteredIndexVersion1(useNewCollate bool, loc *time.Location, tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo, idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum,
+	h kv.Handle, partitionID int64, handleRestoredData []types.Datum, buf []byte,
+	rowEncoder *rowcodec.Encoder) ([]byte, error) {
 	var idxVal []byte
 	if buf == nil {
 		idxVal = make([]byte, 0)
@@ -1692,7 +1722,11 @@ func GenIndexValueForClusteredIndexVersion1(useNewCollate bool, loc *time.Locati
 		idxVal = encodePartitionID(idxVal, partitionID)
 	}
 	if idxValNeedRestoredData || len(handleRestoredData) > 0 {
-		colIds := make([]int64, 0, len(idxInfo.Columns))
+		var stackColIDs [8]int64
+		colIds := stackColIDs[:0]
+		if capNeeded := len(idxInfo.Columns) + len(handleRestoredData); capNeeded > len(stackColIDs) {
+			colIds = make([]int64, 0, capNeeded)
+		}
 		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
 		for i, idxCol := range idxInfo.Columns {
 			col := tblInfo.Columns[idxCol.Offset]
@@ -1712,14 +1746,15 @@ func GenIndexValueForClusteredIndexVersion1(useNewCollate bool, loc *time.Locati
 		}
 
 		if len(handleRestoredData) > 0 {
-			pkColIDs := TryGetCommonPkColumnRestoredIds(useNewCollate, tblInfo)
-			colIds = append(colIds, pkColIDs...)
+			colIds = appendCommonPkColumnRestoredIds(colIds, useNewCollate, tblInfo)
 			allRestoredData = append(allRestoredData, handleRestoredData...)
 		}
 
-		rd := rowcodec.Encoder{Enable: true}
+		if rowEncoder == nil {
+			rowEncoder = &rowcodec.Encoder{Enable: true}
+		}
 		var err error
-		idxVal, err = rd.Encode(loc, colIds, allRestoredData, nil, idxVal)
+		idxVal, err = rowEncoder.Encode(loc, colIds, allRestoredData, nil, idxVal)
 		if err != nil {
 			return nil, err
 		}
@@ -1738,6 +1773,13 @@ func GenIndexValueForClusteredIndexVersion1(useNewCollate bool, loc *time.Locati
 func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, buf []byte) ([]byte, error) {
+	return genIndexValueVersion0WithEncoder(loc, tblInfo, idxInfo, idxValNeedRestoredData, distinct, untouched,
+		indexedValues, h, partitionID, buf, nil)
+}
+
+func genIndexValueVersion0WithEncoder(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
+	partitionID int64, buf []byte, rowEncoder *rowcodec.Encoder) ([]byte, error) {
 	var idxVal []byte
 	if buf == nil {
 		idxVal = make([]byte, 0)
@@ -1756,14 +1798,22 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 		newEncode = true
 	}
 	if idxValNeedRestoredData {
-		colIds := make([]int64, len(idxInfo.Columns))
+		var stackColIDs [8]int64
+		var colIds []int64
+		if len(idxInfo.Columns) <= len(stackColIDs) {
+			colIds = stackColIDs[:len(idxInfo.Columns)]
+		} else {
+			colIds = make([]int64, len(idxInfo.Columns))
+		}
 		for i, col := range idxInfo.Columns {
 			colIds[i] = tblInfo.Columns[col.Offset].ID
 		}
-		rd := rowcodec.Encoder{Enable: true}
+		if rowEncoder == nil {
+			rowEncoder = &rowcodec.Encoder{Enable: true}
+		}
 		// Encode row restored value.
 		var err error
-		idxVal, err = rd.Encode(loc, colIds, indexedValues, nil, idxVal)
+		idxVal, err = rowEncoder.Encode(loc, colIds, indexedValues, nil, idxVal)
 		if err != nil {
 			return nil, err
 		}
@@ -1774,12 +1824,13 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 		if h.IsInt() && distinct {
 			// The len of the idxVal is always >= 10 since len (restoredValue) > 0.
 			tailLen += 8
-			idxVal = append(idxVal, EncodeHandleInUniqueIndexValue(h, false)...)
+			idxVal = appendHandleInUniqueIndexValue(idxVal, h, false)
 		} else if len(idxVal) < 10 {
 			// Padding the len to 10
 			paddingLen := 10 - len(idxVal)
 			tailLen += paddingLen
-			idxVal = append(idxVal, bytes.Repeat([]byte{0x0}, paddingLen)...)
+			var zeroPadding [10]byte
+			idxVal = append(idxVal, zeroPadding[:paddingLen]...)
 		}
 		if untouched {
 			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
@@ -1797,7 +1848,7 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 			idxVal = buf[:0]
 		}
 		if distinct {
-			idxVal = EncodeHandleInUniqueIndexValue(h, untouched)
+			idxVal = appendHandleInUniqueIndexValue(idxVal, h, untouched)
 		}
 		if untouched {
 			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
@@ -1853,16 +1904,19 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 
 // EncodeHandleInUniqueIndexValue encodes handle in data.
 func EncodeHandleInUniqueIndexValue(h kv.Handle, isUntouched bool) []byte {
+	return appendHandleInUniqueIndexValue(nil, h, isUntouched)
+}
+
+func appendHandleInUniqueIndexValue(dst []byte, h kv.Handle, isUntouched bool) []byte {
 	if h.IsInt() {
-		var data [8]byte
-		binary.BigEndian.PutUint64(data[:], uint64(h.IntValue()))
-		return data[:]
+		return binary.BigEndian.AppendUint64(dst, uint64(h.IntValue()))
 	}
 	var untouchedFlag byte
 	if isUntouched {
 		untouchedFlag = 1
 	}
-	return encodeCommonHandle([]byte{untouchedFlag}, h)
+	dst = append(dst, untouchedFlag)
+	return encodeCommonHandle(dst, h)
 }
 
 func encodeCommonHandle(idxVal []byte, h kv.Handle) []byte {

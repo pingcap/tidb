@@ -130,6 +130,18 @@ func (mb *MemBuf) AllocateBuf(size int) {
 	mb.Unlock()
 }
 
+// CopyKV copies k and v into the off-heap BytesBuf without touching kvPairs.
+// If the active BytesBuf did not have enough space, filledBuf is returned for
+// ownership transfer and later recycling.
+func (mb *MemBuf) CopyKV(k kv.Key, v []byte) (copiedKey kv.Key, copiedVal []byte, filledBuf *BytesBuf) {
+	size := len(k) + len(v)
+	if mb.buf == nil || mb.buf.cap-mb.buf.idx < size {
+		filledBuf = mb.buf
+		mb.AllocateBuf(size)
+	}
+	return mb.buf.add(k), mb.buf.add(v), filledBuf
+}
+
 // Set sets the key-value pair.
 func (mb *MemBuf) Set(k kv.Key, v []byte) error {
 	kvPairs := mb.kvPairs

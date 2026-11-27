@@ -21,6 +21,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dumpformat/parsedef"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -65,7 +66,14 @@ type rowToEncode struct {
 	// startPos is the offset when the parser start parsing current row.
 	// it will be negative if the data source is not file.
 	startPos int64
-	resetFn  func()
+	parser   mydump.Parser
+	lastRow  parsedef.Row
+}
+
+func (r *rowToEncode) reset() {
+	if r.parser != nil {
+		r.parser.RecycleRow(r.lastRow)
+	}
 }
 
 type encodeReaderFn func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error)
@@ -97,7 +105,8 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 			rowID:     lastRow.RowID,
 			endOffset: currOffset,
 			startPos:  readPos,
-			resetFn:   func() { parser.RecycleRow(lastRow) },
+			parser:    parser,
+			lastRow:   lastRow,
 		}
 		return
 	}
@@ -144,7 +153,6 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum)
 		rowID:     r.currChk.RowIDOffset + int64(r.cursor),
 		endOffset: -1,
 		startPos:  -1,
-		resetFn:   func() {},
 	}
 	return
 }
@@ -161,20 +169,62 @@ type encodedKVGroupBatch struct {
 	dataKVs  []common.KvPair
 	indexKVs map[int64][]common.KvPair // indexID -> pairs
 
-	bytesBuf *kv.BytesBuf
-	memBuf   *kv.MemBuf
+	bytesBuf       *kv.BytesBuf
+	extraBytesBufs []*kv.BytesBuf
+	memBuf         *kv.MemBuf
 
 	groupChecksum *verify.KVGroupChecksum
 }
 
-func (b *encodedKVGroupBatch) reset() {
-	if b.memBuf == nil {
+func (b *encodedKVGroupBatch) recordBytesBuf(buf *kv.BytesBuf, memBuf *kv.MemBuf) {
+	if buf == nil {
 		return
 	}
-	// mimic kv.Pairs.Clear
-	b.memBuf.Recycle(b.bytesBuf)
-	b.bytesBuf = nil
-	b.memBuf = nil
+	if b.bytesBuf == nil {
+		b.bytesBuf = buf
+		b.memBuf = memBuf
+	} else if b.bytesBuf != buf {
+		b.extraBytesBufs = append(b.extraBytesBufs, buf)
+	}
+}
+
+func (b *encodedKVGroupBatch) AddDataKV(pair common.KvPair, filledBuf *kv.BytesBuf, memBuf *kv.MemBuf) {
+	b.dataKVs = append(b.dataKVs, pair)
+	b.groupChecksum.UpdateOneDataKV(pair)
+	b.recordBytesBuf(filledBuf, memBuf)
+}
+
+func (b *encodedKVGroupBatch) AddIndexKV(indexID int64, pair common.KvPair, filledBuf *kv.BytesBuf, memBuf *kv.MemBuf) {
+	idxPairs := b.indexKVs[indexID]
+	if cap(idxPairs) == 0 {
+		idxPairs = make([]common.KvPair, 0, max(cap(b.dataKVs), 128))
+	}
+	b.indexKVs[indexID] = append(idxPairs, pair)
+	b.groupChecksum.UpdateOneIndexKV(indexID, pair)
+	b.recordBytesBuf(filledBuf, memBuf)
+}
+
+func (b *encodedKVGroupBatch) reset() {
+	if b.memBuf != nil {
+		// mimic kv.Pairs.Clear
+		if b.bytesBuf != nil {
+			b.memBuf.Recycle(b.bytesBuf)
+			b.bytesBuf = nil
+		}
+		for i, buf := range b.extraBytesBufs {
+			b.memBuf.Recycle(buf)
+			b.extraBytesBufs[i] = nil
+		}
+		b.extraBytesBufs = b.extraBytesBufs[:0]
+		b.memBuf = nil
+	}
+	clear(b.dataKVs)
+	b.dataKVs = b.dataKVs[:0]
+	for id, pairs := range b.indexKVs {
+		clear(pairs)
+		b.indexKVs[id] = pairs[:0]
+	}
+	b.groupChecksum.Reset()
 }
 
 func newEncodedKVGroupBatch(keyspace []byte, count int) *encodedKVGroupBatch {
@@ -196,20 +246,17 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) (kvBytes int64, err error) {
 			if err != nil {
 				return kvBytes, errors.Trace(err)
 			}
-			if len(b.indexKVs[indexID]) == 0 {
-				b.indexKVs[indexID] = make([]common.KvPair, 0, cap(b.dataKVs))
+			idxPairs := b.indexKVs[indexID]
+			if cap(idxPairs) == 0 {
+				idxPairs = make([]common.KvPair, 0, max(cap(b.dataKVs), 128))
 			}
-			b.indexKVs[indexID] = append(b.indexKVs[indexID], pair)
+			b.indexKVs[indexID] = append(idxPairs, pair)
 			b.groupChecksum.UpdateOneIndexKV(indexID, pair)
 		}
 		kvBytes += int64(len(pair.Key) + len(pair.Val))
 	}
 
-	// the related buf is shared, so we only need to record any one of them.
-	if b.bytesBuf == nil && kvs.BytesBuf != nil {
-		b.bytesBuf = kvs.BytesBuf
-		b.memBuf = kvs.MemBuf
-	}
+	b.recordBytesBuf(kvs.BytesBuf, kvs.MemBuf)
 	return kvBytes, nil
 }
 
@@ -221,6 +268,7 @@ type chunkEncoder struct {
 	// only used for file source.
 	offset    int64
 	sendFn    func(ctx context.Context, batch *encodedKVGroupBatch) error
+	batchPool chan *encodedKVGroupBatch
 	collector execute.Collector
 
 	chunkName        string
@@ -259,14 +307,26 @@ func newChunkEncoder(
 	}
 }
 
+func (p *chunkEncoder) acquireBatch() *encodedKVGroupBatch {
+	if p.batchPool != nil {
+		select {
+		case b := <-p.batchPool:
+			return b
+		default:
+		}
+	}
+	return newEncodedKVGroupBatch(p.keyspace, min(p.minDeliverRowCnt, 256))
+}
+
 func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 	var (
 		encodedBytesCounter, encodedRowsCounter prometheus.Counter
 		readDur, encodeDur                      time.Duration
 		rowCount                                int
-		rowBatch                                = make([]*kv.Pairs, 0, DefaultMinDeliverRowCnt)
 		rowBatchByteSize                        uint64
+		totalKVBytes                            int64
 		currOffset                              int64
+		kvGroupBatch                            *encodedKVGroupBatch
 	)
 	metrics, _ := metric.GetCommonMetric(ctx)
 	if metrics != nil {
@@ -276,7 +336,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 	}
 
 	recordSendReset := func() error {
-		if len(rowBatch) == 0 {
+		if rowCount == 0 {
 			return nil
 		}
 
@@ -303,19 +363,12 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		p.encodeTotalDur += encodeDur
 		p.readTotalDur += readDur
 
-		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace, rowCount)
-		var totalKVBytes int64
-		for _, kvs := range rowBatch {
-			sz, err := kvGroupBatch.add(kvs)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			totalKVBytes += sz
-		}
-
 		p.groupChecksum.Add(kvGroupBatch.groupChecksum)
 
-		if err := p.sendFn(ctx, kvGroupBatch); err != nil {
+		batch := kvGroupBatch
+		kvGroupBatch = nil
+		if err := p.sendFn(ctx, batch); err != nil {
+			batch.reset()
 			return err
 		}
 
@@ -323,10 +376,8 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			p.collector.Processed(totalKVBytes, int64(rowCount))
 		}
 
-		// the ownership of rowBatch is transferred to the receiver of sendFn, we should
-		// not touch it anymore.
-		rowBatch = make([]*kv.Pairs, 0, DefaultMinDeliverRowCnt)
 		rowBatchByteSize = 0
+		totalKVBytes = 0
 		rowCount = 0
 		readDur = 0
 		encodeDur = 0
@@ -336,11 +387,15 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 	var (
 		readRowCache []types.Datum
 		rowNumber    int
+		encodeDirect = p.encoder.CanEncodeDirect()
 	)
 	for {
 		readDurStart := time.Now()
 		data, closed, err := p.readFn(ctx, readRowCache)
 		if err != nil {
+			if kvGroupBatch != nil {
+				kvGroupBatch.reset()
+			}
 			return errors.Trace(err)
 		}
 		if closed {
@@ -350,23 +405,49 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		readRowCache = data.row
 		readDur += time.Since(readDurStart)
 
-		encodeDurStart := time.Now()
-		kvs, encodeErr := p.encoder.Encode(data.row, data.rowID)
-		currOffset = data.endOffset
-		data.resetFn()
-		if encodeErr != nil {
-			err2 := common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.startPos)
-			return errors.Annotatef(err2, "when encoding %d-th data row in this chunk", rowNumber)
+		if kvGroupBatch == nil {
+			kvGroupBatch = p.acquireBatch()
 		}
-		encodeDur += time.Since(encodeDurStart)
+
+		var sz int64
+		if encodeDirect {
+			encodeDurStart := time.Now()
+			var encodeErr error
+			sz, encodeErr = p.encoder.EncodeToGroup(data.row, data.rowID, kvGroupBatch)
+			currOffset = data.endOffset
+			data.reset()
+			if encodeErr != nil {
+				kvGroupBatch.reset()
+				err2 := common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.startPos)
+				return errors.Annotatef(err2, "when encoding %d-th data row in this chunk", rowNumber)
+			}
+			encodeDur += time.Since(encodeDurStart)
+		} else {
+			encodeDurStart := time.Now()
+			kvs, encodeErr := p.encoder.Encode(data.row, data.rowID)
+			currOffset = data.endOffset
+			data.reset()
+			if encodeErr != nil {
+				kvGroupBatch.reset()
+				err2 := common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.startPos)
+				return errors.Annotatef(err2, "when encoding %d-th data row in this chunk", rowNumber)
+			}
+			encodeDur += time.Since(encodeDurStart)
+
+			sz, err = kvGroupBatch.add(kvs)
+			if err != nil {
+				kvGroupBatch.reset()
+				return errors.Trace(err)
+			}
+		}
 
 		rowCount++
-		rowBatch = append(rowBatch, kvs)
-		rowBatchByteSize += kvs.Size()
+		rowBatchByteSize += uint64(sz)
+		totalKVBytes += sz
 		// pebble cannot allow > 4.0G kv in one batch.
 		// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
 		// so add this check.
-		if rowBatchByteSize >= p.minDeliverBytes || len(rowBatch) >= p.minDeliverRowCnt {
+		if rowBatchByteSize >= p.minDeliverBytes || rowCount >= p.minDeliverRowCnt {
 			if err := recordSendReset(); err != nil {
 				return err
 			}
@@ -445,25 +526,29 @@ func NewFileChunkProcessor(
 		zap.String("key", chunk.GetKey()),
 		zap.Int64("chunkSize", chunk.GetSize()),
 	)
+	batchPool := make(chan *encodedKVGroupBatch, maxKVQueueSize+2)
 	deliver := &dataDeliver{
 		logger:        chunkLogger,
 		diskQuotaLock: diskQuotaLock,
 		kvBatch:       make(chan *encodedKVGroupBatch, maxKVQueueSize),
+		batchPool:     batchPool,
 		dataWriter:    dataWriter,
 		indexWriter:   indexWriter,
 	}
+	enc := newChunkEncoder(
+		chunk.GetKey(),
+		parserEncodeReader(parser, chunk.EndOffset, chunk.GetKey()),
+		chunk.Offset,
+		deliver.sendEncodedData,
+		collector,
+		encoder,
+		keyspace,
+	)
+	enc.batchPool = batchPool
 	return &baseChunkProcessor{
-		sourceType: DataSourceTypeFile,
-		deliver:    deliver,
-		enc: newChunkEncoder(
-			chunk.GetKey(),
-			parserEncodeReader(parser, chunk.EndOffset, chunk.GetKey()),
-			chunk.Offset,
-			deliver.sendEncodedData,
-			collector,
-			encoder,
-			keyspace,
-		),
+		sourceType:    DataSourceTypeFile,
+		deliver:       deliver,
+		enc:           enc,
 		logger:        chunkLogger,
 		groupChecksum: groupChecksum,
 	}
@@ -472,6 +557,7 @@ func NewFileChunkProcessor(
 type dataDeliver struct {
 	logger        *zap.Logger
 	kvBatch       chan *encodedKVGroupBatch
+	batchPool     chan *encodedKVGroupBatch
 	diskQuotaLock *syncutil.RWMutex
 	dataWriter    backend.EngineWriter
 	indexWriter   backend.EngineWriter
@@ -561,6 +647,12 @@ func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 		}
 
 		kvBatch.reset()
+		if p.batchPool != nil {
+			select {
+			case p.batchPool <- kvBatch:
+			default:
+			}
+		}
 	}
 }
 
@@ -590,25 +682,29 @@ func newQueryChunkProcessor(
 ) ChunkProcessor {
 	chunkName := "import-from-select"
 	chunkLogger := logger.With(zap.String("key", chunkName))
+	batchPool := make(chan *encodedKVGroupBatch, maxKVQueueSize+2)
 	deliver := &dataDeliver{
 		logger:        chunkLogger,
 		diskQuotaLock: diskQuotaLock,
 		kvBatch:       make(chan *encodedKVGroupBatch, maxKVQueueSize),
+		batchPool:     batchPool,
 		dataWriter:    dataWriter,
 		indexWriter:   indexWriter,
 	}
+	enc := newChunkEncoder(
+		chunkName,
+		queryRowEncodeReader(chunkCh),
+		-1,
+		deliver.sendEncodedData,
+		collector,
+		encoder,
+		keyspace,
+	)
+	enc.batchPool = batchPool
 	return &baseChunkProcessor{
-		sourceType: DataSourceTypeQuery,
-		deliver:    deliver,
-		enc: newChunkEncoder(
-			chunkName,
-			queryRowEncodeReader(chunkCh),
-			-1,
-			deliver.sendEncodedData,
-			collector,
-			encoder,
-			keyspace,
-		),
+		sourceType:    DataSourceTypeQuery,
+		deliver:       deliver,
+		enc:           enc,
 		logger:        chunkLogger,
 		groupChecksum: groupChecksum,
 	}
