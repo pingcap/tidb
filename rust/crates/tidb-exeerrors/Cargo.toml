@@ -13,4 +13,5 @@ workspace = true
 [dependencies]
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-errno = { path = "../tidb-errno" }
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-terror = { path = "../tidb-terror" }

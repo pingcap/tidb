@@ -7295,6 +7295,7 @@ version = "0.0.0"
 dependencies = [
  "tidb-dbterror",
  "tidb-errno",
+ "tidb-mysql",
  "tidb-terror",
 ]
 

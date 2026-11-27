@@ -214,11 +214,15 @@ pub static ERR_UNSUPPORTED_FLASHBACK_TMP_TABLE: LazyLock<TerrorError> = LazyLock
         "Recover/flashback table is not supported on temporary tables",
     )
 });
-/// Source `exeerrors.ErrTruncateWrongInsertValue`.
+/// Source `exeerrors.ErrTruncateWrongInsertValue`: the input value (argument
+/// 1) is redacted.
 pub static ERR_TRUNCATE_WRONG_INSERT_VALUE: LazyLock<TerrorError> = LazyLock::new(|| {
-    CLASS_TABLE.new_plain_err(
+    CLASS_TABLE.new_std_err(
         errcode::ErrTruncatedWrongValue,
-        "Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d",
+        tidb_mysql::errors::ErrMessage {
+            raw: "Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d",
+            redact_arg_pos: &[1],
+        },
     )
 });
 /// Source `exeerrors.ErrExistsInHistoryPassword`.
@@ -491,5 +495,30 @@ mod tests {
             assert_eq!(err.message(), msg, "{go_name} message");
         }
         assert!(expected.is_empty(), "unported entries: {expected:?}");
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use tidb_mysql::errors::{set_redaction_mode, RedactionMode};
+
+    /// Go `TestTruncateWrongInsertValueRedaction` (e8a19ccb5a9).
+    #[test]
+    fn test_truncate_wrong_insert_value_redaction() {
+        for (mode, want_value) in [
+            (RedactionMode::Disabled, "test-value"),
+            (RedactionMode::Enabled, "?"),
+            (RedactionMode::Marker, "\u{2039}test-value\u{203a}"),
+        ] {
+            set_redaction_mode(mode);
+            let error = super::ERR_TRUNCATE_WRONG_INSERT_VALUE
+                .fast_gen_by_args(&["datetime".into(), "test-value".into(), "d".into(), 2.into()]);
+            set_redaction_mode(RedactionMode::Disabled);
+            assert_eq!(
+                error.to_string(),
+                format!("[table:1292]Incorrect datetime value: '{want_value}' for column 'd' at row 2"),
+                "{mode:?}"
+            );
+        }
     }
 }
