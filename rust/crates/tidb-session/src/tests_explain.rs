@@ -11343,3 +11343,23 @@ fn test_nested_filtering_apply_is_not_pruned() {
         );
     }
 }
+
+/// Go `TestRuleAggElimination4Join`'s rows from d8f573642c6: a binary unique key
+/// admits both 'A' and 'a', and a case-insensitive join matches both to the
+/// same l.id, so the join keeps no key from r's side -- COUNT(*) counts both
+/// matches in either inner join order and when l is the preserved side.
+#[test]
+fn test_rule_agg_elimination_4_join_collation() {
+    let mut tk = Session::new();
+    tk.run("create table l (id int primary key, s varchar(10) collate utf8mb4_general_ci)").unwrap();
+    tk.run("create table r (s varchar(10) collate utf8mb4_bin not null unique)").unwrap();
+    tk.run("insert into l values (1, 'a')").unwrap();
+    tk.run("insert into r values ('A'), ('a')").unwrap();
+    for sql in [
+        "select l.id, count(*) from l join r on l.s collate utf8mb4_general_ci = r.s group by l.id",
+        "select l.id, count(*) from r join l on r.s = l.s collate utf8mb4_general_ci group by l.id",
+        "select l.id, count(*) from l left join r on l.s collate utf8mb4_general_ci = r.s group by l.id",
+    ] {
+        assert_eq!(row_text(tk.run(sql)), [["1", "2"]], "{sql}");
+    }
+}

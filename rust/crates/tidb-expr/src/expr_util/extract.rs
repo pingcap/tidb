@@ -516,6 +516,20 @@ pub fn is_col_op_col(sf: &ScalarFunction) -> Option<(&Column, &Column)> {
     }
 }
 
+/// Go `JoinKeyCollationCompatible`: whether equality under the join
+/// condition `eq` can use `col`'s collation to establish uniqueness.
+#[must_use]
+pub fn join_key_collation_compatible(eq: &ScalarFunction, col: &Column) -> bool {
+    let Some(tp) = col.ret_type.as_ref() else {
+        return true;
+    };
+    if !tidb_datatype::new_collation_enabled() || tp.eval_type() != tidb_datatype::EvalType::String {
+        return true;
+    }
+    let (_, comparison_collation) = eq.collation.charset_and_collation();
+    tidb_datatype::compatible_collate(comparison_collation, tp.collation_name())
+}
+
 /// Go `ExtractColumnsFromColOpCol` (`util.go:2381`): the two columns of a
 /// condition the caller has ALREADY established is `col op col`.
 ///

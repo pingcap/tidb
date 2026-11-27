@@ -117,6 +117,9 @@ fn extract_inner_join_keys(join: &LogicalJoin, inner_index: usize) -> (Schema, H
         }) else {
             continue;
         };
+        if !tidb_expr::expr_util::extract::join_key_collation_compatible(condition, column) {
+            continue;
+        }
         keys.push(column.clone());
         if condition.func_name.lowercase() == "nulleq" {
             null_eq.insert(column.unique_id);

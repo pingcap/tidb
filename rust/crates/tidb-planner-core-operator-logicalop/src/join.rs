@@ -1118,7 +1118,21 @@ impl LogicalJoin {
                 let (Some(left), Some(right)) = (left, right) else {
                     return;
                 };
-                let (left_cols, right_cols, _, _) = self.get_join_keys();
+                // A key column counts only when the join's comparison
+                // collation can use its own collation to establish uniqueness.
+                let mut left_cols = Vec::new();
+                let mut right_cols = Vec::new();
+                for eq in &self.equal_conditions {
+                    let Some((l, r)) = tidb_expr::expr_util::extract::is_col_op_col(eq) else {
+                        continue;
+                    };
+                    if tidb_expr::expr_util::extract::join_key_collation_compatible(eq, l) {
+                        left_cols.push(l.clone());
+                    }
+                    if tidb_expr::expr_util::extract::join_key_collation_compatible(eq, r) {
+                        right_cols.push(r.clone());
+                    }
+                }
                 let left_ok = covers_a_key(&left_cols, &left.pk_or_uk);
                 let right_ok = covers_a_key(&right_cols, &right.pk_or_uk);
                 if left_ok && self.join_type != LogicalJoinType::LeftOuter {
