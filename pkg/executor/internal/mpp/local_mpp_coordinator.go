@@ -916,7 +916,7 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := c.originalPlan.(*physicalop.PhysicalExchangeSender)
 	sctx := c.sessionCtx
-	frags, kvRanges, nodeInfo, err := physicalop.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
+	frags, kvRanges, nodeInfo, err := physicalop.GenerateRootMPPTasks(ctx, sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

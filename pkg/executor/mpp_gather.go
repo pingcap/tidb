@@ -112,7 +112,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		if !ok {
 			return errors.Errorf("unexpected plan type, expect: PhysicalExchangeSender, got: %s", e.originalPlan.TP())
 		}
-		_, e.kvRanges, _, err = physicalop.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is)
+		_, e.kvRanges, _, err = physicalop.GenerateRootMPPTasks(ctx, e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is)
 		return err
 	}
 	planIDs := collectPlanIDs(e.originalPlan, nil)

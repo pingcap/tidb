@@ -143,6 +143,7 @@ type cteGroupInFragment struct {
 }
 
 type mppTaskGenerator struct {
+	requestCtx context.Context
 	ctx        sessionctx.Context
 	startTS    uint64
 	gatherID   uint64
@@ -164,10 +165,11 @@ type mppTaskGenerator struct {
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppGatherID uint64,
+func GenerateRootMPPTasks(ctx context.Context, sctx sessionctx.Context, startTs uint64, mppGatherID uint64,
 	mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, []kv.KeyRange, map[string]bool, error) {
 	g := &mppTaskGenerator{
-		ctx:              ctx,
+		requestCtx:       ctx,
+		ctx:              sctx,
 		gatherID:         mppGatherID,
 		startTS:          startTs,
 		mppQueryID:       mppQueryID,
@@ -562,7 +564,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		}
 	}
 	if f.TableScan != nil {
-		tasks, err = e.constructMPPTasksImpl(context.Background(), f.TableScan)
+		tasks, err = e.constructMPPTasksImpl(e.requestCtx, f.TableScan)
 		if err == nil && len(tasks) == 0 {
 			err = errors.New(
 				"In mpp mode, the number of tasks for table scan should not be zero. " +

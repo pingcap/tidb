@@ -36,6 +36,7 @@ const (
 
 type mockDetectClient struct {
 	errortestype string
+	probeErr     func(context.Context) error
 }
 
 func (t *mockDetectClient) CloseAddr(string) error {
@@ -52,6 +53,11 @@ func (t *mockDetectClient) SendRequest(
 	req *tikvrpc.Request,
 	timeout time.Duration,
 ) (*tikvrpc.Response, error) {
+	if t.probeErr != nil {
+		if err := t.probeErr(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if t.errortestype == Error {
 		return nil, errors.New("store error")
 	} else if t.errortestype == testimeout {
@@ -170,6 +176,48 @@ func TestMPPFailedStoreProbe(t *testing.T) {
 	testFlow(ctx, probetestest, t, testFlowFinallyRecover)
 	testFlowFinallyDesert := []string{Error, Normal, Normal, Error, Error}
 	testFlow(ctx, probetestest, t, testFlowFinallyDesert)
+}
+
+func TestFilterAliveStoresCancellation(t *testing.T) {
+	for _, mode := range []string{"cancel_during_probe", "expired_deadline", "rpc_error"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			if mode == "expired_deadline" {
+				cancel()
+				ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			}
+			defer cancel()
+
+			client := &mockDetectClient{probeErr: func(probeCtx context.Context) error {
+				if mode == "cancel_during_probe" {
+					cancel()
+				}
+				if mode == "rpc_error" {
+					return errors.New("probe RPC failed")
+				}
+				return probeCtx.Err()
+			}}
+			store := &tikv.KVStore{}
+			store.SetTiKVClient(client)
+			copStore := &kvStore{store: store}
+			addr := t.Name()
+			t.Cleanup(func() { GlobalMPPFailedStoreProber.failedMPPStores.Delete(addr) })
+
+			require.Empty(t, filterAliveStoresStr(ctx, []string{addr}, 0, copStore))
+			_, failed := GlobalMPPFailedStoreProber.failedMPPStores.Load(addr)
+			require.Equal(t, mode == "rpc_error", failed)
+
+			// A different query must be able to use the healthy store immediately,
+			// without waiting for the background failed-store prober to run.
+			client.probeErr = nil
+			alive := filterAliveStoresStr(context.Background(), []string{addr}, 0, copStore)
+			if mode == "rpc_error" {
+				require.Empty(t, alive)
+			} else {
+				require.Equal(t, []string{addr}, alive)
+			}
+		})
+	}
 }
 
 func TestMPPFailedStoreProbeGoroutineTask(t *testing.T) {
