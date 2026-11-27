@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -92,7 +93,26 @@ func (extractHelper) extractColInConsExpr(ctx base.PlanContext, extractCols map[
 		}
 		results = append(results, v)
 	}
-	return name.ColName.L, results
+	return name.ColName.L, trimPadSpaceDatums(expr, results)
+}
+
+// trimPadSpaceDatums removes the trailing spaces of the string values that
+// expr compares with a PAD SPACE collation. Such a comparison ignores
+// trailing spaces, so `c = 'a '` matches the value 'a'.
+func trimPadSpaceDatums(expr *expression.ScalarFunction, datums []types.Datum) []types.Datum {
+	if _, coll := expr.CharsetAndCollation(); !collate.IsPadSpaceCollation(coll) {
+		return datums
+	}
+	for i := range datums {
+		switch datums[i].Kind() {
+		case types.KindString, types.KindBytes:
+			s := datums[i].GetString()
+			if trimmed := strings.TrimRight(s, " "); len(trimmed) != len(s) {
+				datums[i].SetString(trimmed, datums[i].Collation())
+			}
+		}
+	}
+	return datums
 }
 
 func (helper *extractHelper) setColumnPushedDownFn(
@@ -247,7 +267,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 			return "", nil, false
 		}
 	}
-	return name.ColName.L, []types.Datum{v}, colIdx == 0
+	return name.ColName.L, trimPadSpaceDatums(expr, []types.Datum{v}), colIdx == 0
 }
 
 // extract the OR expression, e.g:
