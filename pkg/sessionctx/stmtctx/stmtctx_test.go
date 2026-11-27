@@ -479,6 +479,16 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 }
 
 func TestResetStmtCtx(t *testing.T) {
+	t.Run("retry explicit insert ID", func(t *testing.T) {
+		sc := stmtctx.NewStmtCtx()
+		sc.PrevLastInsertID = 7
+		sc.InsertID = 42
+		sc.ResetForRetry()
+		require.Zero(t, sc.InsertID)
+		require.Equal(t, uint64(7), sc.PrevLastInsertID)
+		sc.ResetForRetry()
+		require.Zero(t, sc.InsertID)
+	})
 	sc := stmtctx.NewStmtCtx()
 	sc.SetFoundRows(3)
 	require.Equal(t, uint64(3), sc.FoundRows())
