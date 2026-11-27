@@ -1257,6 +1257,12 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
+		if len(data) == 0 {
+			// A packet with an empty payload carries no command byte. MySQL reads it as COM_SLEEP,
+			// which a client is not allowed to send, so it is answered with an error.
+			data = []byte{mysql.ComSleep}
+		}
+
 		// It should be CAS before checking the `inShutdownMode` to avoid the following scenario:
 		// 1. The connection checks the `inShutdownMode` and it's false.
 		// 2. The server sets the `inShutdownMode` to true. The `DrainClients` process ignores this connection
@@ -1557,6 +1563,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return cc.handleFieldList(ctx, dataStr)
 	// ComCreateDB, ComDropDB
 	case mysql.ComRefresh:
+		if len(data) == 0 {
+			return mysql.ErrMalformPacket
+		}
 		return cc.handleRefresh(ctx, data[0])
 	case mysql.ComShutdown: // redirect to SQL
 		if err := cc.handleQuery(ctx, "SHUTDOWN"); err != nil {
