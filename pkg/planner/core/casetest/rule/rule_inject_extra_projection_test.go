@@ -23,10 +23,48 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestOrderByHashCollision(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_order (id int primary key, dt datetime, marker int default 0)")
+	for _, order := range []string{
+		"cast(dt as date), cast(dt as datetime), id",
+		"to_seconds(cast(dt as date)), to_seconds(cast(dt as datetime)), id",
+		"cast(dt as date), cast(dt as datetime), cast(dt as datetime) desc, id",
+	} {
+		t.Run(order, func(t *testing.T) {
+			for _, operation := range []string{"sort", "topn", "aggregate", "delete", "update"} {
+				t.Run(operation, func(t *testing.T) {
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("use test")
+					tk.MustExec("delete from t_order")
+					tk.MustExec("insert into t_order(id,dt) values (1,'2024-01-15 10:00:00'),(2,'2024-01-15 09:00:00'),(3,'2024-01-16 08:00:00')")
+					switch operation {
+					case "sort":
+						tk.MustQuery("select id from t_order order by " + order).Check(testkit.Rows("2", "1", "3"))
+					case "topn":
+						tk.MustQuery("select id from t_order order by " + order + " limit 1").Check(testkit.Rows("2"))
+					case "aggregate":
+						tk.MustQuery("select group_concat(id order by " + order + ") from t_order").Check(testkit.Rows("2,1,3"))
+					case "delete":
+						tk.MustExec("delete from t_order order by " + order + " limit 1")
+						tk.MustQuery("select id from t_order order by id").Check(testkit.Rows("1", "3"))
+					case "update":
+						tk.MustExec("update t_order set marker=1 order by " + order + " limit 1")
+						tk.MustQuery("select id from t_order where marker=1").Check(testkit.Rows("2"))
+					}
+				})
+			}
+		})
+	}
+}
 
 func TestWrapCastForAggFuncs(t *testing.T) {
 	ctx := exprstatic.NewEvalContext()
