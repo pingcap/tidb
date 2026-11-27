@@ -376,12 +376,17 @@ func (s *BaseScheduler) onReverting() error {
 	task := s.getTaskClone()
 	s.logger.Debug("on reverting state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	// Batched step publication can leave paused subtasks beyond task.Step.
+	// Drain the whole task before deciding whether reversion is complete.
+	if err := s.taskMgr.CancelPausedSubtasks(s.ctx, task.ID); err != nil {
+		return errors.Trace(err)
+	}
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
 		s.logger.Warn("check task failed", zap.Error(err))
 		return err
 	}
-	runnableSubtaskCnt := cntByStates[proto.SubtaskStatePending] + cntByStates[proto.SubtaskStateRunning]
+	runnableSubtaskCnt := cntByStates[proto.SubtaskStatePending] + cntByStates[proto.SubtaskStateRunning] + cntByStates[proto.SubtaskStatePaused]
 	if runnableSubtaskCnt == 0 {
 		if err = s.OnDone(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
@@ -580,19 +585,18 @@ func (s *BaseScheduler) switch2NextStep() error {
 	if err != nil {
 		return err
 	}
-	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
-		// OnNextSubtasksBatch may use len(eligibleNodes) as a hint to
-		// calculate the number of subtasks, so we need to do this before
-		// filtering nodes by available slots in scheduleSubtask.
-		eligibleNodes = eligibleNodes[:task.MaxNodeCount]
+	// Limit the planning hint without restricting the nodes available for placement.
+	nodeCnt := len(eligibleNodes)
+	if task.MaxNodeCount > 0 {
+		nodeCnt = min(nodeCnt, task.MaxNodeCount)
 	}
 
-	s.logger.Info("eligible instances", zap.Int("num", len(eligibleNodes)))
-	if len(eligibleNodes) == 0 {
+	s.logger.Info("eligible instances", zap.Int("num", nodeCnt))
+	if nodeCnt == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
 
-	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
+	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, nodeCnt, nextStep)
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
 		return s.handlePrepareOrPlanErr(err)
@@ -619,6 +623,15 @@ func (s *BaseScheduler) scheduleSubTask(
 		zap.Int("requiredSlots", task.RequiredSlots),
 		zap.Int("subtasks", len(metas)))
 
+	var size uint64
+	for _, meta := range metas {
+		size += uint64(len(meta))
+	}
+	// as other fields and generated key and index KV takes space too, we limit
+	// the size of subtasks to 80% of the transaction limit.
+	limit := max(uint64(float64(kv.TxnTotalSizeLimit.Load())*0.8), 1)
+	insertInBatch := size >= limit
+
 	// the scheduled node of the subtask might not be optimal, as we run all
 	// scheduler in parallel, and update might be called too many times when
 	// multiple tasks are switching to next step.
@@ -627,8 +640,19 @@ func (s *BaseScheduler) scheduleSubTask(
 	if err := s.slotMgr.update(s.ctx, s.nodeMgr, s.taskMgr); err != nil {
 		return err
 	}
+	// Prefer nodes with enough slots, falling back to all eligible nodes if none qualify.
+	// Then limit the number of execution nodes to MaxNodeCount.
 	adjustedEligibleNodes := s.slotMgr.adjustEligibleNodes(eligibleNodes, task.RequiredSlots)
-	var size uint64
+	if insertInBatch {
+		var err error
+		adjustedEligibleNodes, err = s.keepExistingStepNodes(task.ID, subtaskStep, eligibleNodes, adjustedEligibleNodes)
+		if err != nil {
+			return err
+		}
+	}
+	if task.MaxNodeCount > 0 && len(adjustedEligibleNodes) > task.MaxNodeCount {
+		adjustedEligibleNodes = adjustedEligibleNodes[:task.MaxNodeCount]
+	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
 		// our schedule target is to maximize the resource usage of all nodes while
@@ -647,16 +671,11 @@ func (s *BaseScheduler) scheduleSubTask(
 		s.logger.Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(
 			subtaskStep, task.ID, task.Type, instanceID, task.RequiredSlots, meta, i+1))
-
-		size += uint64(len(meta))
 	}
 	failpoint.InjectCall("cancelBeforeUpdateTask", task.ID)
 
-	// as other fields and generated key and index KV takes space too, we limit
-	// the size of subtasks to 80% of the transaction limit.
-	limit := max(uint64(float64(kv.TxnTotalSizeLimit.Load())*0.8), 1)
 	fn := s.taskMgr.SwitchTaskStep
-	if size >= limit {
+	if insertInBatch {
 		// On default, transaction size limit is controlled by tidb_mem_quota_query
 		// which is 1G on default, so it's unlikely to reach this limit, but in
 		// case user set txn-total-size-limit explicitly, we insert in batch.
@@ -675,6 +694,47 @@ func (s *BaseScheduler) scheduleSubTask(
 			return true, err
 		},
 	)
+}
+
+// keepExistingStepNodes preserves still-eligible nodes that already hold
+// partially inserted subtasks for (taskID, step) ahead of slot-filtered nodes
+// before applying MaxNodeCount. This prevents SwitchTaskStepInBatch recovery
+// from counting the task's own pending rows as used slots, picking different
+// hosts, and exceeding MaxNodeCount once the step becomes runnable.
+func (s *BaseScheduler) keepExistingStepNodes(
+	taskID int64,
+	step proto.Step,
+	eligibleNodes []string,
+	adjustedEligibleNodes []string,
+) ([]string, error) {
+	activeSubtasks, err := s.taskMgr.GetActiveSubtasks(s.ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	existing := make(map[string]struct{})
+	for _, st := range activeSubtasks {
+		if st.Step == step {
+			existing[st.ExecID] = struct{}{}
+		}
+	}
+	if len(existing) == 0 {
+		return adjustedEligibleNodes, nil
+	}
+
+	// Preserving eligibleNodes order is enough here: previous batches already
+	// respected MaxNodeCount and distributed subtasks round-robin.
+	res := make([]string, 0, len(eligibleNodes))
+	for _, node := range eligibleNodes {
+		if _, ok := existing[node]; ok {
+			res = append(res, node)
+		}
+	}
+	for _, node := range adjustedEligibleNodes {
+		if _, ok := existing[node]; !ok {
+			res = append(res, node)
+		}
+	}
+	return res, nil
 }
 
 func (s *BaseScheduler) handlePrepareOrPlanErr(err error) error {

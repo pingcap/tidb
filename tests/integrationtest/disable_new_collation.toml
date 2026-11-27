@@ -22,6 +22,10 @@ enable-storage-class = true
 status-host = "127.0.0.1"
 
 [performance]
+# A zero lease still initializes stats and normally refreshes the cache every 3 seconds.
+# run-tests.sh disables periodic refresh only on servers it starts.
+# With -P, the existing server keeps its own settings.
+# ANALYZE still refreshes stats explicitly.
 stats-lease = "0"
 
 [tikv-client.async-commit]

@@ -2026,7 +2026,7 @@ func (do *Domain) UpdateTableStatsLoop() error {
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test or in br binary mode, it does not need update.
 	if do.statsLease >= 0 {
-		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
+		do.startStatsLoading()
 	}
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
@@ -2147,6 +2147,26 @@ func (do *Domain) initStats(ctx context.Context) {
 	} else {
 		statslogutil.StatsLogger().Info("Init stats succeed", zap.Bool("isLiteInitStats", liteInitStats), zap.Duration("duration", time.Since(t)))
 	}
+}
+
+func (do *Domain) startStatsLoading() {
+	value, err := failpoint.Eval("github.com/pingcap/tidb/pkg/domain/skipPeriodicStatsRefresh")
+	skipPeriodicRefresh, _ := value.(bool)
+	skipPeriodicRefresh = err == nil && skipPeriodicRefresh
+	if do.statsLease >= 0 && !skipPeriodicRefresh {
+		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
+		return
+	}
+
+	do.wg.Run(func() {
+		// Initial stats loading is still required as part of normal server startup
+		// (normally handled by loadStatsWorker before its refresh loop), and it
+		// closes InitStatsDone so force-init-stats can open the SQL listener.
+		do.initStats(do.ctx)
+		if skipPeriodicRefresh {
+			statslogutil.StatsLogger().Info("periodic stats refresh disabled for SQL integration tests")
+		}
+	}, "initStats")
 }
 
 func (do *Domain) loadStatsWorker() {

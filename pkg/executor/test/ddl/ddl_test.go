@@ -327,8 +327,11 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	tk.MustExecToErr("alter table mc modify column c1 short")
 	tk.MustExec("alter table mc modify column c1 bigint")
 
-	tk.MustExecToErr("alter table mc modify column c2 blob")
+	tk.MustExec("insert into mc values (1, 'é', b'1')")
+	tk.MustExec("alter table mc modify column c2 blob")
+	tk.MustQuery("select hex(c2) from mc").Check(testkit.Rows("C3A9"))
 	tk.MustExec("alter table mc modify column c2 varchar(8)")
+	tk.MustQuery("select c2 from mc").Check(testkit.Rows("é"))
 	tk.MustExec("alter table mc modify column c2 varchar(11)")
 	tk.MustExec("alter table mc modify column c2 text(13)")
 	tk.MustExec("alter table mc modify column c2 text")

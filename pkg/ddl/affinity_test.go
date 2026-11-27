@@ -67,6 +67,7 @@ type truncateAffinityPDClient struct {
 	lastCreatedGroups atomic.Value
 	createCalls       atomic.Int64
 	createFailures    atomic.Int64
+	deleteCalls       atomic.Int64
 	nilDeleteContext  atomic.Bool
 	deleteHasDeadline atomic.Bool
 	afterCreate       func(context.Context) error
@@ -168,6 +169,7 @@ func (c *truncateAffinityPDClient) createPartially(ctx context.Context, groups m
 }
 
 func (c *truncateAffinityPDClient) BatchDeleteAffinityGroups(ctx context.Context, ids []string, _ bool) error {
+	c.deleteCalls.Add(1)
 	// Match the real HTTP client's context validation; the mock manager ignores it.
 	if _, err := http.NewRequestWithContext(ctx, http.MethodDelete, "http://pd/affinity-groups", nil); err != nil {
 		c.nilDeleteContext.Store(ctx == nil)
@@ -238,6 +240,73 @@ func (s *affinityDDLTest) groupsOf(t *testing.T, info *model.TableInfo) map[stri
 	groups, err := ddl.BuildAffinityGroupDefinitionsForTest(s.store.GetCodec(), info, nil)
 	require.NoError(t, err)
 	return groups
+}
+
+func TestAffinityMViewOutOfPlaceCutoverCleanup(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		oldAffinity    bool
+		shadowAffinity bool
+		failDelete     bool
+	}{
+		{name: "without_affinity"},
+		{name: "with_affinity", oldAffinity: true, shadowAffinity: true},
+		{name: "shadow_only", shadowAffinity: true},
+		{name: "old_only", oldAffinity: true},
+		{name: "cleanup_failure", oldAffinity: true, shadowAffinity: true, failDelete: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newAffinityDDLTest(t)
+			s.tk.MustExec("set tidb_mview_enable = on")
+			s.tk.MustExec("create table source (a int not null)")
+			s.tk.MustExec("create materialized view log on source (a)")
+			s.tk.MustExec("create materialized view mv (a, cnt) as select a, count(*) from source group by a")
+			oldMV := s.tableInfo(t, "mv")
+			if tc.oldAffinity {
+				oldMV.Affinity = &model.TableAffinityInfo{Level: ast.TableAffinityLevelTable}
+				require.NoError(t, kv.RunInNewTxn(context.Background(), s.store, true, func(_ context.Context, txn kv.Transaction) error {
+					return meta.NewMutator(txn).UpdateTable(s.schemaID, oldMV)
+				}))
+				require.NoError(t, affinity.CreateGroupsIfNotExists(context.Background(), s.groupsOf(t, oldMV)))
+				require.NoError(t, s.dom.Reload())
+			}
+			shadowName := ast.NewCIStr("__mv_shadow_affinity_cleanup")
+			shadow, err := ddl.BuildTableInfoWithLike(ast.Ident{Name: shadowName}, oldMV, &ast.CreateTableStmt{})
+			require.NoError(t, err)
+			shadow.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: oldMV.ID}
+			// The cleanup decision must describe the retired table, even when the
+			// internal DDL API is given a shadow with different affinity metadata.
+			shadow.Affinity = nil
+			if tc.shadowAffinity {
+				shadow.Affinity = &model.TableAffinityInfo{Level: ast.TableAffinityLevelTable}
+			}
+			require.NoError(t, s.dom.DDLExecutor().CreateMaterializedViewShadowTable(s.tk.Session(), s.schemaID, ast.NewCIStr("test"), shadow))
+			shadow = s.tableInfo(t, shadowName.O)
+			source := s.tableInfo(t, "source")
+			sources := []model.MViewRefreshSource{{TableID: source.ID, MLogID: source.MaterializedViewBase.MLogID}}
+			s.tk.MustExec("update mysql.tidb_mview_refresh_info set last_success_read_tso = null where mview_id = ?", oldMV.ID)
+			s.tk.Session().SetValue(sessionctx.QueryString, "REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE")
+			s.cli.deleteCalls.Store(0)
+			s.cli.failDelete.Store(tc.failDelete)
+			require.NoError(t, s.dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
+				s.tk.Session(), s.schemaID, ast.NewCIStr("test"), oldMV.Name, oldMV.ID, shadow.ID,
+				123456789, sources, nil, 0, true, nil, false,
+			))
+			s.cli.failDelete.Store(false)
+			require.Equal(t, shadow.ID, s.tableInfo(t, "mv").ID, "cleanup failure must not undo cutover")
+			if tc.oldAffinity {
+				require.Positive(t, s.cli.deleteCalls.Load())
+				require.False(t, s.cli.nilDeleteContext.Load())
+				require.True(t, s.cli.deleteHasDeadline.Load(), "post-commit cleanup must have a deadline")
+				requireAffinityGroupsWithLabelRules(t, s.cli, s.groupsOf(t, oldMV), tc.failDelete, "only the retired MV's group is eligible for cleanup")
+			} else {
+				require.Zero(t, s.cli.deleteCalls.Load(), "an MV without affinity must not issue deletion RPCs")
+			}
+			if tc.shadowAffinity {
+				requireAffinityGroupsWithLabelRules(t, s.cli, s.groupsOf(t, shadow), true, "cutover must preserve the replacement MV's group")
+			}
+		})
+	}
 }
 
 func TestAffinityCancelledCreateOnEntryTooLarge(t *testing.T) {

@@ -328,6 +328,8 @@ func TestIssue32422(t *testing.T) {
 	require.True(t, cacheUsed)
 
 	tk.MustQuery("select id+1, c from t where c = 4;").Check(testkit.Rows("5 4"))
+	tk.MustContainErrMsg("select id, _tidb_commit_ts from t where c = 4;", "'_tidb_commit_ts' is unsupported on cache tables.")
+	tk.MustContainErrMsg("select id, _tidb_commit_ts from t use index(id) where id = 4;", "'_tidb_commit_ts' is unsupported on cache tables.")
 
 	// Some extra tests.
 	// Since cached table use UnionScanExec utilities, check what happens when they work together.

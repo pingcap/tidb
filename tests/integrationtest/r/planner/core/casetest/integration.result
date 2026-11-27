@@ -1842,14 +1842,71 @@ PREPARE prepare_query FROM 'SELECT * FROM test_62564 WHERE CAST((CASE test_62564
 EXECUTE prepare_query USING @b;
 c0
 0
-CREATE TABLE t_commit_ts (a INT PRIMARY KEY, b INT);
-select _tidb_commit_ts from t_commit_ts where a = 1;
+SET tidb_mview_enable = OFF;
+CREATE TABLE t_commit_ts (a INT PRIMARY KEY, b INT, c INT, INDEX idx_b(b), INDEX idx_c(c));
+INSERT INTO t_commit_ts VALUES (1, 1, 2), (2, 2, 1);
+explain format = 'plan_tree' select _tidb_commit_ts from t_commit_ts where a = 1;
+id	task	access object	operator info
+TableReader	root		data:Projection
+└─Projection	cop[tikv]		test.t_commit_ts._tidb_commit_ts
+  └─TableRangeScan	cop[tikv]	table:t_commit_ts	range:[1,1], keep order:false, stats:pseudo
+explain format = 'plan_tree' select _tidb_commit_ts from t_commit_ts where a in (1, 2);
+id	task	access object	operator info
+TableReader	root		data:Projection
+└─Projection	cop[tikv]		test.t_commit_ts._tidb_commit_ts
+  └─TableRangeScan	cop[tikv]	table:t_commit_ts	range:[1,1], [2,2], keep order:false, stats:pseudo
+select _tidb_commit_ts > 0 as valid_commit_ts from t_commit_ts use index (idx_b) where b = 1;
+valid_commit_ts
+1
+select _tidb_commit_ts > 0 as valid_commit_ts from t_commit_ts where a = 1;
+valid_commit_ts
+1
+select a from t_commit_ts where _tidb_commit_ts > 0 order by a;
+a
+1
+2
+select _tidb_commit_ts > 0 as valid_commit_ts from t_commit_ts union all select _tidb_commit_ts > 0 from t_commit_ts;
+valid_commit_ts
+1
+1
+1
+1
+explain format = 'plan_tree' select /*+ use_index_merge(t_commit_ts, idx_b, idx_c) */ _tidb_commit_ts from t_commit_ts where b = 1 or c = 1;
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
+update t_commit_ts set b = b + 10 where a = 1 and _tidb_commit_ts > 0;
+update t_commit_ts set b = 20 + (_tidb_commit_ts > 0) where a = 2;
+update t_commit_ts set b = b + 100 where _tidb_commit_ts = 0;
+select a, b from t_commit_ts order by a;
+a	b
+1	11
+2	21
+create table t_commit_ts_copy (a int, ts bigint unsigned);
+insert into t_commit_ts_copy select a, _tidb_commit_ts from t_commit_ts where _tidb_commit_ts > 0;
+select a, ts > 0 from t_commit_ts_copy order by a;
+a	ts > 0
+1	1
+2	1
+update t_commit_ts t join t_commit_ts_copy s on t.a = s.a
+set t.c = 10 + (s._tidb_commit_ts > 0), s.ts = t._tidb_commit_ts;
+select t.a, t.c, s.ts > 0 from t_commit_ts t join t_commit_ts_copy s on t.a = s.a order by t.a;
+a	c	s.ts > 0
+1	11	1
+2	11	1
+update t_commit_ts set _tidb_commit_ts = 1;
 Error 1815 (HY000): Usage of column name '_tidb_commit_ts' is not supported for now
-select _tidb_commit_ts from t_commit_ts where _tidb_commit_ts = 1;
+insert into t_commit_ts (_tidb_commit_ts) select a from t_commit_ts_copy;
 Error 1815 (HY000): Usage of column name '_tidb_commit_ts' is not supported for now
-delete from t_commit_ts where _tidb_commit_ts = 1;
+insert into t_commit_ts (a) values (1) on duplicate key update _tidb_commit_ts = 1;
 Error 1815 (HY000): Usage of column name '_tidb_commit_ts' is not supported for now
-update t_commit_ts set b = b + 1 where _tidb_commit_ts = 1;
-Error 1815 (HY000): Usage of column name '_tidb_commit_ts' is not supported for now
-insert into t_commit_ts (a, b) values (1, _tidb_commit_ts);
-Error 1054 (42S22): Unknown column '_tidb_commit_ts' in 'field list'
+delete from t_commit_ts where _tidb_commit_ts = 0;
+select count(*) from t_commit_ts;
+count(*)
+2
+delete from t_commit_ts where _tidb_commit_ts > 0 limit 1;
+select count(*) from t_commit_ts;
+count(*)
+1
+delete from t_commit_ts where _tidb_commit_ts > 0;
+select count(*) from t_commit_ts;
+count(*)
+0

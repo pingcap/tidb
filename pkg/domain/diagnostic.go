@@ -48,15 +48,7 @@ func (do *Domain) LoadStatsDiagnostic(ctx context.Context, concurrency int) erro
 	do.statsHandle.Store(statsHandle)
 	// Initial stats loading waits for the SessionManager, which is installed
 	// after BootstrapSession returns. Keep it off the bootstrap goroutine.
-	if do.statsLease >= 0 {
-		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
-	} else {
-		// A negative lease disables periodic refresh, but diagnostic startup
-		// still loads existing stats once and signals InitStatsDone.
-		do.wg.Run(func() {
-			do.initStats(do.ctx)
-		}, "initStats")
-	}
+	do.startStatsLoading()
 	do.StartLoadStatsSubWorkers(concurrency)
 	if do.statsLease > 0 {
 		do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")

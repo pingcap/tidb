@@ -157,7 +157,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if req.MaxExecutionTime > 0 {
 		// If the request has a MaxExecutionTime, we need to set the deadline of the context.
 		var cancel context.CancelFunc
-		boCtx, cancel = context.WithTimeout(boCtx, time.Duration(req.MaxExecutionTime)*time.Millisecond)
+		boCtx, cancel = context.WithTimeoutCause(boCtx, time.Duration(req.MaxExecutionTime)*time.Millisecond, exeerrors.ErrMaxExecTimeExceeded)
 		defer func() {
 			cancel()
 		}()
@@ -570,6 +570,11 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 		locs, err = cache.SplitKeyRangesByBuckets(bo, ranges)
 	}
 	if err != nil {
+		// Region lookup may format cancellation errors as text, losing the error chain.
+		// Check the context cause to recover the statement timeout.
+		if context.Cause(ctx) == exeerrors.ErrMaxExecTimeExceeded {
+			return nil, exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+		}
 		return nil, errors.Trace(err)
 	}
 	if opt.skipBuckets {
@@ -1689,7 +1694,7 @@ func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, ta
 	var cancel context.CancelFunc
 	boCtx := ctx
 	if worker.req.MaxExecutionTime > 0 {
-		boCtx, cancel = context.WithTimeout(boCtx, time.Duration(worker.req.MaxExecutionTime)*time.Millisecond)
+		boCtx, cancel = context.WithTimeoutCause(boCtx, time.Duration(worker.req.MaxExecutionTime)*time.Millisecond, exeerrors.ErrMaxExecTimeExceeded)
 	}
 	newbo := backoff.NewBackofferWithVars(boCtx, boMaxSleep, worker.vars)
 	backoffermap[task.region.GetID()] = newbo

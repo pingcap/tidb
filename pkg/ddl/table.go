@@ -77,15 +77,19 @@ func (w *worker) cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx *jobContext, jo
 		)
 	}
 
-	// Materialized views in Stage-1 are non-partitioned, so their table-level
-	// affinity group ID is derived directly from the old physical table ID.
-	groupID := GetTableAffinityGroupID(jobCtx.store.GetCodec(), args.OldMViewID)
-	if err := affinity.DeleteGroupsWithRetry(jobCtx.ctx, []string{groupID}); err != nil {
-		logutil.DDLLogger().Warn(
-			"failed to delete old materialized view affinity group after cutover",
-			zap.Int64("tableID", args.OldMViewID),
-			zap.Error(err),
-		)
+	if args.OldMViewHasAffinity {
+		// Stage-1 MVs are non-partitioned. Post-commit cleanup must not use
+		// the step context, which may already be canceled.
+		ctx, cancel := context.WithTimeout(jobCtx.ctx, affinityCleanupTimeout)
+		defer cancel()
+		groupID := GetTableAffinityGroupID(jobCtx.store.GetCodec(), args.OldMViewID)
+		if err := affinity.DeleteGroupsWithRetry(ctx, []string{groupID}); err != nil {
+			logutil.DDLLogger().Warn(
+				"failed to delete old materialized view affinity group after cutover",
+				zap.Int64("tableID", args.OldMViewID),
+				zap.Error(err),
+			)
+		}
 	}
 
 	// Stage-1 MVs and MLogs are non-partitioned. Retain their progress until
@@ -2608,6 +2612,8 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 	if err := asyncNotifyEvent(jobCtx, notifier.NewMViewRefreshOutOfPlaceCutoverEvent(newMViewTblInfo, oldMViewTblInfo, newMLog, oldMLog), job, noSubJob, w.sess); err != nil {
 		return ver, errors.Trace(err)
 	}
+	args.OldMViewHasAffinity = oldMViewTblInfo.Affinity != nil
+	job.FillArgs(args)
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, newMViewTblInfo)
 	return ver, nil
 }

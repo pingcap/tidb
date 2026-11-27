@@ -450,7 +450,7 @@ func (s *importStepExecutor) readQuery(
 	}()
 
 	return executor.RunImportQuery(
-		ctx, se, s.taskMeta.Plan.QuerySource, s.taskMeta.Stmt,
+		ctx, se, s.taskMeta.Plan.QuerySource, s.taskMeta.Stmt, s.tableImporter.GetFieldCount(),
 		int64(float64(s.GetResource().Mem.Capacity())*queryMemBudgetRatio), selected)
 }
 

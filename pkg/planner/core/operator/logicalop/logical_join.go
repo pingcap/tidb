@@ -414,22 +414,17 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		if len(p.EqualConditions) == 0 {
 			return
 		}
-		// Extract all left and right columns from equal conditions
-		leftCols := make([]*expression.Column, 0, len(p.EqualConditions))
-		rightCols := make([]*expression.Column, 0, len(p.EqualConditions))
-		for _, expr := range p.EqualConditions {
-			l, r := expression.ExtractColumnsFromColOpCol(expr)
-			leftCols = append(leftCols, l)
-			rightCols = append(rightCols, r)
+		var leftCols, rightCols intset.FastIntSet
+		for _, eq := range p.EqualConditions {
+			l, r := expression.ExtractColumnsFromColOpCol(eq)
+			if expression.JoinKeyCollationCompatible(eq, l) {
+				leftCols.Insert(int(l.UniqueID))
+			}
+			if expression.JoinKeyCollationCompatible(eq, r) {
+				rightCols.Insert(int(r.UniqueID))
+			}
 		}
-		checkColumnsMatchPKOrUK := func(cols []*expression.Column, pkOrUK []expression.KeyInfo) bool {
-			if len(pkOrUK) == 0 {
-				return false
-			}
-			colSet := intset.NewFastIntSet()
-			for _, col := range cols {
-				colSet.Insert(int(col.UniqueID))
-			}
+		checkColumnsMatchPKOrUK := func(colSet *intset.FastIntSet, pkOrUK []expression.KeyInfo) bool {
 			// Check if any key is a subset of the join key columns
 			// A match is considered valid if join key columns contain all columns of any PKOrUK
 			for _, key := range pkOrUK {
@@ -446,8 +441,8 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 			}
 			return false
 		}
-		lOk := checkColumnsMatchPKOrUK(leftCols, childSchema[0].PKOrUK)
-		rOk := checkColumnsMatchPKOrUK(rightCols, childSchema[1].PKOrUK)
+		lOk := checkColumnsMatchPKOrUK(&leftCols, childSchema[0].PKOrUK)
+		rOk := checkColumnsMatchPKOrUK(&rightCols, childSchema[1].PKOrUK)
 
 		// When both sides match different unique keys (e.g., left side matches unique key setA, right side matches unique key setB),
 		// we can derive additional functional dependencies through join conditions:

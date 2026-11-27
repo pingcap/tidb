@@ -42,28 +42,43 @@ func (mgr *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	_, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_global_task
-		 set state = %?,
-			 state_update_time = CURRENT_TIMESTAMP()
-		 where id = %? and state in (%?, %?, %?)`,
-		proto.TaskStateCancelling, taskID, proto.TaskStatePending, proto.TaskStateRunning,
-		proto.TaskStateAwaitingResolution,
-	)
-	return err
+	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		return cancelTaskByField(ctx, se, true, taskID)
+	})
 }
 
 // CancelTaskByKeySession cancels task by key using input session.
 func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Context, taskKey string) error {
-	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
-		`update mysql.tidb_global_task
-		 set state = %?,
-			 state_update_time = CURRENT_TIMESTAMP()
-		 where task_key = %? and state in (%?, %?, %?)`,
-		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning,
-		proto.TaskStateAwaitingResolution,
-	)
-	return err
+	return cancelTaskByField(ctx, se, false, taskKey)
+}
+
+func cancelTaskByField(ctx context.Context, se sessionctx.Context, byID bool, keyOrID any) error {
+	selectSQL := `select state from mysql.tidb_global_task where task_key = %? for update`
+	updateSQL := `update mysql.tidb_global_task set state = %?, state_update_time = CURRENT_TIMESTAMP() where task_key = %? and state = %?`
+	if byID {
+		selectSQL = `select state from mysql.tidb_global_task where id = %? for update`
+		updateSQL = `update mysql.tidb_global_task set state = %?, state_update_time = CURRENT_TIMESTAMP() where id = %? and state = %?`
+	}
+	rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), selectSQL, keyOrID)
+	if err != nil || len(rs) == 0 {
+		return err
+	}
+	state := proto.TaskState(rs[0].GetString(0))
+	switch state {
+	case proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateAwaitingResolution, proto.TaskStatePaused:
+		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), updateSQL, proto.TaskStateCancelling, keyOrID, state)
+		if err != nil {
+			return err
+		}
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			return ErrTaskChanged
+		}
+		return nil
+	case proto.TaskStatePausing, proto.TaskStateResuming, proto.TaskStateModifying:
+		return errors.Annotatef(ErrTaskStateNotAllow, "cannot cancel task in %s state", state)
+	default:
+		return nil
+	}
 }
 
 // FailTask implements the scheduler.TaskManager interface.

@@ -1548,6 +1548,17 @@ func TestRuleAggElimination4Join(t *testing.T) {
 		tk.MustExec("CREATE TABLE t3 ( id1 int NOT NULL, id2 int NOT NULL, id3 int NOT NULL, id4 int NOT NULL, UNIQUE KEY `UK_id1_id2` (id1,id2));")
 		tk.MustExec("CREATE TABLE t4 ( id1 int NOT NULL, id2 int NOT NULL, id3 int NOT NULL, id4 int NOT NULL, KEY `UK_id1_id2` (id1,id2));")
 
+		// The binary unique key permits both 'A' and 'a', and the case-insensitive join
+		// matches both to the same l.id. COUNT(*) must include both matches in either
+		// inner join order and when l is the preserved side of a left join.
+		tk.MustExec("create table l (id int primary key, s varchar(10) collate utf8mb4_general_ci)")
+		tk.MustExec("create table r (s varchar(10) collate utf8mb4_bin not null unique)")
+		tk.MustExec("insert into l values (1, 'a')")
+		tk.MustExec("insert into r values ('A'), ('a')")
+		tk.MustQuery("select l.id, count(*) from l join r on l.s collate utf8mb4_general_ci = r.s group by l.id").Check(testkit.Rows("1 2"))
+		tk.MustQuery("select l.id, count(*) from r join l on r.s = l.s collate utf8mb4_general_ci group by l.id").Check(testkit.Rows("1 2"))
+		tk.MustQuery("select l.id, count(*) from l left join r on l.s collate utf8mb4_general_ci = r.s group by l.id").Check(testkit.Rows("1 2"))
+
 		var input []string
 		var output []struct {
 			SQL  string

@@ -2394,6 +2394,16 @@ func IsColOpCol(sf *ScalarFunction) (_, _ *Column, _ bool) {
 	return nil, nil, false
 }
 
+// JoinKeyCollationCompatible reports whether equality under the join condition
+// can use the column's collation to establish uniqueness.
+func JoinKeyCollationCompatible(eq *ScalarFunction, col *Column) bool {
+	if !collate.NewCollationEnabled() || col.RetType.EvalType() != types.ETString {
+		return true
+	}
+	_, comparisonCollation := eq.CharsetAndCollation()
+	return collate.CompatibleCollate(comparisonCollation, col.RetType.GetCollate())
+}
+
 // ExtractColumnsFromColOpCol is to extract columns from col op col condition.
 func ExtractColumnsFromColOpCol(sf *ScalarFunction) (_, _ *Column) {
 	args := sf.GetArgs()

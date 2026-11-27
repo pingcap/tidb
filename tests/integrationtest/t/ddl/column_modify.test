@@ -174,12 +174,12 @@ set sql_mode=default;
 # TestCheckConvertToCharacter
 drop table if exists t;
 create table t(a varchar(10) charset binary);
--- error 8200
+insert into t values ('abc');
 alter table t modify column a varchar(10) charset utf8 collate utf8_bin;
--- error 8200
 alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin;
--- error 8200
 alter table t modify column a varchar(10) charset latin1 collate latin1_bin;
+select * from t;
+admin check table t;
 show create table t;
 
 # TestAddMultiColumnsIndex

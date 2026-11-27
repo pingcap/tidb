@@ -27,6 +27,9 @@ listener entirely. Normal-mode HTTP API availability is unchanged.
 
 ## HTTP endpoints
 
+The normal status listener routes HTTP/1.1 requests, including PATCH, to the HTTP
+API handlers. Each endpoint determines which methods and parameters it accepts.
+
 1. Get the current status of TiDB, including the connections, version, and `git_hash`.
 
     ```shell

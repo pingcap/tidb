@@ -91,6 +91,43 @@ func TestBinaryLiteralMinMaxHaving(t *testing.T) {
 	}
 }
 
+func TestUnionStringCastLength(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table union_text(v longtext)")
+	tk.MustQuery("select 2 in (select 5 union select null)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 2 in (select null union select 5)").Check(testkit.Rows("<nil>"))
+	tk.MustExec("create view nullable_union as select 'a' c union all select null")
+	tk.MustQuery("show fields from nullable_union").Check(testkit.Rows("c varchar(1) YES  <nil> "))
+	tk.MustExec("drop view nullable_union")
+	tk.MustExec("create view nullable_union as select null c union select 'a'")
+	tk.MustQuery("show fields from nullable_union").Check(testkit.Rows("c varchar(1) YES  <nil> "))
+	tk.MustExec("drop view nullable_union")
+	tk.MustExec("insert into union_text values(repeat('z',1592)),(repeat('界',600)),(null)")
+	tk.MustQuery("select 2 in (select 5 union select null) from union_text").Check(testkit.Rows("<nil>", "<nil>", "<nil>"))
+	short := "select cast('q' as char(255)) as v where false"
+	text := "select v from union_text"
+	numeric := "select cast(10 as double)*cast(10 as double) as v where false"
+	for _, sql := range []string{
+		short + " union all " + text + " union all " + numeric,
+		numeric + " union all " + short + " union all " + text,
+		"(" + short + " union all " + text + ") union all " + numeric,
+	} {
+		rs, err := tk.Exec(sql)
+		require.NoError(t, err)
+		ft := rs.Fields()[0].Column.FieldType
+		flen := ft.GetFlen()
+		if flen < 0 {
+			flen, _ = mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
+		}
+		require.GreaterOrEqual(t, flen, 1592)
+		require.NoError(t, rs.Close())
+		tk.MustQuery(sql).Sort().Check(testkit.Rows("<nil>", strings.Repeat("z", 1592), strings.Repeat("界", 600)))
+	}
+	tk.MustQuery("select char_length(v) from (select cast('q' as char(255)) v where false union all select repeat('z',1592) union all select cast(10 as double)*cast(10 as double) where false)u").Check(testkit.Rows("1592"))
+}
+
 func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
@@ -2955,4 +2992,22 @@ func TestIssue72090(t *testing.T) {
 		tk.MustQuery("select count(*) from (select k, max(c0) as m from t group by k) d where inet_aton('')").Check(testkit.Rows("0"))
 		requirePlanOrder(t, "select * from (select k, max(c0) as m from t group by k) d where inet_aton('')", "Agg", "Selection")
 	})
+}
+
+func TestUnionAllCorrelatedQuantifiedPredicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_union_fd (id bigint)")
+	tk.MustExec("create view v_union_fd as select * from t_union_fd union all select * from t_union_fd")
+	query := "select 1 from v_union_fd as t1 where (t1.id < all (select 1)) in (select t1.id)"
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery("explain " + query)
+	corrAllQuery := "select t1.id from v_union_fd as t1 where t1.id <= all (select t1.id)"
+	tk.MustQuery(corrAllQuery).Check(testkit.Rows())
+	tk.MustQuery("explain " + corrAllQuery)
+	tk.MustExec("insert into t_union_fd values (null), (-1), (0), (1), (2)")
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery("select t1.id from v_union_fd as t1 where (t1.id <= all (select 1)) in (select t1.id)").Check(testkit.Rows("1", "1"))
+	tk.MustQuery(corrAllQuery).Sort().Check(testkit.Rows("-1", "-1", "0", "0", "1", "1", "2", "2"))
 }
