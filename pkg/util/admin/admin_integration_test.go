@@ -36,6 +36,7 @@ func TestAdminCheckTableCorrupted(t *testing.T) {
 	memBuffer := txn.GetMemBuffer()
 	handle := memBuffer.Staging()
 	it := memBuffer.SnapshotIter(nil, nil)
+	defer it.Close()
 	require.NoError(t, err)
 	for it.Valid() {
 		if tablecodec.IsRecordKey(it.Key()) && len(it.Value()) > 0 {
