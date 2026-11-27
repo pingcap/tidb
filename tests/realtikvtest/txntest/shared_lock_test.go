@@ -305,29 +305,28 @@ func TestSharedLockBlockedByExclusiveLock(t *testing.T) {
 	tk1.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
 	tk3.MustExec("begin pessimistic")
+	tk2TxnID := tk2.Session().TxnInfo().StartTS
+	tk3TxnID := tk3.Session().TxnInfo().StartTS
+	parentTableID := external.GetTableByName(t, tk1, "test", "parent").Meta().ID
+	lockedParentKey := tablecodec.EncodeRowKeyWithHandle(parentTableID, kv.IntHandle(1))
 
 	tk1.MustExec("select * from parent where id=1 for update")
-	tk2Done := make(chan struct{})
+	tk2Done := make(chan error, 1)
 	go func() {
-		tk2.MustExec("insert into child values(1, 1)")
-		close(tk2Done)
+		tk2Done <- tk2.ExecToErr("insert into child values(1, 1)")
 	}()
-	tk3Done := make(chan struct{})
+	tk3Done := make(chan error, 1)
 	go func() {
-		tk3.MustExec("insert into child values(2, 1)")
-		close(tk3Done)
+		tk3Done <- tk3.ExecToErr("insert into child values(2, 1)")
 	}()
 
-	select {
-	case <-time.After(500 * time.Millisecond):
-	case <-tk2Done:
-		require.FailNow(t, "tk2 should be blocked")
-	case <-tk3Done:
-		require.FailNow(t, "tk3 should be blocked")
-	}
+	requireTxnLockAcquiring(t, tk2)
+	requireTxnLockAcquiring(t, tk3)
+	requireStorageLockWait(t, store, tk2TxnID, lockedParentKey)
+	requireStorageLockWait(t, store, tk3TxnID, lockedParentKey)
 	tk1.MustExec("commit")
-	<-tk2Done
-	<-tk3Done
+	require.NoError(t, <-tk2Done)
+	require.NoError(t, <-tk3Done)
 
 	tk1.MustQuery("select * from child").Check(testkit.Rows())
 	tk2.MustExec("commit")
