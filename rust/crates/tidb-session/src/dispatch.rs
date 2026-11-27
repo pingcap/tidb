@@ -444,11 +444,25 @@ impl Session {
                 assert_eq!((ts >> 18) / 1000, value.int() as u64, "different tso");
             }
         }
-        // Go `executor.newLockCtx`: process start time plus GetMaxExecutionTime.
-        let max_ms = if matches!(stmt, Stmt::Query(_)) {
-            if self.stmt_hints.has_max_execution_time { self.stmt_hints.max_execution_time }
-            else { self.vars.max_execution_time() }
-        } else { 0 };
+        // Go `executor.newLockCtx`: process start time plus the statement's
+        // timeout (`getMaxExecutionDeadline`, Go `ExecStmt.getMaxExecutionTime`).
+        let dml_ms = self.vars.dml_max_execution_time();
+        let max_ms = match stmt {
+            Stmt::Query(_) => {
+                if self.stmt_hints.has_max_execution_time { self.stmt_hints.max_execution_time }
+                else { self.vars.max_execution_time() }
+            }
+            Stmt::Dml(dml) if dml_ms > 0 => {
+                let exempt = tidb_executor::stmt_ctx_build::ResetContextOfStmt::dml_timeout_exempt(self);
+                let batch = match dml.as_ref() {
+                    DmlStmt::Insert(_) => exempt.batch_insert,
+                    DmlStmt::Delete(_) => exempt.batch_delete,
+                    _ => false,
+                };
+                if exempt.all || batch { 0 } else { dml_ms }
+            }
+            _ => 0,
+        };
         let mut kv_context = self.statement_kv_context.get();
         kv_context.max_execution_deadline = (max_ms > 0).then(|| {
             let elapsed = self.statement_observation.as_ref().map_or(std::time::Duration::ZERO, |obs| obs.started.elapsed());

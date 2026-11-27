@@ -164,6 +164,8 @@ pub struct NonTransactionalDml {
     stmt: BatchDmlStmt,
     read_staleness: Option<String>,
     shard_select_overrides: Option<(Option<String>, Option<String>)>,
+    /// Go `SessionVars.InNonTransactionalDML` before the statement.
+    in_non_transactional_dml: bool,
     phase: NonTransactionalPhase,
 }
 
@@ -249,9 +251,13 @@ impl Session {
         // NT-DML is a write operation and should not be affected by
         // read_staleness, which is supposed to affect only SELECT.
         let read_staleness = self.override_system_var("tidb_read_staleness", "0");
+        // Go `HandleNonTransactionalDML`: the statement and its internal
+        // statements are non-transactional DML.
+        let in_non_transactional_dml = std::mem::replace(&mut self.vars.in_non_transactional_dml, true);
         NonTransactionalDml {
             stmt: stmt.clone(),
             read_staleness,
+            in_non_transactional_dml,
             shard_select_overrides: None,
             phase: NonTransactionalPhase::Start,
         }
@@ -261,6 +267,7 @@ impl Session {
     pub fn finish_non_transactional_dml(&mut self, mut dml: NonTransactionalDml) {
         self.restore_shard_select_overrides(&mut dml);
         self.restore_system_var("tidb_read_staleness", dml.read_staleness);
+        self.vars.in_non_transactional_dml = dml.in_non_transactional_dml;
     }
 
     /// Advances the statement by the outcome of the last step.

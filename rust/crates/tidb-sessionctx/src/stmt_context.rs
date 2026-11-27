@@ -407,6 +407,18 @@ pub trait TxnPlanAdvisor: Send + Sync + std::fmt::Debug {
     }
 }
 
+/// Go `ExecStmt.getMaxExecutionTime`'s DML exemptions, decided from the
+/// session when the statement context is built.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DmlTimeoutExempt {
+    /// Non-transactional DML, or `tidb_batch_commit`.
+    pub all: bool,
+    /// Deprecated batch INSERT outside a transaction.
+    pub batch_insert: bool,
+    /// Deprecated batch DELETE outside a transaction.
+    pub batch_delete: bool,
+}
+
 /// Go `session.PrepareTSFuture`'s session half, which a transaction's
 /// preparation runs, and `txnManager.AdviseWarmup`'s gate on it.
 pub trait SessionTxnFuture: Send + Sync + std::fmt::Debug {
@@ -1979,6 +1991,13 @@ pub struct StmtContextData {
     enable_skew_distinct_agg: bool,
     /// Go `SessionVars.GetMaxExecutionTime()`, in milliseconds.
     max_execution_time_ms: u64,
+    /// Go `SessionVars.DMLMaxExecutionTime` for this statement; zero
+    /// disables it.
+    dml_max_execution_time_ms: u64,
+    /// Go `ExecStmt.getMaxExecutionTime`'s exemptions, which can commit
+    /// incrementally: non-transactional or batch DML (`all`), batch INSERT
+    /// and batch DELETE.
+    dml_timeout_exempt: DmlTimeoutExempt,
     /// Go `StmtCtx.IsSyncStatsFailed`.
     sync_stats_failed: Arc<AtomicBool>,
     /// Go `StmtCtx.OperatorNum`, populated by
@@ -3954,6 +3973,8 @@ impl StmtContext {
                 tidb_vardef::defaults::DEF_OPT_ENABLE_NO_DECORRELATE_IN_SELECT,
             enable_skew_distinct_agg: tidb_vardef::defaults::DEF_TIDB_SKEW_DISTINCT_AGG,
             max_execution_time_ms: 0,
+            dml_max_execution_time_ms: 0,
+            dml_timeout_exempt: DmlTimeoutExempt::default(),
             sync_stats_failed: Arc::default(),
             operator_num: Arc::default(),
             column_stats_usage: None,
@@ -5887,7 +5908,7 @@ impl StmtContext {
         mut plan: ProcessPlanInfo,
         execution_started: Option<(std::time::Instant, chrono::DateTime<chrono::Utc>)>,
     ) {
-        plan.max_execution_time = self.max_execution_time_ms();
+        plan.max_execution_time = self.statement_max_execution_time_ms();
         plan.execution_started = execution_started;
         // Go's slow log reads `StmtCtx.GetUsedStatsInfo(false)` and
         // `StmtCtx.IsSyncStatsFailed` after execution; planning is what
@@ -6494,6 +6515,39 @@ impl StmtContext {
     #[must_use]
     pub fn coprocessor_read_policy(&self) -> &tidb_distsql::remote_scan::CoprocessorReadPolicy {
         &self.coprocessor_read_policy
+    }
+
+    /// Sets the statement's transactional DML budget (see
+    /// [`Self::statement_max_execution_time_ms`]).
+    #[must_use]
+    pub fn with_dml_max_execution_time(mut self, ms: u64, exempt: DmlTimeoutExempt) -> Self {
+        self.dml_max_execution_time_ms = ms;
+        self.dml_timeout_exempt = exempt;
+        self
+    }
+
+    /// Go `ExecStmt.getMaxExecutionTime`: the timeout of the current
+    /// statement. `max_execution_time` keeps its MySQL-compatible
+    /// SELECT-only meaning, while `tidb_dml_max_execution_time` applies to
+    /// transactional DML; EXPLAIN ANALYZE DML commits before its result set
+    /// is consumed and keeps none.
+    #[must_use]
+    pub fn statement_max_execution_time_ms(&self) -> u64 {
+        if self.dml_max_execution_time_ms > 0
+            && matches!(
+                self.statement_class,
+                StatementClass::Insert | StatementClass::Update | StatementClass::Delete
+            )
+        {
+            let exempt = self.dml_timeout_exempt;
+            let batch = match self.statement_class {
+                StatementClass::Insert => exempt.batch_insert,
+                StatementClass::Delete => exempt.batch_delete,
+                _ => false,
+            };
+            return if exempt.all || batch || self.in_explain_stmt { 0 } else { self.dml_max_execution_time_ms };
+        }
+        self.max_execution_time_ms()
     }
 
     /// Go GetMaxExecutionTime: the session/hint deadline applies only to SELECT.

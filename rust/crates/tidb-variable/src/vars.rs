@@ -306,6 +306,12 @@ pub struct SessionVars {
     /// `max_execution_time` `SetSession` hook and read by statement contexts
     /// as a millisecond deadline (zero means unlimited).
     max_execution_time: u64,
+    /// Go `SessionVars.DMLMaxExecutionTime`: the timeout for transactional
+    /// DML statements and COMMIT, in milliseconds; zero disables it.
+    dml_max_execution_time: u64,
+    /// Go `SessionVars.InNonTransactionalDML`: a non-transactional DML and
+    /// its internal statements are running.
+    pub in_non_transactional_dml: bool,
     /// Go's typed `SessionVars.TimeZone`, resolved once by the time-zone
     /// `SetSession` hook rather than reparsed by every statement.
     time_zone: tidb_datatype::SessionTimeZone,
@@ -977,6 +983,8 @@ impl Default for SessionVars {
             slow_log_rules: String::new(),
             max_keys_read: 0,
             max_execution_time: 0,
+            dml_max_execution_time: 0,
+            in_non_transactional_dml: false,
             time_zone: resolve_session_time_zone_value("SYSTEM"),
             snapshot_ts: 0,
             txn_read_ts: 0,
@@ -1418,6 +1426,13 @@ impl SessionVars {
     #[must_use]
     pub const fn max_execution_time(&self) -> u64 {
         self.max_execution_time
+    }
+
+    /// Go `SessionVars.DMLMaxExecutionTime`, in milliseconds; zero disables
+    /// the transactional DML and COMMIT timeout.
+    #[must_use]
+    pub const fn dml_max_execution_time(&self) -> u64 {
+        self.dml_max_execution_time
     }
 
     /// Go `SessionVars.TimeZone`, resolved from `SET time_zone` and retained
@@ -2690,6 +2705,13 @@ impl SessionVars {
     /// Go `tidb_max_keys_read`'s `SetSession`.
     pub(crate) fn set_session_tidb_max_keys_read(&mut self, value: &str) -> Result<(), VarError> {
         self.max_keys_read = value.parse::<u64>().expect("tidb_max_keys_read validation stores unsigned decimal keys");
+        Ok(())
+    }
+
+    /// Go `tidb_dml_max_execution_time`'s `SetSession`.
+    pub(crate) fn set_session_tidb_dml_max_execution_time(&mut self, value: &str) -> Result<(), VarError> {
+        let timeout_ms = crate::varsutil::tidb_opt_positive_int32(value, tidb_vardef::defaults::DEF_TIDB_DML_MAX_EXECUTION_TIME);
+        self.dml_max_execution_time = u64::try_from(timeout_ms).unwrap_or(0);
         Ok(())
     }
 

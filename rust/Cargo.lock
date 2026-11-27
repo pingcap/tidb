@@ -5373,6 +5373,7 @@ dependencies = [
  "tidb-distsql",
  "tidb-errno",
  "tidb-executor",
+ "tidb-exeerrors",
  "tidb-expr",
  "tidb-exprctx",
  "tidb-failpoint",

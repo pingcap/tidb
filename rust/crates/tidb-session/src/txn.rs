@@ -892,6 +892,21 @@ impl Session {
     /// one-shot isolation step and the slow log's ended transaction, then the
     /// context goes. Go `executeCommit` is only this (`SetInTxn(false)`); the
     /// store commit follows when the statement finishes.
+    /// Go `ExecStmt.getMaxExecutionTime` for COMMIT (a `Simple` plan, also
+    /// when prepared): the transactional DML budget, unless
+    /// `tidb_batch_commit`; it is what the process info shows the watchdog.
+    pub(crate) fn publish_commit_max_execution_time(&self) {
+        let batch_commit = self
+            .vars
+            .get_system("tidb_batch_commit")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+        let max_execution_time = if batch_commit { 0 } else { self.vars.dml_max_execution_time() };
+        self.process_plan_info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .max_execution_time = max_execution_time;
+    }
+
     pub(crate) fn leave_txn_ctx_for_commit(&mut self) {
         self.set_txn_isolation_level_one_shot_state_for_next_txn();
         if self.txn_ctx.is_some() {
@@ -1255,6 +1270,7 @@ impl<'a> tidb_executor::simple::txn_control::TxnControlSession<dyn TxnManagerOps
     }
 
     fn leave_txn_ctx_for_commit(&mut self) {
+        self.publish_commit_max_execution_time();
         Session::leave_txn_ctx_for_commit(self);
     }
 

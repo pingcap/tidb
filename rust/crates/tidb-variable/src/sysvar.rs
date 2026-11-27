@@ -1940,6 +1940,20 @@ mod tests {
         assert_eq!(sv.validate("99999").unwrap().value, "99999");
     }
 
+    /// Go `TestDMLMaxExecutionTime` (b82bed1eca2).
+    #[test]
+    fn dml_max_execution_time() {
+        let sv = get_sys_var("tidb_dml_max_execution_time").unwrap();
+        assert_eq!(sv.scope, SCOPE_GLOBAL | SCOPE_SESSION);
+        assert_eq!(sv.value, "0");
+        assert!(crate::hint_updatable_vars::is_hint_updatable_verified("tidb_dml_max_execution_time"));
+        assert_eq!(sv.validate("-10").unwrap().value, "0");
+        assert_eq!(sv.validate("99999").unwrap().value, "99999");
+        let mut vars = crate::vars::SessionVars::default();
+        vars.set_system("tidb_dml_max_execution_time", "99999".to_owned()).unwrap();
+        assert_eq!(vars.dml_max_execution_time(), 99999);
+    }
+
     /// Transcreated from Go `TestNetBufferLength`: unsigned bounds clamp to
     /// 1024 and 1048576, while an in-range value is preserved.
     #[test]

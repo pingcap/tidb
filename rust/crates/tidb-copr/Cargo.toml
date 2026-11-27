@@ -45,6 +45,7 @@ tidb-proto = { path = "../tidb-proto" }
 futures.workspace = true
 tidb-hack = { path = "../tidb-hack" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-exeerrors = { path = "../tidb-exeerrors" }
 tidb-memory = { path = "../tidb-memory" }
 tikv-client.workspace = true
 tidb-murmur3 = { path = "../tidb-murmur3" }

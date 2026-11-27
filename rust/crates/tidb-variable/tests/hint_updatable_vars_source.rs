@@ -25,9 +25,10 @@ fn hint_updatable_registry_preserves_source_membership() {
     // pkg/sessionctx/variable/sysvar_test.go:138-164
     // (TestTiDBMaxKeysRead checks the registry-backed marker).
     // 128 from this branch's Go, plus Go master's
-    // `tidb_enable_full_outer_join` (ported with FULL OUTER JOIN) and
-    // `tidb_opt_range_max_count` (#70768).
-    assert_eq!(HINT_UPDATABLE_VARIABLES.len(), 130);
+    // `tidb_enable_full_outer_join` (ported with FULL OUTER JOIN),
+    // `tidb_opt_range_max_count` (#70768) and `tidb_dml_max_execution_time`
+    // (b82bed1eca2).
+    assert_eq!(HINT_UPDATABLE_VARIABLES.len(), 131);
     for name in HINT_UPDATABLE_VARIABLES {
         assert!(is_hint_updatable_verified(name), "{name}");
     }

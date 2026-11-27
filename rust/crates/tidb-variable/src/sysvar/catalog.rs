@@ -35,6 +35,7 @@ mod distsql_storage;
 mod gc;
 mod innodb;
 mod logging;
+mod master_dml;
 mod master_join;
 mod master_optimizer;
 mod memory_limits;
@@ -63,6 +64,7 @@ const SLICES: &[&[SysVarDef]] = &[
     &logging::ENTRIES,
     &memory_limits::ENTRIES,
     &mview::ENTRIES,
+    &master_dml::ENTRIES,
     &master_join::ENTRIES,
     &master_optimizer::ENTRIES,
     &mysql_compat_inert::ENTRIES,
@@ -89,6 +91,7 @@ const TOTAL: usize = concurrency::ENTRIES.len()
     + logging::ENTRIES.len()
     + memory_limits::ENTRIES.len()
     + mview::ENTRIES.len()
+    + master_dml::ENTRIES.len()
     + master_join::ENTRIES.len()
     + master_optimizer::ENTRIES.len()
     + mysql_compat_inert::ENTRIES.len()
@@ -313,6 +316,7 @@ mod registry_tests {
                 .iter()
                 .chain(master_join::ENTRIES.iter())
                 .chain(master_optimizer::ENTRIES.iter())
+                .chain(master_dml::ENTRIES.iter())
                 .map(|def| def.name.to_owned())
                 .collect();
         assert!(master_mview.is_disjoint(&go), "a materialized view variable reached this branch's Go");

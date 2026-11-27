@@ -171,13 +171,19 @@ pub fn send_batch<S: tikv_client::PdClient + 'static>(
     let build = build_batch_cop_tasks(store, &req, &ctx, &kv_context, ranges, &partition_ids);
     let tasks = store.block_on(async {
         if req.max_execution_time_ms == 0 {
-            return build.await;
+            return Some(build.await);
         }
         // If MaxExecutionTime is set, we need to set the deadline for the whole batch coprocessor request context.
         tokio::time::timeout(Duration::from_millis(req.max_execution_time_ms), build)
             .await
-            .unwrap_or_else(|_| Err("context deadline exceeded".to_owned()))
-    })?;
+            .ok()
+    });
+    // Go (cfb54f9e87c): the deadline's cause recovers the statement timeout
+    // even when region lookup formatted the cancellation as text.
+    let Some(tasks) = tasks else {
+        return Ok(tidb_txnkv::CopErrorResponse::boxed(sql_error(&tidb_exeerrors::ERR_MAX_EXEC_TIME_EXCEEDED)));
+    };
+    let tasks = tasks?;
     let append_warning = request.append_warning();
     let (tasks, warnings) = tasks;
     append_warnings(append_warning.as_ref(), warnings);

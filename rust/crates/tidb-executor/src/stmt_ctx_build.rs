@@ -1296,7 +1296,27 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             }
         }
         ctx = ctx.with_result_write_chunk_slot(self.result_write_chunk_slot());
+        ctx = ctx.with_dml_max_execution_time(self.session_vars().dml_max_execution_time(), self.dml_timeout_exempt());
         ctx
+    }
+
+    /// Go `ExecStmt.getMaxExecutionTime`'s exemptions from
+    /// `tidb_dml_max_execution_time`: the DML that can commit incrementally.
+    fn dml_timeout_exempt(&self) -> tidb_sessionctx::DmlTimeoutExempt {
+        let vars = self.session_vars();
+        let on = |name: &str| vars.get_system(name).is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+        let batch_dml = tidb_vardef::ENABLE_BATCH_DML.load(std::sync::atomic::Ordering::Relaxed)
+            && vars
+                .get_system("tidb_dml_batch_size")
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .is_some_and(|size| size > 0)
+            && !self.in_transaction();
+        tidb_sessionctx::DmlTimeoutExempt {
+            all: vars.in_non_transactional_dml || on("tidb_batch_commit"),
+            batch_insert: batch_dml && vars.batch_insert(),
+            batch_delete: batch_dml && on("tidb_batch_delete"),
+        }
     }
 
     fn session_statement_context(

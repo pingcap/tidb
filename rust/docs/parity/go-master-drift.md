@@ -8,6 +8,7 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 
 ## Verified gaps
 
+- b82bed1eca2 / cfb54f9e87c remainder: Go's pre-Open `checkMaxExecutionTimeExceeded` (Rust's watchdog clock starts at executor build), `NormalizeStmtCancellationError` (finishStmt, recordSet.Next) and the non-batch cop request's deadline cause (Rust answers the transport's deadline text, Go `ErrMaxExecTimeExceeded`).
 - 47dc1214658: `tidb_redact_log` defaults ON (OFF in test builds). The default alone makes Rust's internal sessions redact plan text (restricted EXPLAIN, EXPLAIN EXPLORE, MV refresh EXPLAIN print `?`). Go keeps them literal through `rebuildSysVarCache` running every `SetGlobal` hook on a borrowed pooled session, `planGenerator.Generate` taking the caller's mode, and tests setting `EnableRedactLog = Off`. Blocked on Rust having no `sysSessionPool` reuse (`open_system_session` builds a fresh session per internal statement).
 - 35232111b23, dc52119f4a5: NextGen starter privilege reset and the redacted global-variables API.
 - Bootstrap upgrade steps stop at version 263; every later master upgrade step (`upgradeToVer318` of 93a01d31f6d among them) is unported.
@@ -120,7 +121,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - 415c3464629 2026-09-15 11/12 ddl: account RU for add index jobs (#71029)
 - d2d8d42b916 2026-11-23 11/12 ddl: set PD GC barrier and delete gc_delete_range inside txn during RECOVER (#73526)
 - fe1f4b41b44 2026-07-27 21/23 server: warn when the advertised status endpoint cannot identify the same TiDB (#69880)
-- b82bed1eca2 2026-09-16 9/10 executor, session: add tidb_dml_max_execution_time for transactional DML (#70568)
 - 0b1a05761ed 2026-08-14 17/19 executor, session: add dark statement RU terminal plan walk (#70421)
 - 0419c93284f 2026-08-25 8/9 planner: fill "explain format='ru'" results (#70631)
 - 35599163cae 2026-11-12 8/9 session: initialize MDL before starting the DDL scheduler during upgrade (#70464)

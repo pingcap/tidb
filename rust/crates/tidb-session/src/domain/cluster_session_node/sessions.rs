@@ -145,6 +145,7 @@ impl DomainSessions for Domain {
         for (name, value) in [
             ("autocommit", "1".to_owned()),
             ("max_execution_time", "0".to_owned()),
+            ("tidb_dml_max_execution_time", "0".to_owned()),
             (
                 "max_allowed_packet",
                 tidb_config::config_tree::config::get_max_allowed_packet().to_string(),

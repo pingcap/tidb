@@ -651,6 +651,12 @@ pub trait HandlePessimisticDml: PessimisticDmlSession {
     fn retract_statement_failure(&mut self, code: u16, message: &str);
     /// Rewrites the statement's recorded last query error.
     fn rerecord_last_query_error(&mut self, error: &str);
+    /// Go `finishStmt`'s timeout check before the commit: a pending
+    /// `MaxExecTimeExceeded` kill signal is honored even when the execution
+    /// did not see it yet.
+    fn pending_max_exec_time_error(&self) -> Option<tidb_store_driver_error::sql_query_error::SqlQueryError> {
+        None
+    }
     /// Go `finishStmt`: the statement's commit outside a transaction
     /// (`autoCommitAfterStmt`), or a transaction the session left.
     ///
@@ -785,6 +791,13 @@ pub trait HandlePessimisticDml: PessimisticDmlSession {
                             }
                         }
                         Err(error) => break Err(error),
+                    }
+                    // Go `finishStmt`: honor a timeout signal before the
+                    // commit of a statement that is not read-only.
+                    if is_dml {
+                        if let Some(error) = self.pending_max_exec_time_error() {
+                            break Err(error);
+                        }
                     }
                     committing = true;
                     match self.finish_stmt(read_ts) {

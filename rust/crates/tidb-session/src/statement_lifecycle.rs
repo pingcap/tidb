@@ -1121,6 +1121,17 @@ impl<'a> tidb_executor::adapter::HandlePessimisticDml for StatementLifecycle<'a>
         self.session.rerecord_last_query_error(error);
     }
 
+    fn pending_max_exec_time_error(&self) -> Option<SqlQueryError> {
+        // Go `handlePendingSQLKillerSignal`, for the timeout signal only.
+        let killer = self.session.sql_killer();
+        if killer.get_kill_signal() != tidb_sqlkiller::KillSignal::MaxExecTimeExceeded {
+            return None;
+        }
+        killer
+            .handle_signal()
+            .map(|error| SqlQueryError::from(tidb_terror::MysqlError::from_terror(&error)))
+    }
+
     fn finish_stmt(&mut self, read_ts: &Self::ReadTs) -> Result<(), SqlQueryError> {
         self.commit_if_session_left_transaction().and_then(|()| {
             // Go `finishStmt` -> `autoCommitAfterStmt`: outside a

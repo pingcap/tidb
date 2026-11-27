@@ -51,6 +51,8 @@ pub const DEF_DIST_SQL_SCAN_CONCURRENCY: i64 = 15;
 pub const DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY: i64 = 4;
 /// Go `DefTiDBAnalyzeStoreBatchSize` (= `4`).
 pub const DEF_TIDB_ANALYZE_STORE_BATCH_SIZE: i64 = 4;
+/// Go `DefTiDBDMLMaxExecutionTime`.
+pub const DEF_TIDB_DML_MAX_EXECUTION_TIME: i64 = 0;
 /// Go `DefBuildStatsConcurrency` (= `2`).
 pub const DEF_BUILD_STATS_CONCURRENCY: i64 = 2;
 /// Go `DefBuildSamplingStatsConcurrency` (= `2`).
