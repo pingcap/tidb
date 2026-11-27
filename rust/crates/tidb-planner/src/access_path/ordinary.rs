@@ -86,14 +86,19 @@ pub(crate) fn fill_index_path(
                 ),
                 // Go returns `ConvertTo`'s typed error as it is.
                 tidb_ranger::points::PointBuilderError::Terror(error) => PlanError::from(error),
+                // Go's `errInvalidTimestampRange` never leaves the ranger: it becomes
+                // a range fallback there.
+                error @ tidb_ranger::points::PointBuilderError::InvalidTimestampRange => PlanError::from(
+                    tidb_plannererrors::ERR_INTERNAL.gen_with_stack_by_args(&[error.to_string().into()]),
+                ),
             })?
     };
     // IndexMerge partial readers do not rebuild ranges per outer row yet, so
     // only ordinary paths take Go's correlated access prefix.
-    let correlated_access_count = if correlated_access {
+    let (correlated_access_count, const_col_ids) = if correlated_access {
         split_correlated_access(&mut detached, &columns)
     } else {
-        0
+        (0, Vec::new())
     };
     let (index_filters, table_filters): (Vec<_>, Vec<_>) = detached
         .remained_conds
@@ -119,6 +124,7 @@ pub(crate) fn fill_index_path(
     path.table_filters = table_filters;
     path.count_after_index = None;
     path.correlated_access_count = correlated_access_count;
+    path.const_col_ids = const_col_ids;
     Ok(())
 }
 
@@ -151,16 +157,17 @@ fn scale_cor_col_count_after_access(
 /// access condition is an equality or IN, `SplitCorColAccessCondFromFilters`
 /// extends the access prefix with `index_col = correlated_col` filters (and
 /// at most one closing correlated range) whose ranges the executor rebuilds
-/// for every outer row. Returns how many conditions moved.
+/// for every outer row. Returns how many conditions moved, and the ids of
+/// the full-length columns their equalities pin (Go `markConstCol`).
 fn split_correlated_access(
     detached: &mut tidb_ranger::detacher::DetachRangeResult,
     columns: &[(Column, i64)],
-) -> usize {
+) -> (usize, Vec<i64>) {
     if columns.is_empty() || detached.eq_or_in_count != detached.access_conds.len() {
-        return 0;
+        return (0, Vec::new());
     }
     let (cols, lengths): (Vec<_>, Vec<_>) = columns.iter().cloned().unzip();
-    let (accesses, remained) = tidb_planner_core_operator_logicalop::data_source_paths::split_correlated_access_conditions(
+    let (accesses, remained, const_cols) = tidb_planner_core_operator_logicalop::data_source_paths::split_correlated_access_conditions(
         &detached.remained_conds,
         &cols,
         &lengths,
@@ -171,7 +178,7 @@ fn split_correlated_access(
         detached.access_conds.extend(accesses);
         detached.remained_conds = remained;
     }
-    moved
+    (moved, const_cols.into_iter().map(|i| columns[i].0.unique_id).collect())
 }
 
 /// Go's CountAfterAccess for an access prefix extended by correlated
@@ -356,8 +363,14 @@ pub(crate) fn detach_table_path(
         ),
         // Go returns `ConvertTo`'s typed error as it is.
         tidb_ranger::points::PointBuilderError::Terror(error) => PlanError::from(error),
+        // Go's `errInvalidTimestampRange` never leaves the ranger: it becomes
+        // a range fallback there.
+        error @ tidb_ranger::points::PointBuilderError::InvalidTimestampRange => PlanError::from(
+            tidb_plannererrors::ERR_INTERNAL.gen_with_stack_by_args(&[error.to_string().into()]),
+        ),
     };
     let mut correlated_access_count = 0;
+    let mut const_col_ids = Vec::new();
     let detached = if common_index.is_some() {
         if conditions.is_empty() || common_columns.is_empty() {
             tidb_ranger::detacher::DetachRangeResult {
@@ -371,7 +384,8 @@ pub(crate) fn detach_table_path(
                 .detach_index_range(conditions, &columns, &lengths)
                 .map_err(map_error)?;
             if correlated_access {
-                correlated_access_count = split_correlated_access(&mut detached, &common_columns);
+                (correlated_access_count, const_col_ids) =
+                    split_correlated_access(&mut detached, &common_columns);
             }
             detached
         }
@@ -436,6 +450,7 @@ pub(crate) fn detach_table_path(
     path.min_access_conds_for_dnf_cond = detached.min_access_conds_for_dnf_cond;
     path.table_filters = detached.remained_conds;
     path.correlated_access_count = correlated_access_count;
+    path.const_col_ids = const_col_ids;
     path.row_estimate = None;
     Ok(())
 }

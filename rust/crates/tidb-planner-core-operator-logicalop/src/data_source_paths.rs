@@ -29,6 +29,7 @@ pub fn split_correlated_access_conditions(
 ) -> (
     Vec<tidb_expr::expression::Expression>,
     Vec<tidb_expr::expression::Expression>,
+    Vec<usize>,
 ) {
     use tidb_expr::expression::Expression;
     fn matches(
@@ -77,6 +78,10 @@ pub fn split_correlated_access_conditions(
     }
     let mut access = Vec::new();
     let mut used = vec![false; filters.len()];
+    let mut reserved = vec![false; filters.len()];
+    let mut reserve_suffix = false;
+    // Go `markConstCol`'s positions.
+    let mut const_cols = Vec::new();
     for i in eq_or_in_count..columns.len() {
         let mut matched = false;
         for (j, filter) in filters.iter().enumerate() {
@@ -85,12 +90,21 @@ pub fn split_correlated_access_conditions(
             }
             let constant = matches(filter, &columns[i], true, false);
             if i == eq_or_in_count && constant {
-                return (Vec::new(), filters.to_vec());
+                return (Vec::new(), filters.to_vec(), Vec::new());
             }
             if constant || matches(filter, &columns[i], false, false) {
                 access.push(filter.clone());
+                // A runtime TIMESTAMP bound may be calendar-invalid. Range
+                // fallback can discard this column and the remaining suffix,
+                // so keep their predicates.
+                reserve_suffix = reserve_suffix
+                    || columns[i].ret_type.as_ref().is_some_and(|tp| {
+                        tp.code() == tidb_datatype::FieldTypeCode::Timestamp
+                    });
+                reserved[j] = reserve_suffix;
                 if lengths[i] == -1 {
                     used[j] = true;
+                    const_cols.push(i);
                 }
                 matched = true;
                 break;
@@ -109,10 +123,10 @@ pub fn split_correlated_access_conditions(
     }
     let remained = filters
         .iter()
-        .zip(used)
-        .filter_map(|(expr, used)| (!used).then(|| expr.clone()))
+        .zip(used.into_iter().zip(reserved))
+        .filter_map(|(expr, (used, reserved))| (!used || reserved).then(|| expr.clone()))
         .collect();
-    (access, remained)
+    (access, remained, const_cols)
 }
 
 /// The access-path identity needed by Go `AccessPath.OnlyPointRange`.

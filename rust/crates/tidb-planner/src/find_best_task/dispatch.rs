@@ -2369,12 +2369,11 @@ pub(super) fn table_path_matches_order(
         .zip(&ds.common_handle_lens)
         .map(|(column, length)| (column.clone(), *length))
         .collect::<Vec<_>>();
-    match_sort_items(
-        &columns,
-        &equality_fixed_ids(ds),
-        prop,
-        grouping_ranges(ds, ranges),
-    )
+    let mut fixed = equality_fixed_ids(ds);
+    if let Some(path) = ds.tikv_table_path() {
+        fixed.extend_from_slice(&path.const_col_ids);
+    }
+    match_sort_items(&columns, &fixed, prop, grouping_ranges(ds, ranges))
 }
 
 pub(super) fn index_path_matches_order(
@@ -2410,12 +2409,11 @@ pub(super) fn index_path_matches_order(
             }
         }
     }
-    match_sort_items(
-        &columns,
-        &equality_fixed_ids(ds),
-        prop,
-        grouping_ranges(ds, ranges),
-    )
+    let mut fixed = equality_fixed_ids(ds);
+    if let Some(path) = ds.path_by_index_id(index.read().id) {
+        fixed.extend_from_slice(&path.const_col_ids);
+    }
+    match_sort_items(&columns, &fixed, prop, grouping_ranges(ds, ranges))
 }
 
 /// Go `AddExtraPhysTblIDColumn`: appends the partition id an index entry or
@@ -2657,9 +2655,8 @@ fn equality_fixed_ids(ds: &tidb_planner_core_operator_logicalop::DataSource) -> 
         };
         // Go `extractValueInfo` (ranger `ColumnValues`, hence `ConstCols`):
         // `isnull(col)`, or `eq` / `nulleq` against a `Constant`. A correlated
-        // column is not a Constant: its range is only "decided by" the outer
-        // row, so it pins nothing at plan time and an inner `ORDER BY ...
-        // LIMIT` keeps its TopN (`planner/core/lateral_join`).
+        // equality pins its column only through the access path
+        // (`AccessPath::const_col_ids`, Go `markConstCol`).
         let name = function.func_name.lowercase();
         let id = match function.get_args() {
             [Expression::Column(column)] if name == "isnull" => Some(column.unique_id),

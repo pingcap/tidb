@@ -381,6 +381,11 @@ fn build_partial_path_for_mv_index(
             ),
             // Go returns `ConvertTo`'s typed error as it is.
             tidb_ranger::points::PointBuilderError::Terror(error) => PlanError::from(error),
+            // Go's `errInvalidTimestampRange` never leaves the ranger: it becomes
+            // a range fallback there.
+            error @ tidb_ranger::points::PointBuilderError::InvalidTimestampRange => PlanError::from(
+                tidb_plannererrors::ERR_INTERNAL.gen_with_stack_by_args(&[error.to_string().into()]),
+            ),
         })?;
     // Not all filters are used in this case.
     if detached.access_conds.len() != access_filters.len() || !detached.remained_conds.is_empty() {

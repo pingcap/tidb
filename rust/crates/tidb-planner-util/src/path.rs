@@ -77,6 +77,11 @@ pub struct AccessPath {
     /// moved from the filters: `index_col = correlated_col` equalities, at
     /// most one closing range, whose ranges are rebuilt per execution.
     pub correlated_access_count: usize,
+    /// Go `ConstCols` entries `markConstCol` sets: the full-length index
+    /// columns an `index_col = correlated_col` access equality restricts to
+    /// a single value at execution time, so the columns after them stay
+    /// sorted. (Plan-time constants come from the pushed conditions.)
+    pub const_col_ids: Vec<i64>,
     /// Go `Forced`: a USE/FORCE INDEX hint names this path.
     pub forced: bool,
     /// Go `ForceKeepOrder` (`ORDER_INDEX` hint).

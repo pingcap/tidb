@@ -418,7 +418,7 @@ pub fn check_partial_index_paths<C: OptimizeContext>(
     use tidb_planner_core_operator_logicalop::fold::{Descend, OwnedRewrite, fold_owned};
 
     struct PartialIndexChecker<'a> {
-        resolver: &'a tidb_expr::column_resolver::ZonedNoResolver,
+        resolver: &'a dyn tidb_expr::column_resolver::ColumnResolver,
         use_plan_cache: bool,
         opt_prefix_index_single_scan: bool,
     }
@@ -443,10 +443,9 @@ pub fn check_partial_index_paths<C: OptimizeContext>(
         }
     }
 
-    let resolver = tidb_expr::column_resolver::ZonedNoResolver::with_like_default_escape(
-        ctx.session_zone(),
-        tidb_exprctx::Columns::like_default_escape(ctx),
-    );
+    // Go parses the predicate with `ds.SCtx().GetExprCtx()`: the session's
+    // SQL mode and zone fold its constants as they fold the filters'.
+    let resolver = tidb_expr::column_resolver::ContextResolver(ctx);
     fold_owned(
         &mut PartialIndexChecker {
             resolver: &resolver,
@@ -908,6 +907,7 @@ impl InitStats<'_> {
             path.table_filters.clear();
             path.count_after_index = None;
             path.correlated_access_count = 0;
+            path.const_col_ids.clear();
             path.is_single_scan = None;
         }
         source.access_path_min_selectivity = 1.0;

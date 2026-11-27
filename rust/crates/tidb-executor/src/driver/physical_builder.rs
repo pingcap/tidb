@@ -981,6 +981,10 @@ pub(crate) fn correlated_index_range_rebuilder(
     let ctx = ctx.clone();
     Some(std::sync::Arc::new(move || {
         let access = substitute_correlated_access(&access_condition, &ctx)?;
+        // Disable memory fallback. Semantic fallback can still return
+        // residuals, whose predicates the planner retains in filters
+        // (including the suffix after a correlated TIMESTAMP equality); see
+        // SplitCorColAccessCondFromFilters.
         let (ranges, _, _) =
             tidb_ranger::detacher::detach_simple_cond_and_build_range_for_index_in(
                 &access,

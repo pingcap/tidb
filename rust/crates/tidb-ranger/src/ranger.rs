@@ -136,6 +136,28 @@ fn estimate_mem_usage_for_points_to_ranges(range_points: &[Point]) -> i64 {
         + points_total_datum_size(range_points)
 }
 
+/// Go's second return of `points2Ranges` / `appendPoints2Ranges` /
+/// `points2TableRanges`: whether, and why, the ranges fell back. Go records
+/// the memory fallback (`RecordRangeFallback`) itself; an invalid TIMESTAMP
+/// endpoint is a semantic fallback and records nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RangeFallback {
+    /// The ranges are exact.
+    None,
+    /// The estimated memory exceeded `range_max_size`.
+    Memory,
+    /// A calendar-invalid date endpoint of a TIMESTAMP column.
+    InvalidTimestamp,
+}
+
+impl RangeFallback {
+    /// Go's boolean: the conditions remain as filters.
+    #[must_use]
+    pub fn fell_back(self) -> bool {
+        self != Self::None
+    }
+}
+
 /// Go `points2Ranges`: one column's points into ranges. The second return
 /// says the memory fallback fired and the FULL range came back instead.
 pub fn points_2_ranges(
@@ -144,7 +166,7 @@ pub fn points_2_ranges(
     range_max_size: i64,
     evaluator: &ExpressionEvaluator<'_>,
     skip_plan_cache_reason: &mut Option<String>,
-) -> Result<(Ranges, bool), PointBuilderError> {
+) -> Result<(Ranges, RangeFallback), PointBuilderError> {
     // Go `newFieldType` (`ranger.go:779`): the ranger never converts an
     // endpoint into the column's DECLARED length -- string/blob and float
     // targets are cloned with `types.UnspecifiedLength` first, so a fixed
@@ -177,14 +199,19 @@ pub fn points_2_ranges(
         new_tp
     };
     let has_not_null = new_tp.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL != 0;
-    let range_points = convert_points_in_place(
+    let range_points = match convert_points_in_place(
         range_points,
         new_tp,
         has_not_null,
         false,
         evaluator,
         skip_plan_cache_reason,
-    )?;
+    ) {
+        Err(PointBuilderError::InvalidTimestampRange) => {
+            return Ok((super::points::full_range(), RangeFallback::InvalidTimestamp));
+        }
+        converted => converted?,
+    };
     if range_max_size > 0 && estimate_mem_usage_for_points_to_ranges(&range_points) > range_max_size
     {
         let full = if has_not_null {
@@ -192,7 +219,7 @@ pub fn points_2_ranges(
         } else {
             super::points::full_range()
         };
-        return Ok((full, true));
+        return Ok((full, RangeFallback::Memory));
     }
     let mut ranges = Ranges::with_capacity(range_points.len() / 2);
     let collator = new_tp.collation();
@@ -207,7 +234,7 @@ pub fn points_2_ranges(
         });
         i += 2;
     }
-    Ok((ranges, false))
+    Ok((ranges, RangeFallback::None))
 }
 
 /// Go `points2TableRanges`: nulls drop, sentinels become the concrete int
@@ -218,7 +245,7 @@ pub fn points_2_table_ranges(
     range_max_size: i64,
     evaluator: &ExpressionEvaluator<'_>,
     skip_plan_cache_reason: &mut Option<String>,
-) -> Result<(Ranges, bool), PointBuilderError> {
+) -> Result<(Ranges, RangeFallback), PointBuilderError> {
     let range_points = convert_points_in_place(
         range_points,
         new_tp,
@@ -229,7 +256,7 @@ pub fn points_2_table_ranges(
     )?;
     if range_max_size > 0 && estimate_mem_usage_for_points_to_ranges(&range_points) > range_max_size
     {
-        return Ok((super::points::full_int_range(new_tp.is_unsigned()), true));
+        return Ok((super::points::full_int_range(new_tp.is_unsigned()), RangeFallback::Memory));
     }
     let mut ranges = Ranges::with_capacity(range_points.len() / 2);
     let collator = new_tp.collation();
@@ -244,7 +271,7 @@ pub fn points_2_table_ranges(
         });
         i += 2;
     }
-    Ok((ranges, false))
+    Ok((ranges, RangeFallback::None))
 }
 
 /// Go `newFieldType`: the RANGE-BUILDING type — ints widen to LONGLONG (no
@@ -500,15 +527,18 @@ pub fn append_points_2_ranges(
     regard_null_as_point: bool,
     evaluator: &ExpressionEvaluator<'_>,
     skip_plan_cache_reason: &mut Option<String>,
-) -> Result<(Ranges, bool), PointBuilderError> {
-    let range_points = convert_points_in_place(
+) -> Result<(Ranges, RangeFallback), PointBuilderError> {
+    let range_points = match convert_points_in_place(
         range_points,
         new_tp,
         false,
         false,
         evaluator,
         skip_plan_cache_reason,
-    )?;
+    ) {
+        Err(PointBuilderError::InvalidTimestampRange) => return Ok((origin, RangeFallback::InvalidTimestamp)),
+        converted => converted?,
+    };
     if range_max_size > 0 {
         // Go `estimateMemUsageForAppendPoints2Ranges`.
         let len1 = origin.len() as i64;
@@ -520,7 +550,7 @@ pub fn append_points_2_ranges(
             + ranges_total_datum_size(&origin) * len2
             + points_total_datum_size(&range_points) * len1;
         if estimate > range_max_size {
-            return Ok((origin, true));
+            return Ok((origin, RangeFallback::Memory));
         }
     }
     let mut new_index_ranges = Ranges::new();
@@ -535,7 +565,7 @@ pub fn append_points_2_ranges(
             ));
         }
     }
-    Ok((new_index_ranges, false))
+    Ok((new_index_ranges, RangeFallback::None))
 }
 
 /// Go `AppendRanges2PointRanges`: the tail ranges appended to every point
@@ -642,8 +672,8 @@ fn build_column_range_impl<'a, E: std::borrow::Borrow<Expression>>(
             &mut skip_reason,
         )?
     };
-    if range_fallback {
-        // Go `RecordRangeFallback`: the conditions all REMAIN as filters.
+    if range_fallback.fell_back() {
+        // The conditions all REMAIN as filters.
         return Ok(ColumnRangeResult {
             ranges,
             access_conds: &[],

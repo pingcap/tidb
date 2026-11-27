@@ -915,8 +915,10 @@ impl RangeDetacher<'_> {
                 )?
             };
             ranges = new_ranges;
-            if fallback {
-                self.record_range_fallback();
+            if fallback.fell_back() {
+                if fallback == super::ranger::RangeFallback::Memory {
+                    self.record_range_fallback();
+                }
                 let remained = access_conds.split_off(i);
                 return Ok((ranges, access_conds, remained));
             }
@@ -967,8 +969,10 @@ impl RangeDetacher<'_> {
                 )?
             };
             ranges = new_ranges;
-            if fallback {
-                self.record_range_fallback();
+            if fallback.fell_back() {
+                if fallback == super::ranger::RangeFallback::Memory {
+                    self.record_range_fallback();
+                }
                 let remained = access_conds.split_off(eq_and_in_count);
                 return Ok((ranges, access_conds, remained));
             }
@@ -1759,8 +1763,10 @@ impl RangeDetacher<'_> {
                     self.eval_expression,
                     &mut self.skip_plan_cache_reason,
                 )?;
-                if fallback {
-                    self.record_range_fallback();
+                if fallback.fell_back() {
+                    if fallback == super::ranger::RangeFallback::Memory {
+                        self.record_range_fallback();
+                    }
                     return Ok((
                         super::points::full_range(),
                         Vec::new(),

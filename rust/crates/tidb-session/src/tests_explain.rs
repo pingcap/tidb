@@ -10979,3 +10979,231 @@ fn order_by_null_constant_arithmetic_does_not_use_the_index_order() {
     assert_eq!(ids(&mut session, "execute s using @p"), ["1", "2", "3"]);
     assert_eq!(ids(&mut session, "select @@last_plan_from_cache"), ["1"]);
 }
+
+/// Go `TestPartialIndexInvalidTimestampRange` (2a6eaa16c20): a partial
+/// index whose predicate has an invalid TIMESTAMP bound is not proven
+/// implied by an unrelated range, since its range is only a superset; an
+/// exactly matching predicate still selects it.
+#[test]
+fn test_partial_index_invalid_timestamp_range() {
+    let mut tk = Session::new();
+    for sql in [
+        "set time_zone = 'UTC'",
+        "set sql_mode = 'ALLOW_INVALID_DATES'",
+        "create table t_invalid_timestamp (k int, ts timestamp, index idx(k) where ts < '0000-00-00 12:00:00')",
+        "insert into t_invalid_timestamp values (0, '0000-00-00 00:00:00'), (1, '2017-03-01 00:00:00')",
+    ] {
+        tk.run(sql).unwrap();
+    }
+    let rows = |tk: &mut Session, sql: &str| row_text(tk.run(sql));
+    assert_eq!(rows(&mut tk, "select k from t_invalid_timestamp ignore index (idx) where ts >= '2017-03-01'"), [["1"]]);
+    assert_eq!(rows(&mut tk, "select k from t_invalid_timestamp force index (idx) where ts >= '2017-03-01'"), [["1"]]);
+    let plan = format!("{:?}", rows(&mut tk, "explain select k from t_invalid_timestamp force index (idx) where ts >= '2017-03-01'"));
+    assert!(!plan.contains("index:idx"), "{plan}");
+
+    // Exact predicate matching remains valid even when its range is approximate.
+    assert_eq!(rows(&mut tk, "select k from t_invalid_timestamp force index (idx) where ts < '0000-00-00 12:00:00'"), [["0"]]);
+    let plan = format!("{:?}", rows(&mut tk, "explain select k from t_invalid_timestamp force index (idx) where ts < '0000-00-00 12:00:00'"));
+    assert!(plan.contains("index:idx"), "{plan}");
+}
+
+/// Go `TestInvalidTimestampRange` (2a6eaa16c20): a calendar-invalid date
+/// bound on a TIMESTAMP index column (near a DST transition, day zero, month
+/// zero, correlated or constant) answers through the index exactly what the
+/// table scan answers -- the range widens and the predicate stays a filter.
+#[test]
+fn test_invalid_timestamp_range() {
+    let rows = |session: &mut Session, sql: &str| {
+        let result = session.run(sql);
+        if let Err(error) = &result {
+            panic!("{sql}: {error:?}");
+        }
+        row_text(result)
+    };
+
+    // invalidDateNearDST
+    let mut tk = Session::new();
+    for sql in [
+        "set time_zone = 'Europe/London'",
+        "create table dst_range (k int, ts timestamp, index idx_ts(ts), index idx(k, ts))",
+        "insert into dst_range values (0, '2024-03-31 00:00:00'), (1, '2024-03-31 00:00:00'), (1, '2024-03-31 03:00:00')",
+    ] {
+        tk.run(sql).unwrap();
+    }
+    for mode in ["DEFAULT", "'ALLOW_INVALID_DATES'"] {
+        tk.run(&format!("set sql_mode = {mode}")).unwrap();
+        for bound in ["'2024-04-00'", "cast('2024-04-00' as datetime)", "'0000-00-00 00:00:00'"] {
+            for op in ["<", "<=", "=", "!=", ">=", ">"] {
+                let query = |hint: &str| format!("select ts from dst_range {hint} where k = 1 and ts {op} {bound} order by ts");
+                let expected = rows(&mut tk, &query("ignore index(idx_ts, idx)"));
+                if op == "<" && bound == "'2024-04-00'" {
+                    assert_eq!(expected, [["2024-03-31 00:00:00"], ["2024-03-31 03:00:00"]]);
+                }
+                for index in ["idx_ts", "idx"] {
+                    assert_eq!(rows(&mut tk, &query(&format!("force index({index})"))), expected, "{mode} {bound} {op} {index}");
+                }
+            }
+        }
+    }
+
+    // correlated
+    for zone in ["UTC", "+00:00", "+08:00", "America/Goose_Bay"] {
+        for index in ["index idx(ts)", "index idx(k,ts,n)", "primary key(k,ts,n) clustered"] {
+            let mut tk = Session::new();
+            for sql in [
+                "set sql_mode='ALLOW_INVALID_DATES'".to_owned(),
+                format!("set time_zone='{zone}'"),
+                "create table cor_outer(id int primary key, d datetime)".to_owned(),
+                "insert into cor_outer values (1,'2017-02-28'),(2,'2017-02-30'),(3,'2017-03-01'),(4,'2017-03-00'),(5,NULL),(6,'0000-00-00')".to_owned(),
+                format!("create table cor_inner(k int, ts timestamp(6), n int,{index})"),
+                "create table cor_plain(k int, ts timestamp(6), n int)".to_owned(),
+                "insert into cor_inner values (1,'2017-02-28',1),(1,'2017-03-01',1),(1,'2017-03-01',2),(2,'2017-03-01',1),(1,'0000-00-00',1)".to_owned(),
+                "insert into cor_plain select * from cor_inner".to_owned(),
+            ] {
+                tk.run(&sql).unwrap();
+            }
+            let hint = if index.starts_with("primary") { "primary" } else { "idx" };
+            if index == "index idx(k,ts,n)" {
+                for order in ["asc", "desc"] {
+                    let query = format!(
+                        "select o.id,(select /*+ NO_DECORRELATE() */ i.n from cor_inner i force index(idx) where i.k=1 and i.ts=o.d order by i.n {order} limit 1) from cor_outer o order by o.id"
+                    );
+                    let baseline = query.replace("cor_inner i force index(idx)", "cor_plain i");
+                    let third = if order == "desc" { "2" } else { "1" };
+                    let expected = [["1", "1"], ["2", "NULL"], ["3", third], ["4", "NULL"], ["5", "NULL"], ["6", "1"]];
+                    assert_eq!(rows(&mut tk, &baseline), expected, "{zone} {order} baseline");
+                    assert_eq!(rows(&mut tk, &query), expected, "{zone} {order}");
+                    let plan_rows = rows(&mut tk, &format!("explain format='brief' {query}"));
+                    let plan = format!("{plan_rows:?}");
+                    assert!(plan.contains("IndexRangeScan"), "{plan}");
+                    assert!(plan.contains("table:i, index:idx(k, ts, n)"), "{plan}");
+                    assert!(
+                        plan.contains("range: decided by [eq(test.cor_inner.k, 1) eq(test.cor_inner.ts, test.cor_outer.d)]"),
+                        "{plan}"
+                    );
+                    if order == "asc" {
+                        // ConstCols lets the scan provide n's order after the
+                        // two equality columns.
+                        assert!(!plan.contains("Sort") && !plan.contains("TopN"), "{plan}");
+                        for row in &plan_rows {
+                            if row[0].contains("IndexRangeScan") {
+                                assert!(format!("{row:?}").contains("keep order:true"), "{plan}");
+                            }
+                        }
+                    } else {
+                        assert!(plan.contains("TopN"), "{plan}");
+                        assert!(plan.contains("test.cor_inner.n:desc, offset:0, count:1"), "{plan}");
+                    }
+                }
+            }
+            for op in ["=", "<", "<=", ">", ">=", "!="] {
+                for body in ["count(*)", "min(i.ts)", "i.ts"] {
+                    let limit = if body == "i.ts" { " order by i.ts limit 1" } else { "" };
+                    let query = format!(
+                        "select o.id,(select /*+ NO_DECORRELATE() */ {body} from cor_inner i force index({hint}) where i.k=1 and i.ts {op} o.d and i.n=1{limit}) from cor_outer o order by o.id"
+                    );
+                    let baseline = query.replace(&format!("cor_inner i force index({hint})"), "cor_plain i");
+                    let expected = rows(&mut tk, &baseline);
+                    assert_eq!(rows(&mut tk, &query), expected, "{zone} {index} {op} {body}");
+                }
+            }
+        }
+    }
+
+    // constant bounds over several zones
+    for zone in ["UTC", "+00:00", "Etc/UTC", "+08:00", "-05:00", "America/New_York"] {
+        let mut tk = Session::new();
+        for sql in [
+            format!("set time_zone = '{zone}'"),
+            "set sql_mode = 'ALLOW_INVALID_DATES'".to_owned(),
+            "create table timestamp_range (k int, ts timestamp(6) null, index idx(k, ts), index ts_idx(ts))".to_owned(),
+            "insert into timestamp_range values (0, '2017-02-28 00:00:00'), (1, '2017-02-28 00:00:00'), \
+             (1, '2017-02-28 23:59:59.999999'), (1, '2017-03-01 00:00:00'), (1, '2017-03-02 00:00:00'), \
+             (2, '2017-03-01 00:00:00'), (1, '0000-00-00 00:00:00'), (1, null)".to_owned(),
+        ] {
+            tk.run(&sql).unwrap();
+        }
+        for bound in ["cast('2017-02-30' as date)", "cast('2017-03-00 12:00:00' as datetime)", "cast('2017-00-10' as date)"] {
+            for op in ["<", "<=", ">", ">=", "=", "!=", "<=>"] {
+                let query = |hint: &str| format!("select k, ts from timestamp_range {hint} where k = 1 and ts {op} {bound} order by k, ts");
+                let expected = rows(&mut tk, &query("ignore index (idx, ts_idx)"));
+                for idx in ["idx", "ts_idx"] {
+                    assert_eq!(rows(&mut tk, &query(&format!("force index ({idx})"))), expected, "{zone} {bound} {op} {idx}");
+                }
+            }
+        }
+        for predicate in [
+            "k = 1 and ts >= cast('2017-02-28' as datetime) and ts < cast('2017-02-30' as date)",
+            "k = 1 and ts >= cast('2017-02-30' as date) and ts < cast('2017-03-02' as datetime)",
+            "k = 1 and ts in (cast('2017-02-30' as date), cast('2017-03-01' as date))",
+            "k = 1 and (ts < cast('2017-02-30' as date) or ts >= cast('2017-03-02' as date))",
+            "(k = 1 and ts < cast('2017-02-30' as date)) or (k = 2 and ts >= cast('2017-03-00' as date))",
+        ] {
+            let query = |hint: &str| format!("select k, ts from timestamp_range {hint} where {predicate} order by k, ts");
+            let expected = rows(&mut tk, &query("ignore index (idx, ts_idx)"));
+            assert_eq!(rows(&mut tk, &query("force index (idx)")), expected, "{zone} {predicate}");
+        }
+    }
+}
+
+/// Go `TestCorColEqProvidesIndexOrder` (684ced8facb): an
+/// `index_col = correlated_col` access equality pins that column per
+/// execution, so the index columns after it satisfy an ORDER BY -- a Limit
+/// over an ordered scan replaces the TopN. A correlated range does not.
+#[test]
+fn test_cor_col_eq_provides_index_order() {
+    let mut tk = Session::new();
+    for sql in [
+        "create table tc (k1 bigint unsigned not null, k2 bigint unsigned not null, v int not null, \
+         primary key (k1, k2) clustered, key ik (k1, v, k2))",
+        "insert into tc values (1,10,1),(1,20,1),(2,30,1),(2,40,0),(3,50,0)",
+    ] {
+        tk.run(sql).unwrap();
+    }
+    // The operator name, task and operator info of each explain row.
+    let explain_of = |tk: &mut Session, sql: &str| -> Vec<String> {
+        row_text(tk.run(&format!("explain format='plan_tree' {sql}")))
+            .into_iter()
+            .map(|row| format!("{} {} {}", row[0], row[1], row[3]))
+            .collect()
+    };
+    let has_operator = |infos: &[String], substrs: &[&str]| {
+        infos.iter().any(|row| substrs.iter().all(|substr| row.contains(substr)))
+    };
+    // The subquery reads a single row from an ordered scan rather than
+    // sorting the whole matched range.
+    let require_early_stop_plan = |infos: &[String], scan_op: &str| {
+        assert!(has_operator(infos, &[scan_op, "keep order:true"]), "{scan_op} should keep order: {infos:?}");
+        assert!(has_operator(infos, &["Limit", "cop[tikv]", "count:1"]), "{infos:?}");
+        assert!(has_operator(infos, &["Limit", "root", "count:1"]), "{infos:?}");
+        assert!(!has_operator(infos, &["TopN"]), "the sort should be eliminated: {infos:?}");
+    };
+    let rows = |tk: &mut Session, sql: &str| row_text(tk.run(sql));
+
+    let min_over_pk = "select (select /*+ NO_DECORRELATE() */ min(t2.k2) from tc t2 use index (`primary`) \
+                       where t1.k1 = t2.k1) from tc t1";
+    require_early_stop_plan(&explain_of(&mut tk, min_over_pk), "TableRangeScan");
+    assert_eq!(rows(&mut tk, &format!("{min_over_pk} order by 1")), [["10"], ["10"], ["30"], ["30"], ["50"]]);
+
+    let min_over_idx = "select (select /*+ NO_DECORRELATE() */ min(t2.k2) from tc t2 use index (ik) \
+                        where t1.k1 = t2.k1 and t2.v = 1) from tc t1";
+    require_early_stop_plan(&explain_of(&mut tk, min_over_idx), "IndexRangeScan");
+    assert_eq!(rows(&mut tk, &format!("{min_over_idx} order by 1")), [["NULL"], ["10"], ["10"], ["30"], ["30"]]);
+
+    let limit_over_pk = "select (select /*+ NO_DECORRELATE() */ t2.k2 from tc t2 use index (`primary`) \
+                         where t1.k1 = t2.k1 order by t2.k2 limit 1) from tc t1";
+    require_early_stop_plan(&explain_of(&mut tk, limit_over_pk), "TableRangeScan");
+    assert_eq!(rows(&mut tk, &format!("{limit_over_pk} order by 1")), [["10"], ["10"], ["30"], ["30"], ["50"]]);
+
+    for sql in [
+        "create table tr (a int, b int, c int, d int, key idx (b, c, d))",
+        "insert into tr values (1,1,1,4),(2,1,2,3),(3,1,3,2),(4,2,1,1)",
+    ] {
+        tk.run(sql).unwrap();
+    }
+    let min_after_range = "select (select /*+ NO_DECORRELATE() */ min(t2.d) from tr t2 use index (idx) \
+                           where t2.b = t1.b and t2.c < t1.c) from tr t1";
+    let infos = explain_of(&mut tk, min_after_range);
+    assert!(has_operator(&infos, &["TopN"]), "a correlated range must not claim order on later columns: {infos:?}");
+    assert_eq!(rows(&mut tk, &format!("{min_after_range} order by 1")), [["NULL"], ["NULL"], ["3"], ["4"]]);
+}

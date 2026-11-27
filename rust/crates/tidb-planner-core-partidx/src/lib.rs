@@ -118,7 +118,9 @@ fn impl_compare_expr(
     ) else {
         return false;
     };
-    if pre_result.ranges.is_empty() {
+    // The index predicate needs an exact range; a superset cannot prove
+    // implication.
+    if pre_result.ranges.is_empty() || !pre_result.remained_conds.is_empty() {
         return false;
     }
     let column_conditions =

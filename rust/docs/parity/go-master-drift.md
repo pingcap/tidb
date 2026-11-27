@@ -45,7 +45,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - 19a41f0d4a3 2026-07-31 1/1 planner: estimate index join probe-side row count from the join keys the access path can u
 - c25caa6b2d2 2026-08-02 1/1 executor: remove unnecessary ordering from full-sampling Analyze requests (#70275)
 - fac4601cc60 2026-08-02 1/1 planner: propagate recursive index estimates in exponential backoff (#69949)
-- 684ced8facb 2026-08-03 1/1 planner: recognize order by correlated equality (#70217)
 - 807e18edaff 2026-08-04 2/2 importinto: log chunk count and size (#70271)
 - 70323e9d84c 2026-08-06 2/2 resource group: starter mode support degrade to default RU group (#68105)
 - bff12635288 2026-08-06 1/1 server: limit the size for COM_STMT_SEND_LONG_DATA in each connection (#70350)
@@ -107,7 +106,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - 2f3a0667362 2026-11-10 4/4 planner: only remove MVIndex-covered JSON predicate recheck when ranges are exact (#72621)
 - ac53e23b5a2 2026-11-10 3/3 table: speed up MV index consistency check with per-row sorted elemen… (#72574)
 - 5cf03a50bc2 2026-11-10 2/2 session: allow `recommend index return result for` statement in diagnostic mode tidb (#727
-- 2a6eaa16c20 2026-11-12 1/1 planner: safely fall back for invalid TIMESTAMP range bounds (#72603)
 - 40c5806c3f6 2026-11-16 1/1 planner: reuse plan cache after unrelated schema changes under RR isolation (#72856)
 - 33bdc22d43d 2026-11-16 12/12 executor: adapt LIMIT for ordered IndexJoin outer inputs (#72863)
 - 8ee91eaa0f6 2026-11-18 8/8 session: preserve Classic bootstrap in Starter NextGen keyspaces (#72654)
@@ -213,4 +211,4 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 
 ## Held
 
-Ported or not applicable, though the audit still flags them (keep them out of the candidates on a rerun): 0386d784bc8 07b758bf938 143374f759f 1d19049f6e3 22fd1ac756e 3bd6b6d4d63 4c0e2c06244 56ee5bb2684 592082dee72 655769534b4 70970592ab0 7981253e7c3 87d45a1d703 8cde78af3c5 8d5a3a1908f a40e9d6e76f adee1920e10 ed2376acc6e 92fc143fe36 8bab3c26d76 ab4e1dcf964 59f6e85cd01 5ccce269d2b 57b5f226809 130cbb64478 66be7a615be 8c9b48508c8 b0f09ba1ea4 d3928d5c659 d880d7fabe5.
+Ported or not applicable, though the audit still flags them (keep them out of the candidates on a rerun): 0386d784bc8 07b758bf938 143374f759f 1d19049f6e3 22fd1ac756e 3bd6b6d4d63 4c0e2c06244 56ee5bb2684 592082dee72 655769534b4 70970592ab0 7981253e7c3 87d45a1d703 8cde78af3c5 8d5a3a1908f a40e9d6e76f adee1920e10 ed2376acc6e 92fc143fe36 8bab3c26d76 ab4e1dcf964 59f6e85cd01 5ccce269d2b 57b5f226809 130cbb64478 66be7a615be 8c9b48508c8 b0f09ba1ea4 d3928d5c659 d880d7fabe5 032f17c27bc.

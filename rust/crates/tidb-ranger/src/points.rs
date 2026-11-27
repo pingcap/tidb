@@ -407,6 +407,10 @@ pub enum PointBuilderError {
     /// Go `ConvertTo`'s typed error that `convertPointInPlace` does not
     /// tolerate.
     Terror(tidb_terror::TerrorError),
+    /// Go `errInvalidTimestampRange`: a calendar-invalid date endpoint of a
+    /// TIMESTAMP column, which asks for a wider range with the original
+    /// conditions retained as filters.
+    InvalidTimestampRange,
 }
 
 impl std::fmt::Display for PointBuilderError {
@@ -416,6 +420,7 @@ impl std::fmt::Display for PointBuilderError {
             Self::Value(error) => error.fmt(f),
             Self::Eval(error) => write!(f, "{error:?}"),
             Self::Terror(error) => f.write_str(error.message()),
+            Self::InvalidTimestampRange => f.write_str("invalid TIMESTAMP range endpoint"),
         }
     }
 }
@@ -424,7 +429,7 @@ impl std::error::Error for PointBuilderError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Value(error) => Some(error),
-            Self::Unsupported(_) | Self::Eval(_) | Self::Terror(_) => None,
+            Self::Unsupported(_) | Self::Eval(_) | Self::Terror(_) | Self::InvalidTimestampRange => None,
         }
     }
 }
@@ -1576,6 +1581,17 @@ pub fn convert_point_in_place(
 ) -> Result<(), PointBuilderError> {
     if matches!(p.value, Datum::MaxValue | Datum::MinNotNull) {
         return Ok(());
+    }
+    if let Datum::Time(t) = &p.value {
+        // Check before the conversion can adjust an invalid date near a DST
+        // transition; UTC checks calendar validity without rejecting valid
+        // local DST-gap times.
+        if new_tp.code() == FieldTypeCode::Timestamp && !t.is_zero() {
+            if let Err(error) = t.go_time(&chrono::Utc) {
+                *skip_plan_cache_reason = Some(format!("{error} when converting {:?}", p.value));
+                return Err(PointBuilderError::InvalidTimestampRange);
+            }
+        }
     }
     let location = evaluator.location();
     let warnings = RangerWarnings(evaluator);
