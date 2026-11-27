@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -273,18 +274,24 @@ func buildRangesForPointGet(sctx base.PlanContext, x *physicalop.PointGetPlan) (
 				x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
 			}
 		} else {
-			var pkCol *expression.Column
+			var handleTp *types.FieldType
 			var unsignedIntHandle bool
 			if x.TblInfo.PKIsHandle {
 				if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
-					pkCol = expression.ColInfo2Col(x.Schema().Columns, pkColInfo)
+					if pkCol := expression.ColInfo2Col(x.Schema().Columns, pkColInfo); pkCol != nil {
+						handleTp = pkCol.RetType
+					}
 				}
 				if !x.TblInfo.IsCommonHandle {
 					unsignedIntHandle = true
 				}
+			} else if !x.TblInfo.IsCommonHandle {
+				// The handle is _tidb_rowid, so it has to be rebuilt from the
+				// access conditions too, or a cached plan keeps the old value.
+				handleTp = &model.NewExtraHandleColInfo().FieldType
 			}
-			if pkCol != nil {
-				ranges, accessConds, remainingConds, err := ranger.BuildTableRange(x.AccessConditions, x.SCtx().GetRangerCtx(), pkCol.RetType, 0)
+			if handleTp != nil {
+				ranges, accessConds, remainingConds, err := ranger.BuildTableRange(x.AccessConditions, x.SCtx().GetRangerCtx(), handleTp, 0)
 				if err != nil {
 					return err
 				}

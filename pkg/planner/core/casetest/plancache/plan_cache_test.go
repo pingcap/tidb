@@ -15,6 +15,7 @@
 package plancache
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 
@@ -173,4 +174,30 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkPlanCacheInsert,
 		BenchmarkNonPreparedPlanCacheDML,
 	)
+}
+
+func TestPlanCacheNonClusteredRowIDPointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("create table heap_probe(k int, v int) partition by hash(k) partitions 4")
+	tk.MustExec("create table plain_probe(k int, v int)")
+	for i := 1; i <= 6; i++ {
+		tk.MustExec("insert into heap_probe values (?, ?)", i*4, i*10) // k%4 = 0, so all rows are in p0
+		tk.MustExec("insert into plain_probe values (?, ?)", i*4, i*10)
+	}
+
+	for _, from := range []string{"heap_probe partition(p0)", "plain_probe"} {
+		rows := tk.MustQuery("select _tidb_rowid, k from " + from + " order by _tidb_rowid limit 2").Rows()
+		require.Len(t, rows, 2)
+		tk.MustExec("prepare stmt from 'select _tidb_rowid, k from " + from + " where _tidb_rowid = ?'")
+		for i, r := range [][]any{rows[0], rows[1], rows[0]} {
+			tk.MustExec(fmt.Sprintf("set @h = %v", r[0]))
+			tk.MustQuery("execute stmt using @h").Check(testkit.Rows(fmt.Sprintf("%v %v", r[0], r[1])))
+			if i > 0 {
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			}
+		}
+	}
 }
