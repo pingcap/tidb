@@ -106,7 +106,9 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 		return nil
 	}
 
-	if tableInfo != nil {
+	// ALTER DATABASE may omit the database name, so its query only applies to
+	// the job's schema if that is the current database.
+	if tableInfo != nil || isAlterDatabase(ddlJob.Type) {
 		switchDBSQL := fmt.Sprintf("use %s;", utils.EncloseName(ddlJob.SchemaName))
 		err = db.se.Execute(ctx, switchDBSQL)
 		if err != nil {
@@ -135,6 +137,17 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 			zap.Error(err))
 	}
 	return errors.Trace(err)
+}
+
+func isAlterDatabase(tp model.ActionType) bool {
+	switch tp {
+	case model.ActionModifySchemaCharsetAndCollate,
+		model.ActionModifySchemaDefaultPlacement,
+		model.ActionModifySchemaReadOnly,
+		model.ActionModifySchemaSoftDeleteAndActiveActive:
+		return true
+	}
+	return false
 }
 
 // CreatePlacementPolicy check whether cluster support policy and create the policy.
