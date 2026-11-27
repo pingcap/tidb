@@ -16,7 +16,7 @@
 
 use tidb_sqlescape::SqlArg;
 use tidb_sqlexec::SqlExecError;
-use tidb_stats_handle_util::{exec_rows, get_start_ts, StatsSessionContext};
+use tidb_stats_handle_util::{exec_rows, exec_with_ctx, get_start_ts, StatsSessionContext, STATS_CONTEXT};
 use tidb_variable::table_delta::TableDelta;
 
 /// Go `UpdateStatsMetaVerAndLastHistUpdateVer`.
@@ -24,17 +24,49 @@ pub fn update_stats_meta_ver_and_last_hist_update_ver<C: StatsSessionContext + ?
     sctx: &C,
     physical_id: i64,
 ) -> Result<u64, SqlExecError> {
+    update_stats_meta_version(sctx, true, &[physical_id])
+}
+
+/// Go `UpdateStatsMetaVer`: the tables' version moves to the newest TS. It
+/// keeps `last_stats_histograms_version`, so the stats cache does not reload
+/// the column and index stats.
+pub fn update_stats_meta_ver<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    physical_ids: &[i64],
+) -> Result<u64, SqlExecError> {
+    update_stats_meta_version(sctx, false, physical_ids)
+}
+
+/// Go `updateStatsMetaVersion`.
+fn update_stats_meta_version<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    update_hist_version: bool,
+    physical_ids: &[i64],
+) -> Result<u64, SqlExecError> {
     let start_ts = get_start_ts(sctx)?;
-    exec_rows(
-        sctx,
-        "update mysql.stats_meta set version=%?, last_stats_histograms_version=%? where table_id =%?",
-        &[
-            SqlArg::Unsigned(start_ts),
-            SqlArg::Unsigned(start_ts),
-            SqlArg::Signed(physical_id),
-        ],
-    )?;
+    let ids: Vec<String> = physical_ids.iter().map(i64::to_string).collect();
+    let mut sql = String::from("update mysql.stats_meta set version = %?");
+    let mut args = vec![SqlArg::Unsigned(start_ts)];
+    if update_hist_version {
+        sql.push_str(", last_stats_histograms_version = %?");
+        args.push(SqlArg::Unsigned(start_ts));
+    }
+    sql.push_str(&format!(" where table_id in ({})", ids.join(",")));
+    exec_rows(sctx, &sql, &args)?;
     Ok(start_ts)
+}
+
+/// Go `execAndCloseRecordSet`: runs a statement whose rows are not needed,
+/// such as a lock read. The statement reaches the slow log and the execution
+/// duration metrics only when its record set is closed.
+fn exec_and_close_record_set<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    sql: &str,
+) -> Result<(), SqlExecError> {
+    match exec_with_ctx(&*STATS_CONTEXT, sctx, sql, &[])? {
+        Some(mut record_set) => record_set.close(),
+        None => Ok(()),
+    }
 }
 
 /// Go `storage.DeltaUpdate`.
@@ -84,23 +116,21 @@ pub fn update_stats_meta<C: StatsSessionContext + ?Sized>(
     }
     // Lock the rows first, so the updates below meet no write conflict.
     if !locked_table_ids.is_empty() {
-        exec_rows(
+        exec_and_close_record_set(
             sctx,
             &format!(
                 "select * from mysql.stats_table_locked where table_id in ({}) for update",
                 locked_table_ids.join(",")
             ),
-            &[],
         )?;
     }
     if !unlocked_table_ids.is_empty() {
-        exec_rows(
+        exec_and_close_record_set(
             sctx,
             &format!(
                 "select * from mysql.stats_meta where table_id in ({}) for update",
                 unlocked_table_ids.join(",")
             ),
-            &[],
         )?;
     }
     if !locked_values.is_empty() {

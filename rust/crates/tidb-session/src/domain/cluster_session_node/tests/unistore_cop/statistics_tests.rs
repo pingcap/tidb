@@ -2531,6 +2531,118 @@ fn stats_delta_flush_updates_meta_as_go() {
     assert_eq!(meta(&mut session, "stats_table_locked"), [["2", "2"]]);
 }
 
+/// Go `TestDumpStatsDeltaMergeKeepsEarliestInitTime`'s slow-dump steps
+/// (249288e17a4): a delta dump blocked on its `stats_meta` lock read commits
+/// with its old start_ts as the version, after the stats cache already moved
+/// past it; the dump then writes a newer version, so the cache still loads
+/// the delta. The lock wait reaches the statement summary, since the lock
+/// read's record set is closed.
+#[test]
+fn slow_stats_delta_dump_bumps_the_stats_meta_version() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(209)).unwrap();
+    rows(&mut tk, "set global tidb_stmt_summary_internal_query = 1");
+    rows(&mut tk, "use test");
+    rows(&mut tk, "create table t_lock (a int)");
+    rows(&mut tk, "create table t_other (a int)");
+    rows(&mut tk, "insert into t_lock values (1)");
+    rows(&mut tk, "insert into t_other values (1)");
+    rows(&mut tk, "analyze table t_lock");
+    rows(&mut tk, "analyze table t_other");
+    let lock_table_id = table_id_of(&mut tk, "t_lock");
+    let other_table_id = table_id_of(&mut tk, "t_other");
+    tk.update_stats_cache().unwrap();
+    stack.factory.dump_stats_delta_to_kv(true, &[]).unwrap();
+    let hist_version = |tk: &mut Session| {
+        displayed(rows(
+            tk,
+            &format!("select last_stats_histograms_version from mysql.stats_meta where table_id = {lock_table_id}"),
+        ))
+    };
+    let analyzed_hist_version = hist_version(&mut tk);
+    // The stats cache looks back 5 * lease = 500ms, and the blocked dump
+    // takes more than that.
+    stack.factory.set_stats_lease(Duration::from_millis(100));
+
+    rows(&mut tk, "insert into t_lock values (2),(3)");
+    let mut tk_lock = stack.factory.open_session(session_context(210)).unwrap();
+    rows(&mut tk_lock, "set @@tidb_txn_mode = 'pessimistic'");
+    rows(&mut tk_lock, "begin");
+    rows(
+        &mut tk_lock,
+        &format!("select * from mysql.stats_meta where table_id = {lock_table_id} for update"),
+    );
+
+    let (ready_tx, ready) = mpsc::channel::<()>();
+    let ready_tx = std::sync::Mutex::new(Some(ready_tx));
+    let _before_dump = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/statistics/handle/usage/beforeDumpStatsDeltaToKV",
+        move |_| {
+            if let Some(ready_tx) = ready_tx.lock().unwrap().take() {
+                let _ = ready_tx.send(());
+            }
+        },
+    );
+    let (dump_tx, dump_done) = mpsc::channel();
+    let dump_thread = {
+        let factory = Arc::clone(&stack.factory);
+        std::thread::spawn(move || {
+            let _ = dump_tx.send(factory.dump_stats_delta_to_kv(true, &[lock_table_id]));
+        })
+    };
+    ready
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the first dump initializes its deltas");
+    std::thread::sleep(Duration::from_millis(700));
+    assert!(dump_done.try_recv().is_err(), "the lock blocks the first dump");
+
+    // Before the first dump commits, the cache loads a t_other version newer
+    // than its start_ts + 5 * lease.
+    rows(&mut tk, "insert into t_other values (2)");
+    stack.factory.dump_stats_delta_to_kv(true, &[other_table_id]).unwrap();
+    tk.update_stats_cache().unwrap();
+
+    rows(&mut tk_lock, "rollback");
+    dump_done
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the first dump finishes after the lock is released")
+        .unwrap();
+    dump_thread.join().unwrap();
+
+    tk.update_stats_cache().unwrap();
+    let lock_count: i64 = displayed(rows(
+        &mut tk,
+        &format!("select modify_count from mysql.stats_meta where table_id = {lock_table_id}"),
+    ))[0][0]
+        .parse()
+        .unwrap();
+    let cached = stack
+        .factory
+        .stats
+        .load()
+        .get(&lock_table_id)
+        .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
+        .expect("t_lock's statistics are cached")
+        .hist_coll
+        .modify_count;
+    assert_eq!(cached, lock_count);
+    // Go `UpdateStatsMetaVer` keeps last_stats_histograms_version, so the
+    // cache does not reload the column and index stats.
+    assert_eq!(hist_version(&mut tk), analyzed_hist_version);
+
+    assert_eq!(
+        displayed(rows(
+            &mut tk,
+            "select count(*) > 0 from information_schema.statements_summary \
+             where digest_text like '%stats_meta%for update%' and max_latency >= 500000000",
+        )),
+        [["1"]]
+    );
+    rows(&mut tk, "set global tidb_stmt_summary_internal_query = 0");
+}
+
 /// Go `Handle.InitStatsLite` / `InitStats` (`bootstrap.go`) on the
 /// statistics handle's sessions: `stats_meta` scopes the tables (a listed
 /// subset, or every one), the lite load keeps every item's payload evicted,

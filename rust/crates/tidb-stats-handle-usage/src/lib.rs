@@ -418,6 +418,9 @@ fn set_dump_stats_max_duration(value: Duration) {
 
 /// Go `statsUsageImpl`'s package-owned collectors.
 pub struct StatsUsageHandle {
+    /// Go `Tracker.lease`: the handle's statistics lease, whose
+    /// `LeaseOffset` multiple bounds a delta dump the stats cache can see.
+    lease: tidb_stats_handle_util::StatsLease,
     index_usage: Arc<IndexUsageCollector>,
     sessions: SessionStatsList,
 }
@@ -426,9 +429,15 @@ impl StatsUsageHandle {
     /// Go `NewStatsUsageImpl`'s collector construction.
     pub fn new() -> Self {
         Self {
+            lease: tidb_stats_handle_util::StatsLease::new(0),
             index_usage: Arc::new(IndexUsageCollector::new()),
             sessions: SessionStatsList::new(),
         }
+    }
+
+    /// Go `Tracker.lease`.
+    pub const fn lease(&self) -> &tidb_stats_handle_util::StatsLease {
+        &self.lease
     }
 
     /// Go `statsUsageImpl.NewSessionStatsItem`.

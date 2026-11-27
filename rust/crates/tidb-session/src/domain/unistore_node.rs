@@ -844,6 +844,7 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
         Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
         None => factory,
     };
+    factory.set_stats_lease(config.stats_lease.slow_save_interval());
     factory.install_store_keyspace(opener.store().get_keyspace().to_owned());
     let factory = factory.shared();
     // Go `initResourceGroupsController`'s runaway manager over unistore's

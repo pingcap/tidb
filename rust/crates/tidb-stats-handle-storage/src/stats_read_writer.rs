@@ -132,10 +132,12 @@ fn update_stats_meta_ver_and_last_hist_update_ver(
 /// Go `cache.LeaseOffset`.
 const LEASE_OFFSET: u32 = 5;
 
-/// Go `handleSlowStatsSaving`'s `isLoadIntervalExceeded`: a save that took
-/// five statistics leases or more (a disabled lease never does).
+/// Go `IsStatsMetaWriteTooSlow`: whether a `stats_meta` write that took
+/// `elapsed` can be missed by the stats cache Update of other TiDB nodes,
+/// which looks back only `LeaseOffset * lease` from its newest version. A
+/// disabled lease (unit tests set it below zero) never is.
 #[must_use]
-pub fn is_load_interval_exceeded(lease: Duration, elapsed: Duration) -> bool {
+pub fn is_stats_meta_write_too_slow(lease: Duration, elapsed: Duration) -> bool {
     lease > Duration::ZERO && elapsed >= lease.saturating_mul(LEASE_OFFSET)
 }
 
@@ -148,7 +150,7 @@ pub fn handle_slow_stats_saving(
     start: Instant,
 ) -> Result<(), SqlQueryError> {
     let elapsed = start.elapsed();
-    if !is_load_interval_exceeded(lease, elapsed) {
+    if !is_stats_meta_write_too_slow(lease, elapsed) {
         return Ok(());
     }
     let logger = tidb_stats_handle_logutil::stats_logger();
@@ -257,7 +259,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
-    use super::{handle_slow_stats_saving, is_load_interval_exceeded, StatsSessionPool};
+    use super::{handle_slow_stats_saving, is_stats_meta_write_too_slow, StatsSessionPool};
     use tidb_sqlexec::SqlExecError;
     use tidb_stats_handle_util::StatsSessionContext;
     use tidb_store_driver_error::sql_query_error::SqlQueryError;
@@ -295,8 +297,8 @@ mod tests {
     #[test]
     fn a_save_is_slow_from_five_leases_and_never_with_the_lease_disabled() {
         let lease = Duration::from_secs(3);
-        assert!(!is_load_interval_exceeded(lease, Duration::from_secs(14)));
-        assert!(is_load_interval_exceeded(lease, Duration::from_secs(15)));
-        assert!(!is_load_interval_exceeded(Duration::ZERO, Duration::from_secs(3600)));
+        assert!(!is_stats_meta_write_too_slow(lease, Duration::from_secs(14)));
+        assert!(is_stats_meta_write_too_slow(lease, Duration::from_secs(15)));
+        assert!(!is_stats_meta_write_too_slow(Duration::ZERO, Duration::from_secs(3600)));
     }
 }

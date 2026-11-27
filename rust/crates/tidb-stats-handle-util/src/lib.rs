@@ -26,7 +26,7 @@ pub use auto_analyze_proc_id_generator::{
 };
 pub use lease_getter::{LeaseGetter, StatsLease};
 pub use pool::{Pool, StatsPool, StatsWorkerPool};
-pub use table_info::{InfoSchema, TableInfoGetter, TableItem};
+pub use table_info::{InfoSchema, SnapshotTableInfoGetter, TableInfoGetter, TableItem};
 pub use util::{
     call_with_sctx, duration_to_ts, exec, exec_rows, exec_rows_with_ctx, exec_with_ctx,
     exec_with_opts, exec_with_opts_with_ctx, get_current_prune_mode, get_start_ts,

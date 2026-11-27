@@ -1165,6 +1165,7 @@ fn new_cluster_domain(
     if let Some(client) = &unprefixed_etcd {
         factory.install_unprefixed_etcd_client(Arc::clone(client));
     }
+    factory.set_stats_lease(config.stats_lease.slow_save_interval());
     let factory = factory.shared();
     tidb_session::domain::cross_ks::install_cross_ks_runtime_factory(&factory,config)
         .map_err(|error|RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;

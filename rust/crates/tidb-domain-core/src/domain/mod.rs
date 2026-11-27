@@ -35,7 +35,7 @@ pub mod stats_maintenance;
 use std::collections::HashSet;
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use tidb_stats_handle_storage::stats_read_writer::StatsSessionPool as _;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{Datelike, Timelike, Utc};
 use tidb_infoschema_issyncer::catalog_watch::InfoCache;
@@ -1700,6 +1700,16 @@ impl Domain {
         })
     }
 
+    /// Go `Handle.SetLease` as seen by the usage tracker: `handle.NewHandle`
+    /// hands the tracker the handle's lease, which bounds how slow a delta
+    /// dump can commit before the stats cache of other nodes misses it.
+    pub fn set_stats_lease(&self, lease: Duration) {
+        tidb_stats_handle_util::LeaseGetter::set_lease(
+            self.stats_usage.lease(),
+            i64::try_from(lease.as_nanos()).unwrap_or(i64::MAX),
+        );
+    }
+
     /// Go `statsUsageImpl.DumpStatsDeltaToKV`.
     pub fn dump_stats_delta_to_kv(&self, force_dump: bool, target_table_ids: &[i64]) -> Result<(), String> {
         let pool = self.stats_session_pool().ok();
@@ -1730,6 +1740,7 @@ impl Domain {
         let table_ids = pending.collect_pending_stats_delta_table_ids(target_table_ids);
         for batch in table_ids.chunks(tidb_stats_handle_usage::DUMP_DELTA_BATCH_SIZE) {
             let batch_time = SystemTime::now();
+            let batch_start = Instant::now();
             let catalog = catalog_store.get_latest();
             let stats = stats_store.load();
             let mut original_updates = Vec::new();
@@ -1783,6 +1794,10 @@ impl Domain {
             stats_pool
                 .call_with_sctx(
                     &mut |sctx| {
+                        tidb_failpoint::inject_call(
+                            "github.com/pingcap/tidb/pkg/statistics/handle/usage/beforeDumpStatsDeltaToKV",
+                            &mut (),
+                        );
                         stats_version = tidb_stats_handle_util::get_start_ts(sctx)?;
                         // Go `statsHandle.GetLockedTables`, on a session of its own.
                         let mut locked = Default::default();
@@ -1809,8 +1824,72 @@ impl Domain {
             for update in original_updates {
                 pending.mark_persisted(update.table_id);
             }
+            let unlocked_table_ids: Vec<i64> = updates
+                .iter()
+                .filter(|update| !update.is_locked)
+                .map(|update| update.table_id)
+                .collect();
+            // The batch wrote its start_ts as the version. If it committed too
+            // late, the stats cache on other TiDB nodes may have moved past
+            // that version, so write a newer one, as handleSlowStatsSaving does.
+            let batch_dur = batch_start.elapsed();
+            let lease = Duration::from_nanos(
+                u64::try_from(tidb_stats_handle_util::LeaseGetter::lease(stats_usage.lease())).unwrap_or(0),
+            );
+            if !unlocked_table_ids.is_empty()
+                && tidb_stats_handle_storage::stats_read_writer::is_stats_meta_write_too_slow(lease, batch_dur)
+            {
+                let update_start = Instant::now();
+                let result = Self::update_stats_meta_ver_for_slow_dump(stats_pool, &unlocked_table_ids);
+                let update_dur = update_start.elapsed();
+                let nanos = |duration: Duration| {
+                    tidb_log::Value::Duration(i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX))
+                };
+                let fields = [
+                    tidb_log::Field::new(
+                        "tableCount",
+                        tidb_log::Value::I64(i64::try_from(unlocked_table_ids.len()).unwrap_or(i64::MAX)),
+                    ),
+                    tidb_log::Field::new("dumpDuration", nanos(batch_dur)),
+                    tidb_log::Field::new("updateVersionDuration", nanos(update_dur)),
+                ];
+                match result {
+                    Err(error) => tidb_stats_handle_logutil::stats_logger().warn(
+                        "Failed to update stats meta version for slow stats delta dump, \
+                         the stats cache on other TiDB nodes may miss the delta",
+                        &[fields.as_slice(), &[tidb_logutil::zap_error(error)]].concat(),
+                    ),
+                    Ok(stats_version) => tidb_stats_handle_logutil::stats_sample_logger().info(
+                        "Updated stats meta version for slow stats delta dump",
+                        &[
+                            fields.as_slice(),
+                            &[tidb_log::Field::new("statsVersion", tidb_log::Value::U64(stats_version))],
+                        ]
+                        .concat(),
+                    ),
+                }
+            }
         }
         Ok(())
+    }
+
+    /// Go `Tracker.updateStatsMetaVerForSlowDump`: the dumped tables'
+    /// version moves to a newer TS.
+    fn update_stats_meta_ver_for_slow_dump(
+        stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
+        table_ids: &[i64],
+    ) -> Result<u64, String> {
+        let mut stats_version = 0;
+        stats_pool
+            .call_with_sctx(
+                &mut |sctx| {
+                    stats_version = tidb_stats_handle_storage::update::update_stats_meta_ver(sctx, table_ids)?;
+                    Ok(())
+                },
+                &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+            )
+            .map_err(|error| error.message)?;
+        Ok(stats_version)
     }
 
     fn gc_index_usage(&self) -> Result<(), String> {
