@@ -69,7 +69,7 @@ go_test(
     ],
     embed = [":cophandler"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         "//pkg/expression",
         "//pkg/kv",

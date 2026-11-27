@@ -19,7 +19,6 @@ import (
 	"container/heap"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -48,29 +47,53 @@ func (t *topNSorter) Swap(i, j int) {
 	t.rows[i], t.rows[j] = t.rows[j], t.rows[i]
 }
 
-func (t *topNSorter) Less(i, j int) bool {
-	for index, by := range t.orderByItems {
-		v1 := t.rows[i].key[index]
-		v2 := t.rows[j].key[index]
-
-		ret, err := v1.Compare(t.sc.TypeCtx(), &v2, collate.GetCollator(collate.ProtoToCollation(by.Expr.FieldType.Collate)))
-		if err != nil {
-			t.err = errors.Trace(err)
-			return true
+func (t *topNSorter) compareByItem(by *tipb.ByItem, v1, v2 *types.Datum) (int, error) {
+	if v1.IsNull() || v2.IsNull() {
+		if v1.IsNull() && v2.IsNull() {
+			return 0, nil
 		}
+		if v1.IsNull() {
+			return -1, nil
+		}
+		return 1, nil
+	}
+	switch byte(by.GetExpr().GetFieldType().GetTp()) {
+	case mysql.TypeEnum:
+		if v1.Kind() == types.KindMysqlEnum && v2.Kind() == types.KindMysqlEnum {
+			return cmp.Compare(v1.GetUint64(), v2.GetUint64()), nil
+		}
+	case mysql.TypeBit:
+		if (v1.Kind() == types.KindMysqlBit || v1.Kind() == types.KindBinaryLiteral) &&
+			(v2.Kind() == types.KindMysqlBit || v2.Kind() == types.KindBinaryLiteral) {
+			return v1.GetBinaryLiteral().Compare(v2.GetBinaryLiteral()), nil
+		}
+	}
+	return v1.Compare(t.sc.TypeCtx(), v2, collate.GetCollator(collate.ProtoToCollation(by.GetExpr().GetFieldType().GetCollate())))
+}
 
+func (t *topNSorter) compareRow(i, j int) (int, error) {
+	for index, by := range t.orderByItems {
+		ret, err := t.compareByItem(by, &t.rows[i].key[index], &t.rows[j].key[index])
+		if err != nil {
+			return 0, err
+		}
 		if by.Desc {
 			ret = -ret
 		}
-
-		if ret < 0 {
-			return true
-		} else if ret > 0 {
-			return false
+		if ret != 0 {
+			return ret, nil
 		}
 	}
+	return 0, nil
+}
 
-	return false
+func (t *topNSorter) Less(i, j int) bool {
+	ret, err := t.compareRow(i, j)
+	if err != nil {
+		t.err = errors.Trace(err)
+		return true
+	}
+	return ret < 0
 }
 
 // topNHeap holds the top n elements using heap structure. It implements heap.Interface.
@@ -98,34 +121,12 @@ func (t *topNHeap) Pop() any {
 }
 
 func (t *topNHeap) Less(i, j int) bool {
-	for index, by := range t.orderByItems {
-		v1 := t.rows[i].key[index]
-		v2 := t.rows[j].key[index]
-
-		var ret int
-		var err error
-		if expression.FieldTypeFromPB(by.GetExpr().GetFieldType()).GetType() == mysql.TypeEnum {
-			ret = cmp.Compare(v1.GetUint64(), v2.GetUint64())
-		} else {
-			ret, err = v1.Compare(t.sc.TypeCtx(), &v2, collate.GetCollator(collate.ProtoToCollation(by.Expr.FieldType.Collate)))
-			if err != nil {
-				t.err = errors.Trace(err)
-				return true
-			}
-		}
-
-		if by.Desc {
-			ret = -ret
-		}
-
-		if ret > 0 {
-			return true
-		} else if ret < 0 {
-			return false
-		}
+	ret, err := t.compareRow(i, j)
+	if err != nil {
+		t.err = errors.Trace(err)
+		return true
 	}
-
-	return false
+	return ret > 0
 }
 
 // tryToAddRow tries to add a row to heap.

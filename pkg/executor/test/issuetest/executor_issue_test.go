@@ -839,3 +839,51 @@ func TestIssue66753(t *testing.T) {
 	tk.MustQuery("SELECT v, updated_at, updated_hour FROM t_tz_idx IGNORE INDEX(idx_v2) WHERE id = 1").
 		Check(testkit.Rows("3 2026-03-05 22:35:40.500 2026-03-05 22:00:00"))
 }
+
+func TestIssue73637(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists bt")
+	tk.MustExec("create table bt (id int primary key, a int, b bit(16), c int)")
+	tk.MustExec(`insert into bt values
+		(1,1,b'0000000011111111',0),(2,1,b'0000000011111111',1),(3,1,b'0000000011111111',2),
+		(4,1,b'0000000100000000',0),(5,1,b'0000000100000000',1),(6,1,b'0000000100000000',2),
+		(7,1,b'0000000111111111',0),(8,1,b'0000000111111111',1),(9,1,b'0000000111111111',2)`)
+
+	queryAsc := "select id from bt where a=1 order by a, b, c, id limit 3"
+	queryDesc := "select id from bt where a=1 order by a, b desc, c, id limit 3"
+
+	// Ensure TopN is actually pushed down to coprocessor by default.
+	planRows := tk.MustQuery("explain format='brief' " + queryAsc).Rows()
+	hasCopTopN := false
+	for _, row := range planRows {
+		line := fmt.Sprint(row)
+		if strings.Contains(line, "TopN") && strings.Contains(line, "cop[tikv]") {
+			hasCopTopN = true
+			break
+		}
+	}
+	require.Truef(t, hasCopTopN, "expected pushed-down TopN on cop[tikv], got plan:\n%v", planRows)
+
+	// Default (TopN pushed down) must match numeric coercion and non-pushed-down execution.
+	tk.MustQuery("select id from bt where a=1 order by a, b+0, c, id limit 3").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(queryAsc).Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(queryDesc).Check(testkit.Rows("7", "8", "9"))
+
+	// Also cover NULLs and BIT(64) values above math.MaxInt64.
+	tk.MustExec("insert into bt values (10, 1, null, 0)")
+	tk.MustQuery(queryAsc).Check(testkit.Rows("10", "1", "2"))
+	tk.MustQuery(queryDesc).Check(testkit.Rows("7", "8", "9"))
+
+	tk.MustExec("set session tidb_opt_limit_push_down_threshold = 0")
+	tk.MustQuery(queryAsc).Check(testkit.Rows("10", "1", "2"))
+	tk.MustQuery(queryDesc).Check(testkit.Rows("7", "8", "9"))
+
+	tk.MustExec("set session tidb_opt_limit_push_down_threshold = default")
+	tk.MustExec("drop table if exists bt64")
+	tk.MustExec("create table bt64 (id int primary key, b bit(64))")
+	tk.MustExec("insert into bt64 values (1, b'1111111111111111111111111111111111111111111111111111111111111111'), (2, b'1000000000000000000000000000000000000000000000000000000000000000'), (3, b'100000000'), (4, b'11111111')")
+	tk.MustQuery("select id from bt64 order by b asc limit 3").Check(testkit.Rows("4", "3", "2"))
+	tk.MustQuery("select id from bt64 order by b desc limit 3").Check(testkit.Rows("1", "2", "3"))
+}

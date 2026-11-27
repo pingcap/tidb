@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"testing"
 	"time"
 
@@ -676,4 +677,99 @@ func TestExchSenderExecNextReturnsWhenCtxCanceledBeforeTunnelConnected(t *testin
 	case <-time.After(time.Second):
 		t.Fatal("exchSenderExec.next blocks on connectedCh even when context is canceled")
 	}
+}
+
+func TestTopNCompareBitAndEnum(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+
+	bitRow := func(id byte, val uint64, byteSize int) *sortRow {
+		r := newTopNSortRow(1)
+		r.key[0] = types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(val, byteSize))
+		r.data[0] = []byte{id}
+		return r
+	}
+	nullRow := func(id byte) *sortRow {
+		r := newTopNSortRow(1)
+		r.key[0] = types.NewDatum(nil)
+		r.data[0] = []byte{id}
+		return r
+	}
+	enumRow := func(id byte, name string, val uint64) *sortRow {
+		r := newTopNSortRow(1)
+		r.key[0].SetMysqlEnum(types.Enum{Name: name, Value: val}, mysql.DefaultCollationName)
+		r.data[0] = []byte{id}
+		return r
+	}
+
+	runTopN := func(ft *types.FieldType, desc bool, limit int, rows []*sortRow) []byte {
+		h := &topNHeap{
+			totalCount: limit,
+			topNSorter: topNSorter{
+				orderByItems: []*tipb.ByItem{{
+					Expr: &tipb.Expr{
+						Tp:        tipb.ExprType_ColumnRef,
+						FieldType: expression.ToPBFieldType(ft),
+					},
+					Desc: desc,
+				}},
+				sc: sc,
+			},
+		}
+		for _, r := range rows {
+			h.tryToAddRow(r)
+		}
+		require.NoError(t, h.err)
+		sort.Sort(&h.topNSorter)
+		require.NoError(t, h.err)
+		ids := make([]byte, len(h.rows))
+		for i, r := range h.rows {
+			ids[i] = r.data[0][0]
+		}
+		return ids
+	}
+
+	// BIT(16): 255 (0x00ff) must sort before 256 (0x0100) and 511 (0x01ff).
+	bit16FT := types.NewFieldType(mysql.TypeBit)
+	bit16FT.SetFlen(16)
+	bit16FT.AddFlag(mysql.UnsignedFlag)
+	makeBit16Rows := func() []*sortRow {
+		return []*sortRow{
+			bitRow(1, 511, 2),
+			bitRow(2, 256, 2),
+			bitRow(3, 255, 2),
+			bitRow(4, 0, 2),
+			nullRow(5),
+		}
+	}
+	require.Equal(t, []byte{5, 4, 3}, runTopN(bit16FT, false, 3, makeBit16Rows()))
+	require.Equal(t, []byte{1, 2, 3}, runTopN(bit16FT, true, 3, makeBit16Rows()))
+
+	// BIT(64): values above math.MaxInt64 must still compare as unsigned integers.
+	bit64FT := types.NewFieldType(mysql.TypeBit)
+	bit64FT.SetFlen(64)
+	bit64FT.AddFlag(mysql.UnsignedFlag)
+	makeBit64Rows := func() []*sortRow {
+		return []*sortRow{
+			bitRow(1, math.MaxUint64, 8),
+			bitRow(2, math.MaxInt64, 8),
+			bitRow(3, 256, 8),
+			bitRow(4, 255, 8),
+		}
+	}
+	require.Equal(t, []byte{4, 3, 2}, runTopN(bit64FT, false, 3, makeBit64Rows()))
+	require.Equal(t, []byte{1, 2, 3}, runTopN(bit64FT, true, 3, makeBit64Rows()))
+
+	// ENUM('z', 'a'): both heap filtering and final sorting must use numeric enum index, with NULL first in ASC.
+	enumFT := types.NewFieldType(mysql.TypeEnum)
+	enumFT.SetElems([]string{"z", "a"})
+	makeEnumRows := func() []*sortRow {
+		return []*sortRow{
+			enumRow(1, "a", 2),
+			enumRow(2, "z", 1),
+			enumRow(3, "", 0),
+			nullRow(4),
+		}
+	}
+	require.Equal(t, []byte{4, 3, 2}, runTopN(enumFT, false, 3, makeEnumRows()))
+	require.Equal(t, []byte{1, 2, 3}, runTopN(enumFT, true, 3, makeEnumRows()))
 }
