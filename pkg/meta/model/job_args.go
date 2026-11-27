@@ -811,18 +811,20 @@ type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
 	ExpectedLastSuccessReadTSONull     bool                 `json:"expected_last_success_read_tso_null,omitempty"`
 	NextRefreshUnixSeconds             *int64               `json:"next_refresh_unix_seconds,omitempty"`
 	ShouldUpdateNextRefreshUnixSeconds bool                 `json:"should_update_next_refresh_unix_seconds,omitempty"`
+	// OldMViewHasAffinity is recorded at cutover for post-commit cleanup.
+	OldMViewHasAffinity bool `json:"old_mview_has_affinity,omitempty"`
 }
 
 func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) []any {
 	return []any{a.OldMViewID, a.ShadowTableID, a.BuildReadTSO, a.ExpectedLastSuccessReadTSO,
 		a.ExpectedLastSuccessReadTSONull, a.NextRefreshUnixSeconds, a.ShouldUpdateNextRefreshUnixSeconds,
-		a.ExpectedOldMViewRevision, a.BuildSources, a.OldMLogID, a.NewMLogID}
+		a.ExpectedOldMViewRevision, a.BuildSources, a.OldMLogID, a.NewMLogID, a.OldMViewHasAffinity}
 }
 
 func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) decodeV1(job *Job) error {
 	return errors.Trace(job.decodeArgs(&a.OldMViewID, &a.ShadowTableID, &a.BuildReadTSO,
 		&a.ExpectedLastSuccessReadTSO, &a.ExpectedLastSuccessReadTSONull, &a.NextRefreshUnixSeconds,
-		&a.ShouldUpdateNextRefreshUnixSeconds, &a.ExpectedOldMViewRevision, &a.BuildSources, &a.OldMLogID, &a.NewMLogID))
+		&a.ShouldUpdateNextRefreshUnixSeconds, &a.ExpectedOldMViewRevision, &a.BuildSources, &a.OldMLogID, &a.NewMLogID, &a.OldMViewHasAffinity))
 }
 
 // GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs gets cutover args.
