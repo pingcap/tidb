@@ -1475,10 +1475,13 @@ func (e *InsertValues) batchCheckAndInsert(
 	}
 	setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, txn)
 	sc := e.Ctx().GetSessionVars().StmtCtx
-	for _, fkc := range e.fkChecks {
-		err = fkc.checkRows(ctx, sc, txn, toBeCheckedRows)
-		if err != nil {
-			return err
+	// IGNORE checks incoming rows up front so it can skip individual violations.
+	// REPLACE checks the actual deletes and inserts at the end of the statement.
+	if !replace {
+		for _, fkc := range e.fkChecks {
+			if err = fkc.checkRows(ctx, sc, txn, toBeCheckedRows); err != nil {
+				return err
+			}
 		}
 	}
 	prefetchStart := time.Now()
@@ -1698,11 +1701,8 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 		vars.SetLastInsertID(e.lastInsertID)
 	}
 	if dupKeyCheck != table.DupKeyCheckSkip {
-		for _, fkc := range e.fkChecks {
-			err = fkc.insertRowNeedToCheck(vars.StmtCtx, row)
-			if err != nil {
-				return err
-			}
+		if err := e.collectInsertFKChecks(row); err != nil {
+			return err
 		}
 	}
 
@@ -1711,6 +1711,15 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 		vars.TxnCtx.InsertTTLRowsCount++
 	}
 
+	return nil
+}
+
+func (e *InsertValues) collectInsertFKChecks(row []types.Datum) error {
+	for _, fkc := range e.fkChecks {
+		if err := fkc.insertRowNeedToCheck(e.Ctx().GetSessionVars().StmtCtx, row); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

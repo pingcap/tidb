@@ -1410,6 +1410,15 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
 		return nil
 	}
 
+	worker.fkChecks, b.err = buildFKCheckExecs(b.sctx, tbl, v.FKChecks)
+	if b.err != nil {
+		return nil
+	}
+	worker.fkCascades, b.err = b.buildFKCascadeExecs(tbl, v.FKCascades)
+	if b.err != nil {
+		return nil
+	}
+
 	return &LoadDataExec{
 		BaseExecutor:   base,
 		loadDataWorker: worker,

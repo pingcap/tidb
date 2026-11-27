@@ -4802,6 +4802,10 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	mockTablePlan.SetOutputNames(names)
 
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
+	if err != nil {
+		return nil, err
+	}
+	p.FKChecks, p.FKCascades, err = physicalop.BuildInsertFKTriggers(b.ctx, b.is, tnW.DBInfo.Name.L, tableInfo, p.OnDuplicate == ast.OnDuplicateKeyHandlingReplace, nil)
 	return p, err
 }
 
