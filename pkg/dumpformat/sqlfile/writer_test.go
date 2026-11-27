@@ -82,3 +82,107 @@ func TestSQLWriterEmptyTuple(t *testing.T) {
 	require.NoError(t, sw.Close())
 	require.Equal(t, "INSERT INTO `t` VALUES\n(),\n();\n", bf.String())
 }
+
+// encodeTuple is the one-shot reference encoding of a row, which Write must
+// reproduce however it splits the row into writes.
+func encodeTuple(row []sql.RawBytes, kinds []dumpformat.FieldKind, escapeBackslash bool) string {
+	buf := []byte{'('}
+	for i, val := range row {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		buf = AppendValue(buf, val, val == nil, kinds[i], escapeBackslash)
+	}
+	return string(append(buf, ')'))
+}
+
+// maxWriteRecorder records the largest single Write it receives.
+type maxWriteRecorder struct {
+	bytes.Buffer
+	maxWrite int
+}
+
+func (r *maxWriteRecorder) Write(p []byte) (int, error) {
+	r.maxWrite = max(r.maxWrite, len(p))
+	return r.Buffer.Write(p)
+}
+
+func TestSQLWriterLargeValues(t *testing.T) {
+	const limit = dumpformat.MaxBufferedValueSize
+	// Characters that need escaping sit on both sides of every piece boundary.
+	str := bytes.Repeat([]byte("a"), 3*limit+5)
+	for _, pos := range []int{0, limit - 1, limit, 2*limit - 1, 2 * limit, len(str) - 1} {
+		str[pos] = '\''
+	}
+	str[limit+1] = '\\'
+	str[limit+2] = '\n'
+	str[limit+3] = 0
+	str[2*limit+1] = '\x1a'
+	str[2*limit+2] = '"'
+	bin := make([]byte, 2*limit+3)
+	for i := range bin {
+		bin[i] = byte(i * 7)
+	}
+	medium := sql.RawBytes(bytes.Repeat([]byte("m'"), limit/4))
+	kinds := []dumpformat.FieldKind{
+		dumpformat.KindNumber, dumpformat.KindString, dumpformat.KindBytes, dumpformat.KindString,
+	}
+	rows := [][]sql.RawBytes{
+		{raw("1"), str, bin, nil},
+		// Each value fits the buffer but the row does not.
+		{raw("2"), medium, medium, medium},
+		{raw("3"), raw("small"), raw("\x01"), raw("")},
+	}
+	prefix := []byte("INSERT INTO `t` VALUES\n")
+
+	for _, escapeBackslash := range []bool{false, true} {
+		tuples := make([]string, len(rows))
+		for i, row := range rows {
+			tuples[i] = encodeTuple(row, kinds, escapeBackslash)
+		}
+
+		var single maxWriteRecorder
+		sw := NewWriter(&single, prefix, kinds, &Config{EscapeBackslash: escapeBackslash})
+		for _, row := range rows {
+			require.NoError(t, sw.Write(row))
+		}
+		require.NoError(t, sw.Close())
+		expected := string(prefix) + tuples[0] + ",\n" + tuples[1] + ",\n" + tuples[2] + ";\n"
+		require.Equal(t, expected, single.String())
+		require.Equal(t, uint64(len(expected)), sw.EstimateFileSize())
+		require.LessOrEqual(t, single.maxWrite, 3*limit)
+		require.LessOrEqual(t, cap(sw.buf), 4*limit)
+
+		// With a 1-byte statement limit every row gets its own statement.
+		var split bytes.Buffer
+		sw = NewWriter(&split, prefix, kinds, &Config{StatementSize: 1, EscapeBackslash: escapeBackslash})
+		for _, row := range rows {
+			require.NoError(t, sw.Write(row))
+		}
+		require.NoError(t, sw.Close())
+		expected = ""
+		for _, tuple := range tuples {
+			expected += string(prefix) + tuple + ";\n"
+		}
+		require.Equal(t, expected, split.String())
+		require.Equal(t, uint64(len(expected)), sw.EstimateFileSize())
+	}
+}
+
+func TestSQLWriterLargeValueBoundsBuffer(t *testing.T) {
+	const limit = dumpformat.MaxBufferedValueSize
+	// Every quote doubles, so this value encodes to 20*limit bytes.
+	quotes := sql.RawBytes(bytes.Repeat([]byte("'"), 10*limit))
+	bin := sql.RawBytes(bytes.Repeat([]byte{0xab}, 10*limit))
+	kinds := []dumpformat.FieldKind{dumpformat.KindString, dumpformat.KindBytes}
+
+	var rec maxWriteRecorder
+	sw := NewWriter(&rec, []byte("P\n"), kinds, &Config{})
+	require.NoError(t, sw.Write([]sql.RawBytes{quotes, bin}))
+	require.NoError(t, sw.Close())
+
+	require.Equal(t, 2+1+(2+20*limit)+1+(3+20*limit)+1+2, rec.Len())
+	require.Equal(t, uint64(rec.Len()), sw.EstimateFileSize())
+	require.LessOrEqual(t, rec.maxWrite, 3*limit)
+	require.LessOrEqual(t, cap(sw.buf), 4*limit)
+}
