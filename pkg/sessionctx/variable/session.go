@@ -1891,6 +1891,10 @@ type SessionVars struct {
 	// EnableSelectForShare permits explicit locking reads to acquire shared row locks.
 	EnableSelectForShare bool
 
+	// RestoringPreparedStmts is true while DecodeStates replays previously prepared
+	// statements during session migration.
+	RestoringPreparedStmts bool
+
 	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
 	// `select for update` statements which do acquire pessimsitic locks.
 	SharedLockPromotion bool

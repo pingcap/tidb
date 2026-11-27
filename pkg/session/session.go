@@ -6051,12 +6051,19 @@ func (s *session) DecodeStates(ctx context.Context,
 		}
 	}
 
-	// Decode prepared statements and sql bindings.
+	// Decode prepared statements and sql bindings. Statements prepared before
+	// FOR SHARE was later toggled off must still migrate; EXECUTE rechecks the
+	// restored session mode.
+	s.sessionVars.RestoringPreparedStmts = true
+	defer func() {
+		s.sessionVars.RestoringPreparedStmts = false
+	}()
 	for _, handler := range s.sessionStatesHandlers {
 		if err := handler.DecodeSessionStates(ctx, s, sessionStates); err != nil {
 			return err
 		}
 	}
+	s.sessionVars.RestoringPreparedStmts = false
 
 	for _, name := range remaining {
 		restoreVar(name)

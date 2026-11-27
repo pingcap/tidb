@@ -916,12 +916,87 @@ func TestNativeSharedLockExecution(t *testing.T) {
 	})
 	t.Run("optimistic empty lookups", func(t *testing.T) {
 		tk := newSession(t)
+		tk.MustExec("create temporary table tmp_opt(id int primary key, v int)")
+		tk.MustExec("insert into tmp_opt values (1, 10), (2, 20)")
 		tk.MustExec("begin optimistic")
-		for _, query := range []string{"select * from t where id=999999999999999 for share",
+		for _, query := range []string{
+			"select * from t where id=999999999999999 for share",
 			"select * from pt partition(p0) where id=1 for share",
-			"select * from pt partition(p0) where id in(1,3) for share"} {
+			"select * from pt partition(p0) where id in(1,3) for share",
+			"select * from t limit 0 for share",
+			"select * from tmp_opt where id=1 for share",
+			"select * from tmp_opt where id in(1,2) for share",
+			"select * from tmp_opt for share",
+		} {
 			tk.MustGetErrCode(query, mysql.ErrNotSupportedYet)
 		}
+		// Plain EXPLAIN (without ANALYZE) and PREPARE stay allowed inside an optimistic
+		// txn across scan, PointGet, BatchPointGet, and LIMIT 0, while EXPLAIN ANALYZE
+		// and EXECUTE of a LIMIT 0 prepared statement must still be rejected.
+		for _, explainSQL := range []string{
+			"explain select * from t for share",
+			"explain select * from t where id=1 for share",
+			"explain select * from t where id in(1,2) for share",
+			"explain select * from t limit 0 for share",
+		} {
+			tk.MustExec(explainSQL)
+		}
+		tk.MustGetErrCode("explain analyze select * from t where id=1 for share", mysql.ErrNotSupportedYet)
+		tk.MustGetErrCode("explain analyze select * from t limit 0 for share", mysql.ErrNotSupportedYet)
+		tk.MustExec("prepare opt_lim0 from 'select /*+ use_plan_cache() */ * from t limit 0 for share'")
+		tk.MustExec("rollback")
+		tk.MustExec("set tidb_enable_prepared_plan_cache=on")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("execute opt_lim0").Check(testkit.Rows())
+		tk.MustExec("rollback")
+		tk.MustExec("begin optimistic")
+		tk.MustGetErrCode("execute opt_lim0", mysql.ErrNotSupportedYet)
+		tk.MustExec("rollback")
+	})
+	t.Run("join USING OF and unmatched outer join", func(t *testing.T) {
+		admin.MustExec("create table ju_a (id int primary key, va int)")
+		admin.MustExec("create table ju_b (id int primary key, vb int)")
+		admin.MustExec("insert into ju_a values (1, 10), (2, 20)")
+		admin.MustExec("insert into ju_b values (0, 0), (1, 100), (2, 200)")
+
+		// JOIN ... USING(id) FOR SHARE OF ju_b must lock ju_b (and not ju_a).
+		reader, probe := newSession(t), newSession(t)
+		reader.MustExec("begin pessimistic")
+		reader.MustQuery("select id from ju_a join ju_b using(id) for share of ju_b").Sort().Check(testkit.Rows("1", "2"))
+		checkLock(probe, "ju_b", "1", true)
+		checkLock(probe, "ju_b", "2", true)
+		checkLock(probe, "ju_a", "1", false)
+		reader.MustExec("rollback")
+
+		// Same USING target selection for FOR UPDATE OF ju_b with native FOR SHARE disabled.
+		reader.MustExec("set tidb_enable_select_for_share=off")
+		reader.MustExec("begin pessimistic")
+		reader.MustQuery("select id from ju_a join ju_b using(id) for update of ju_b").Sort().Check(testkit.Rows("1", "2"))
+		checkLock(probe, "ju_b", "1", true)
+		checkLock(probe, "ju_a", "1", false)
+		reader.MustExec("rollback")
+		reader.MustExec("set tidb_enable_select_for_share=on")
+
+		// RIGHT JOIN ... USING(id) FOR SHARE OF ju_a must lock ju_a (where ju_a.id was coalesced out).
+		reader.MustExec("begin pessimistic")
+		reader.MustQuery("select id from ju_a right join ju_b using(id) where id=1 for share of ju_a").Check(testkit.Rows("1"))
+		checkLock(probe, "ju_a", "1", true)
+		checkLock(probe, "ju_b", "1", false)
+		reader.MustExec("rollback")
+
+		// Self-join with USING(id) FOR SHARE OF b2 must lock only the targeted alias.
+		reader.MustExec("begin pessimistic")
+		reader.MustQuery("select id from ju_b b1 join ju_b b2 using(id) where id=2 for share of b2").Check(testkit.Rows("2"))
+		checkLock(probe, "ju_b", "2", true)
+		checkLock(probe, "ju_b", "1", false)
+		reader.MustExec("rollback")
+
+		// Unmatched LEFT JOIN must not synthesize IntHandle(0) and lock existing ju_b.id=0.
+		reader.MustExec("begin pessimistic")
+		reader.MustQuery("select ju_a.id, ju_b.id from ju_a left join ju_b on ju_a.id = ju_b.id + 100 for share of ju_b").Sort().Check(testkit.Rows("1 <nil>", "2 <nil>"))
+		checkLock(probe, "ju_b", "0", false)
+		checkLock(probe, "ju_b", "1", false)
+		reader.MustExec("rollback")
 	})
 	t.Run("empty locking scan disables optimistic retry", func(t *testing.T) {
 		tk := newSession(t)

@@ -821,11 +821,40 @@ func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) exec.Execut
 func (b *executorBuilder) recordSelectLock(inShareMode bool) {
 	b.hasLock = true
 	if inShareMode {
-		vars := b.sctx.GetSessionVars()
-		if !vars.TxnCtx.IsPessimistic || !(vars.IsIsolation(ast.ReadCommitted) || vars.IsIsolation(ast.RepeatableRead)) {
-			b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SELECT FOR SHARE outside pessimistic READ COMMITTED or REPEATABLE READ transactions")
+		// Defer transaction-mode validation to ExecStmt.buildExecutor so plain
+		// EXPLAIN can build its child plan without tripping execution checks.
+		b.sctx.GetSessionVars().StmtCtx.HasNativeSelectForShare = true
+	}
+}
+
+func checkNativeSelectForShareTxnMode(vars *variable.SessionVars) error {
+	if vars.TxnCtx == nil || !vars.TxnCtx.IsPessimistic || !(vars.IsIsolation(ast.ReadCommitted) || vars.IsIsolation(ast.RepeatableRead)) {
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SELECT FOR SHARE outside pessimistic READ COMMITTED or REPEATABLE READ transactions")
+	}
+	return nil
+}
+
+// validateNativeSelectForShareTxnMode enforces transaction-mode restrictions even
+// when planning folds the query to TableDual (for example LIMIT 0) or skips locks
+// on temporary tables.
+func validateNativeSelectForShareTxnMode(sctx sessionctx.Context, e exec.Executor) error {
+	vars := sctx.GetSessionVars()
+	stmtCtx := vars.StmtCtx
+	if !stmtCtx.HasNativeSelectForShare {
+		return nil
+	}
+	switch x := e.(type) {
+	case *PrepareExec, *DDLExec:
+		return nil
+	case *ExplainExec:
+		if x.explain != nil && !x.explain.Analyze {
+			return nil
 		}
 	}
+	if !vars.IsAutocommit() || vars.InTxn() || stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt {
+		return checkNativeSelectForShareTxnMode(vars)
+	}
+	return nil
 }
 
 func (b *executorBuilder) buildSelectLock(v *physicalop.PhysicalLock) exec.Executor {

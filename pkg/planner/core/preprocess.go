@@ -1766,7 +1766,11 @@ func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 
 // Prepared statements must check the current mode again at EXECUTE.
 func checkForShareMode(vars *variable.SessionVars) error {
-	if vars.EnableSelectForShare || vars.SharedLockPromotion {
+	if vars.EnableSelectForShare {
+		vars.StmtCtx.HasNativeSelectForShare = true
+		return nil
+	}
+	if vars.SharedLockPromotion || vars.RestoringPreparedStmts {
 		return nil
 	}
 	if vars.NoopFuncsMode != variable.OnInt {

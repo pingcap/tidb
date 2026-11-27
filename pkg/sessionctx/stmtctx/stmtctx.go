@@ -577,6 +577,10 @@ type StatementContext struct {
 	// acquired in this case.
 	ForShareLockEnabledByNoop bool
 
+	// HasNativeSelectForShare indicates whether the current statement contains a `for share`
+	// clause executing under native `tidb_enable_select_for_share` mode.
+	HasNativeSelectForShare bool
+
 	// OperatorNum is used to record the number of operators in the current logical plan.
 	OperatorNum uint64
 }

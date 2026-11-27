@@ -1455,6 +1455,20 @@ func TestMigratePreparedSharedRead(t *testing.T) {
 	require.NoError(t, src.Session().EncodeStates(context.Background(), &states))
 	require.NoError(t, dst.Session().DecodeStates(context.Background(), &states))
 	dst.MustQuery("execute s").Check(testkit.Rows())
+
+	// Prepared while ON, then switched OFF (with noop & promotion OFF): migration
+	// must still succeed, EXECUTE must fail while OFF, and succeed once re-enabled.
+	src2, dst2 := open(103), open(104)
+	src2.MustExec("use test")
+	src2.MustExec("set tidb_enable_noop_functions=off, tidb_enable_shared_lock_promotion=off, tidb_enable_select_for_share=on")
+	src2.MustExec("prepare s_off from 'select id from t for share'")
+	src2.MustExec("set tidb_enable_select_for_share=off")
+	var statesOff sessionstates.SessionStates
+	require.NoError(t, src2.Session().EncodeStates(context.Background(), &statesOff))
+	require.NoError(t, dst2.Session().DecodeStates(context.Background(), &statesOff))
+	dst2.MustGetErrCode("execute s_off", mysql.ErrNotSupportedYet)
+	dst2.MustExec("set tidb_enable_select_for_share=on")
+	dst2.MustQuery("execute s_off").Check(testkit.Rows())
 }
 
 func TestPrefetchPointKeys4Delete(t *testing.T) {

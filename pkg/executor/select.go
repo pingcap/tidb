@@ -218,12 +218,27 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		for tblID, cols := range e.tblID2Handle {
 			for _, col := range cols {
+				nullHandle := false
+				for c := range col.IterColumns() {
+					if row.IsNull(c.Index) {
+						nullHandle = true
+						break
+					}
+				}
+				if nullHandle {
+					// Unmatched side of an outer join has NULL handle columns;
+					// do not synthesize a lock key (for example IntHandle(0)).
+					continue
+				}
 				handle, err := col.BuildHandle(e.Ctx().GetSessionVars().StmtCtx, row)
 				if err != nil {
 					return err
 				}
 				physTblID := tblID
 				if pid := e.physIDColByHandle[col.GetCol(0).UniqueID]; pid != nil {
+					if row.IsNull(pid.Index) {
+						continue
+					}
 					physTblID = row.GetInt64(pid.Index)
 					if physTblID == 0 {
 						// select * from t1 left join t2 on t1.c = t2.c for update

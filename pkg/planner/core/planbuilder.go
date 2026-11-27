@@ -1642,6 +1642,8 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLockInfo) (*logicalop.LogicalLock, error) {
 	handles := b.handleHelper.tailMap()
 	if len(lock.Tables) != 0 {
+		handleTargetName := make(map[int64]string)
+		collectHandleTargetNames(src, handleTargetName)
 		selected := make(map[int64][]util.HandleCols)
 		foundTarget := false
 		for _, target := range lock.Tables {
@@ -1655,8 +1657,15 @@ func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLock
 				if hc == nil {
 					continue
 				}
-				i := src.Schema().ColumnIndex(hc.GetCol(0))
-				if i >= 0 && src.OutputNames()[i].TblName.L == ref.LockTargetName.L && !slices.Contains(selected[id], hc) {
+				var targetName string
+				if i := src.Schema().ColumnIndex(hc.GetCol(0)); i >= 0 {
+					targetName = src.OutputNames()[i].TblName.L
+				} else {
+					// JOIN ... USING / NATURAL JOIN can coalesce a side's key column
+					// out of the visible schema while keeping it in FullSchema/DataSource.
+					targetName = handleTargetName[hc.GetCol(0).UniqueID]
+				}
+				if targetName == ref.LockTargetName.L && !slices.Contains(selected[id], hc) {
 					selected[id] = append(selected[id], hc)
 				}
 			}
@@ -1686,6 +1695,24 @@ func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLock
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock, nil
+}
+
+func collectHandleTargetNames(p base.LogicalPlan, handleTargetName map[int64]string) {
+	switch ds := p.(type) {
+	case *logicalop.DataSource:
+		if ds.HandleCols == nil {
+			return
+		}
+		targetName := ds.TableInfo.Name.L
+		if ds.TableAsName != nil && ds.TableAsName.L != "" {
+			targetName = ds.TableAsName.L
+		}
+		handleTargetName[ds.HandleCols.GetCol(0).UniqueID] = targetName
+	default:
+		for _, child := range p.Children() {
+			collectHandleTargetNames(child, handleTargetName)
+		}
+	}
 }
 
 func setExtraPhysTblIDColsOnDataSource(p base.LogicalPlan, physIDColByHandle map[int64]*expression.Column) {

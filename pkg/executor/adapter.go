@@ -1628,6 +1628,9 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (exec.Executor, error) {
 		}
 		e = executorExec.stmtExec
 	}
+	if err := validateNativeSelectForShareTxnMode(sctx, e); err != nil {
+		return nil, err
+	}
 	a.isSelectForUpdate = b.hasLock && (!stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt && !stmtCtx.InInsertStmt)
 	return e, nil
 }
