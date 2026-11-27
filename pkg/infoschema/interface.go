@@ -31,6 +31,8 @@ type InfoSchema interface {
 	context.MetaOnlyInfoSchema
 	TableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, error)
 	TableByID(ctx stdctx.Context, id int64) (table.Table, bool)
+	// TableByIDWithError returns (nil, nil) for a missing table and propagates metadata read errors.
+	TableByIDWithError(ctx stdctx.Context, id int64) (table.Table, error)
 	// TableItemByID returns a lightweight table meta specified by the given ID,
 	// without loading the whole info from storage.
 	// So it's all in memory operation. No need to worry about network or disk cost.

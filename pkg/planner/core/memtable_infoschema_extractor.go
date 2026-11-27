@@ -170,25 +170,17 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 	if ec.table != "" {
 		tableNames = e.getSchemaObjectNames(ec.table)
 	}
-	var tableIDs []ast.CIStr
-	if ec.tableID != "" {
-		tableIDs = e.getSchemaObjectNames(ec.tableID)
-		if len(tableIDs) > 0 {
-			tableMap := make(map[int64]*model.TableInfo, len(tableIDs))
-			findTablesByID(is, tableIDs, tableNames, tableMap)
-			tableSlice := slices.Collect(maps.Values(tableMap))
-			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
-			return findSchemasForTables(e, is, tableSlice)
+	for _, idColumn := range []string{ec.tableID, ec.partitionID} {
+		if idColumn == "" {
+			continue
 		}
-	}
-	if ec.partitionID != "" {
-		partIDs := e.getSchemaObjectNames(ec.partitionID)
-		if len(partIDs) > 0 {
-			tableMap := make(map[int64]*model.TableInfo, len(partIDs))
-			findTablesByPartID(is, partIDs, tableNames, tableMap)
-			tableSlice := slices.Collect(maps.Values(tableMap))
-			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
-			return findSchemasForTables(e, is, tableSlice)
+		if ids := e.getSchemaObjectNames(idColumn); len(ids) > 0 {
+			tables, err := findTablesByID(ctx, is, ids, tableNames, idColumn == ec.partitionID)
+			if err != nil {
+				return nil, nil, err
+			}
+			tables = filterSchemaObjectByRegexp(e, ec.table, tables, extractStrTableInfo)
+			return findSchemasForTables(e, is, tables)
 		}
 	}
 	if len(tableNames) > 0 {
@@ -677,61 +669,45 @@ func NewInfoSchemaSequenceExtractor() *InfoSchemaSequenceExtractor {
 	return e
 }
 
-// findTablesByID finds tables by table IDs and append them to table map.
+// findTablesByID finds distinct tables matching table or partition IDs.
 func findTablesByID(
+	ctx context.Context,
 	is infoschema.InfoSchema,
-	tableIDs []ast.CIStr,
-	tableNames []ast.CIStr,
-	tables map[int64]*model.TableInfo,
-) {
+	ids, tableNames []ast.CIStr,
+	byPartitionID bool,
+) ([]*model.TableInfo, error) {
 	tblNameMap := make(map[string]struct{}, len(tableNames))
 	for _, n := range tableNames {
 		tblNameMap[n.L] = struct{}{}
 	}
-	for _, tid := range parseIDs(tableIDs) {
-		tbl, ok := is.TableByID(context.Background(), tid)
-		if !ok {
+	tables := make(map[int64]*model.TableInfo, len(ids))
+	for _, id := range parseIDs(ids) {
+		if byPartitionID {
+			parentID, ok := is.TableIDByPartitionID(id)
+			if !ok {
+				continue
+			}
+			id = parentID
+		}
+		if _, seen := tables[id]; seen {
+			continue
+		}
+		tbl, err := is.TableByIDWithError(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if tbl == nil || tbl.Meta().TempTableType == model.TempTableLocal {
 			continue
 		}
 		tblInfo := tbl.Meta()
-		if tblInfo.TempTableType == model.TempTableLocal {
-			continue
-		}
-		if len(tableNames) > 0 {
+		if len(tblNameMap) > 0 {
 			if _, found := tblNameMap[tblInfo.Name.L]; !found {
-				// table_id does not match table_name, skip it.
 				continue
 			}
 		}
-		tables[tblInfo.ID] = tblInfo
+		tables[id] = tblInfo
 	}
-}
-
-// findTablesByPartID finds tables by partition IDs and append them to table map.
-func findTablesByPartID(
-	is infoschema.InfoSchema,
-	partIDs []ast.CIStr,
-	tableNames []ast.CIStr,
-	tables map[int64]*model.TableInfo,
-) {
-	tblNameMap := make(map[string]struct{}, len(tableNames))
-	for _, n := range tableNames {
-		tblNameMap[n.L] = struct{}{}
-	}
-	for _, pid := range parseIDs(partIDs) {
-		tbl, _, _ := is.FindTableByPartitionID(pid)
-		if tbl == nil {
-			continue
-		}
-		if len(tableNames) > 0 {
-			if _, found := tblNameMap[tbl.Meta().Name.L]; !found {
-				// partition_id does not match table_name, skip it.
-				continue
-			}
-		}
-		tblInfo := tbl.Meta()
-		tables[tblInfo.ID] = tblInfo
-	}
+	return slices.Collect(maps.Values(tables)), nil
 }
 
 func findTableAndSchemaByName(
