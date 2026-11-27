@@ -7,6 +7,7 @@ go_test(
         "cbo_test.go",
         "clustered_index_test.go",
         "main_test.go",
+        "topn_double_read_cost_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
