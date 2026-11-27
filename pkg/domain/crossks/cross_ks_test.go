@@ -581,7 +581,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.NoError(t, err)
 		defer pool.Destroy(resource)
 		output := make(chan importer.QueryChunk, 4)
-		err = executor.RunImportQuery(ctx, resource.(sessionctx.Context), pool, captured, sql, 1<<20, output)
+		err = executor.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output)
 		require.NoError(t, err)
 		close(output)
 		result := make(map[int64]int64)
@@ -596,9 +596,10 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		}
 		require.Equal(t, map[int64]int64{1: 2, 2: 1}, result)
 
-		// Verify RunImportQuery attaches OnDemandStatsProvider for cross-keyspace
-		// sessions, loads target keyspace stats, and enables dynamic partition pruning
-		// even with tidb_skip_missing_partition_stats = off.
+		// Verify cross-keyspace dynamic partition pruning with
+		// tidb_skip_missing_partition_stats = off: without a StatsProvider it falls
+		// back to static mode, while the DXF ImportStepQuery path wires
+		// OnDemandStatsProvider automatically and keeps dynamic pruning enabled.
 		tk.MustExec(`create table query_part(id bigint, v bigint, key idx_v(v))
 			partition by range (id) (
 				partition p0 values less than (10),
@@ -631,43 +632,26 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 			observedVersion = tblStats.Version
 		})
 
-		// Without a session pool (no StatsProvider), dynamic pruning falls back to
+		// Without StatsProvider on the cross-KS session, dynamic pruning falls back to
 		// static mode because tidb_skip_missing_partition_stats is off.
-		noPoolRes, err := pool.Get()
+		noStatsRes, err := pool.Get()
 		require.NoError(t, err)
-		defer pool.Destroy(noPoolRes)
-		noPoolOut := make(chan importer.QueryChunk, 4)
-		err = executor.RunImportQuery(ctx, noPoolRes.(sessionctx.Context), nil, partCaptured, partSQL, 1<<20, noPoolOut)
+		defer pool.Destroy(noStatsRes)
+		noStatsOut := make(chan importer.QueryChunk, 4)
+		err = executor.RunImportQuery(ctx, noStatsRes.(sessionctx.Context), partCaptured, partSQL, 1<<20, noStatsOut)
 		require.NoError(t, err)
-		close(noPoolOut)
+		close(noStatsOut)
 		require.False(t, observedDynamic)
 		require.True(t, observedPseudo)
-
-		// With the target-keyspace session pool, RunImportQuery wires OnDemandStatsProvider
-		// automatically and keeps dynamic partition pruning enabled.
-		partRes, err := pool.Get()
-		require.NoError(t, err)
-		defer pool.Destroy(partRes)
-		partSE := partRes.(sessionctx.Context)
-
-		partOut := make(chan importer.QueryChunk, 4)
-		err = executor.RunImportQuery(ctx, partSE, pool, partCaptured, partSQL, 1<<20, partOut)
-		require.NoError(t, err)
-		close(partOut)
-		require.True(t, observedDynamic)
-		require.False(t, observedPseudo)
-		require.Greater(t, observedVersion, uint64(0))
-		require.Equal(t, int64(4), observedRowCount)
-
-		partResult := make(map[int64]int64)
-		for batch := range partOut {
+		noStatsResult := make(map[int64]int64)
+		for batch := range noStatsOut {
 			chk := batch.Chk
 			for i := range chk.NumRows() {
 				row := chk.GetRow(i)
-				partResult[row.GetInt64(0)] = row.GetInt64(1)
+				noStatsResult[row.GetInt64(0)] = row.GetInt64(1)
 			}
 		}
-		require.Equal(t, map[int64]int64{1: 10, 2: 20}, partResult)
+		require.Equal(t, map[int64]int64{1: 10, 2: 20}, noStatsResult)
 
 		// Verify the production DXF ImportStepQuery path (importStepExecutor.readQuery)
 		// loads target-keyspace stats automatically when given the cross-KS runtime handle.
