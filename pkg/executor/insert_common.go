@@ -112,8 +112,9 @@ type InsertValues struct {
 	stats *InsertRuntimeStat
 
 	// fkChecks contains the foreign key checkers.
-	fkChecks   []*FKCheckExec
-	fkCascades []*FKCascadeExec
+	fkChecks           []*FKCheckExec
+	fkChecksPrechecked bool
+	fkCascades         []*FKCascadeExec
 
 	ignoreErr bool
 }
@@ -1676,6 +1677,15 @@ func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum, dupKeyC
 	return e.addRecordWithAutoIDHint(ctx, row, 0, dupKeyCheck)
 }
 
+func (e *InsertValues) addRecordAfterFKPrecheck(
+	ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode,
+) error {
+	previous := e.fkChecksPrechecked
+	e.fkChecksPrechecked = true
+	defer func() { e.fkChecksPrechecked = previous }()
+	return e.addRecord(ctx, row, dupKeyCheck)
+}
+
 func (e *InsertValues) addRecordWithAutoIDHint(
 	ctx context.Context, row []types.Datum, reserveAutoIDCount int, dupKeyCheck table.DupKeyCheckMode,
 ) (err error) {
@@ -1697,7 +1707,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
 	}
-	if dupKeyCheck != table.DupKeyCheckSkip {
+	if dupKeyCheck != table.DupKeyCheckSkip && !e.fkChecksPrechecked {
 		for _, fkc := range e.fkChecks {
 			err = fkc.insertRowNeedToCheck(vars.StmtCtx, row)
 			if err != nil {
