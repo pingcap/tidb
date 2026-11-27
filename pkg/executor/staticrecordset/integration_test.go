@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -187,6 +188,49 @@ func TestCursorWillBeClosed(t *testing.T) {
 		require.Fail(t, "cursor should be closed")
 		return false
 	})
+}
+
+// TestDetachedCursorRecordsRunawayOnClose verifies that a query overrunning EXEC_ELAPSED on the
+// detached server-side cursor path is still recorded. This path finishes without reaching
+// `ExecStmt.FinishExecuteStmt`, so the final runaway check runs in `cursorRecordSet.Close` instead.
+// The query's only coprocessor request is issued (and observed by the in-flight paths) before the
+// deadline, and no further request is issued afterwards, so the close-time check is the only thing
+// that can record it.
+func TestDetachedCursorRecordsRunawayOnClose(t *testing.T) {
+	// Use a longer expired duration to avoid the record being deleted before it can be observed.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(2500)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+
+	tk.MustExec("set global tidb_enable_resource_control='on'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	// EXEC_ELAPSED is large enough that the query's coprocessor request during execution does not
+	// trip the in-flight detection; the deadline is then crossed by the sleep before close.
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='500ms' ACTION=DRYRUN)")
+
+	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+
+	rs, err := tk.Exec("select /*+ resource_group(rg1) */ * from t")
+	require.NoError(t, err)
+	drs := rs.(sqlexec.DetachableRecordSet)
+	srs, ok, err := drs.TryDetach()
+	require.True(t, ok)
+	require.NoError(t, err)
+
+	// Cross the deadline while the cursor is open and idle (no further coprocessor request).
+	time.Sleep(700 * time.Millisecond)
+
+	// Closing the detached cursor must run the final runaway check and record the query.
+	require.NoError(t, srs.Close())
+
+	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, match_type from mysql.tidb_runaway_queries", nil,
+		testkit.Rows("rg1 identify"), 5*time.Second, 100*time.Millisecond)
 }
 
 func TestCursorWillBlockMinStartTS(t *testing.T) {
