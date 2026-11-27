@@ -526,6 +526,52 @@ func TestRenameReferredTableInSameDatabase(t *testing.T) {
 	tk.MustGetDBError("insert into child values (2)", plannererrors.ErrNoReferencedRow2)
 }
 
+func TestRenameTablesMovesChildBetweenReferredTables(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testkit.NewTestKit(t, store).MustExec("set @@global.tidb_enable_foreign_key=1")
+
+	cases := []struct {
+		rename string
+		schema string
+		child  string
+		p, r   string
+	}{
+		{"rename table d0.p to d1.p, d0.c to d1.c, d0.r to d1.r", "d1", "c", "p", "r"},
+		{"rename table d0.p to d0.p2, d0.c to d0.c2, d0.r to d0.r2", "d0", "c2", "p2", "r2"},
+		{"rename table d0.p to d1.p, d0.c to d1.c, d1.c to d1.c2, d0.r to d1.r", "d1", "c2", "p", "r"},
+	}
+	for _, ca := range cases {
+		t.Run(ca.rename, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("set @@foreign_key_checks=1")
+			tk.MustExec("drop database if exists d0")
+			tk.MustExec("drop database if exists d1")
+			tk.MustExec("create database d0")
+			tk.MustExec("create database d1")
+			tk.MustExec("create table d0.p (id int primary key)")
+			tk.MustExec("create table d0.r (id int primary key)")
+			tk.MustExec("create table d0.c (a int, b int, " +
+				"constraint fk_p foreign key (a) references d0.p(id), constraint fk_r foreign key (b) references d0.r(id))")
+			tk.MustExec(ca.rename)
+
+			childInfo := getTableInfo(t, dom, ca.schema, ca.child)
+			require.Equal(t, ca.child, childInfo.Name.L)
+			require.Equal(t, 2, len(childInfo.ForeignKeys))
+			for _, fk := range childInfo.ForeignKeys {
+				require.Equal(t, ca.schema, fk.RefSchema.L)
+			}
+			require.Equal(t, ca.p, model.FindFKInfoByName(childInfo.ForeignKeys, "fk_p").RefTable.L)
+			require.Equal(t, ca.r, model.FindFKInfoByName(childInfo.ForeignKeys, "fk_r").RefTable.L)
+
+			tk.MustExec(fmt.Sprintf("insert into %s.%s values (1)", ca.schema, ca.p))
+			tk.MustExec(fmt.Sprintf("insert into %s.%s values (1)", ca.schema, ca.r))
+			tk.MustExec(fmt.Sprintf("insert into %s.%s values (1, 1)", ca.schema, ca.child))
+			tk.MustGetDBError(fmt.Sprintf("insert into %s.%s values (2, 1)", ca.schema, ca.child), plannererrors.ErrNoReferencedRow2)
+			tk.MustGetDBError(fmt.Sprintf("insert into %s.%s values (1, 2)", ca.schema, ca.child), plannererrors.ErrNoReferencedRow2)
+		})
+	}
+}
+
 func TestCreateTableWithForeignKeyError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
