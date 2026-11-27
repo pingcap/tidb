@@ -1353,6 +1353,9 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 	if len(idxInfos) == 0 {
 		return nil
 	}
+	if job.ReorgMeta.IsDistReorg && !job.ReorgMeta.IsFastReorg {
+		return dbterror.ErrUnsupportedDistTask
+	}
 	loadCloudStorageURI(w, job)
 	// On a NextGen cluster, global sort is the product design for add index /
 	// modify column. Local sort is only tolerated when SEM is disabled, which
