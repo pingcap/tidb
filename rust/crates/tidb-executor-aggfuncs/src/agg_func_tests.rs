@@ -2249,3 +2249,100 @@ fn a_slide_removes_before_it_adds() {
         assert_datum_eq(&final_datum(func.as_ref(), &mut pr, &desc.base.ret_type), &expected, "slid sum");
     }
 }
+
+/// Go `TestMemJsonObjectaggReplacement` (6ceba0c14ba): replacing a key's
+/// value charges the new payload and releases the old one (the key stays
+/// charged once), through updates one row at a time, merges and one batch;
+/// after a reset the old payloads are no longer charged.
+#[test]
+fn test_mem_json_objectagg_replacement() {
+    use crate::agg_func::{DEF_INT64_SIZE, DEF_INTERFACE_SIZE};
+    let large = "x".repeat(4096);
+    let json = |s: &str| Datum::Json(tidb_datatype::BinaryJSON::parse(&format!("\"{s}\"")).expect("a string document"));
+    let json_size = |s: &str| match json(s) {
+        Datum::Json(value) => value.value().len() as i64 + 1,
+        _ => unreachable!(),
+    };
+    let mut blob = FieldType::new(FieldTypeCode::Blob);
+    blob.set_charset_name("binary");
+    blob.set_collation_name("binary");
+    let bytes = |s: &str| Datum::new_bytes_datum(s.as_bytes().to_vec());
+    let string = |s: &str| Datum::new_string_datum(s.as_bytes().to_vec());
+    let cases: Vec<(&str, FieldType, Vec<Datum>, Vec<i64>)> = vec![
+        (
+            "string",
+            FieldType::new(FieldTypeCode::VarString),
+            vec![Datum::Null, string("a"), string(&large), string("b"), string("c"), Datum::Null, Datum::Null, string("d")],
+            vec![0, 1, 4096, 1, 1, 0, 0, 1],
+        ),
+        (
+            "json",
+            FieldType::new(FieldTypeCode::Json),
+            vec![Datum::Null, json("a"), json(&large), json("a"), json("a"), Datum::Null, Datum::Null, json("a")],
+            vec![0, json_size("a"), json_size(&large), json_size("a"), json_size("a"), 0, 0, json_size("a")],
+        ),
+        (
+            "opaque",
+            blob,
+            vec![Datum::Null, bytes("a"), bytes(&large), bytes("b"), bytes("c"), Datum::Null, Datum::Null, bytes("d")],
+            vec![0, 2, 4097, 2, 2, 0, 0, 2],
+        ),
+        (
+            "integer",
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![Datum::Null, Datum::Int(1), Datum::Int(2), Datum::Null, Datum::Null, Datum::Int(3)],
+            vec![0, DEF_INT64_SIZE, DEF_INT64_SIZE, 0, 0, DEF_INT64_SIZE],
+        ),
+    ];
+    const KEY: &str = "duplicate";
+    for (name, value_type, values, payload_sizes) in cases {
+        for mode in ["update", "merge", "batch"] {
+            let key_type = FieldType::new(FieldTypeCode::VarString);
+            let tps = vec![key_type.clone(), value_type.clone()];
+            let args: Vec<Expression> = tps
+                .iter()
+                .enumerate()
+                .map(|(k, tp)| {
+                    let mut column = Column::new(k as i64 + 1, tp.clone());
+                    column.index = k as i64;
+                    Expression::Column(column)
+                })
+                .collect();
+            let desc = AggFuncDesc::new(&NoColumns, "json_objectagg", args, false).expect("descriptor builds");
+            let func = build(&NoColumns, &desc, 0).expect("json_objectagg is implemented");
+            let (mut pr, _) = func.alloc_partial_result();
+            let mut chk = Chunk::new_chunk_with_capacity(&tps, values.len());
+            for value in &values {
+                chk.append_datum(0, &string(KEY));
+                chk.append_datum(1, value);
+            }
+            let rows: Vec<_> = (0..values.len()).map(|i| chk.get_row(i)).collect();
+            // Repeating after reset also checks that old payloads are no
+            // longer charged.
+            for _ in 0..2 {
+                if mode == "batch" {
+                    let delta = func.update_partial_result(&NoColumns, &rows, &mut pr).unwrap();
+                    assert_eq!(delta, KEY.len() as i64 + DEF_INTERFACE_SIZE + payload_sizes[rows.len() - 1], "{name}/{mode}");
+                } else {
+                    for (i, row) in rows.iter().enumerate() {
+                        let delta = if mode == "merge" {
+                            let (mut src, _) = func.alloc_partial_result();
+                            func.update_partial_result(&NoColumns, &[*row], &mut src).unwrap();
+                            func.merge_partial_result(&NoColumns, &mut src, &mut pr).unwrap()
+                        } else {
+                            func.update_partial_result(&NoColumns, &[*row], &mut pr).unwrap()
+                        };
+                        let mut expected = payload_sizes[i];
+                        if i == 0 {
+                            expected += KEY.len() as i64 + DEF_INTERFACE_SIZE;
+                        } else {
+                            expected -= payload_sizes[i - 1];
+                        }
+                        assert_eq!(delta, expected, "{name}/{mode} value {i}");
+                    }
+                }
+                func.reset_partial_result(&mut pr);
+            }
+        }
+    }
+}

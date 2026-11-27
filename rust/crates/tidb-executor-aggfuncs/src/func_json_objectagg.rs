@@ -131,6 +131,19 @@ pub struct PartialResult4JsonObjectAgg {
     pub(crate) entries: MemAwareMap<GoString, RealJSONValue>,
 }
 
+impl PartialResult4JsonObjectAgg {
+    /// Go `partialResult4JsonObjectAgg.set`: replacing a value releases its
+    /// previous payload but retains the key.
+    fn set(&mut self, key: GoString, value: RealJSONValue) -> i64 {
+        let mut mem_delta = get_val_mem_delta(&value);
+        match self.entries.get(&key) {
+            Some(old_value) => mem_delta -= get_val_mem_delta(old_value),
+            None => mem_delta += key.len() as i64,
+        }
+        mem_delta + self.entries.set(key, value)
+    }
+}
+
 /// Go `p.entries.Init(make(map[string]any))`: an empty map and its bytes.
 fn new_entries() -> (MemAwareMap<GoString, RealJSONValue>, i64) {
     let entries = MemAwareMap::new(0);
@@ -194,12 +207,7 @@ impl AggFunc for JsonObjectAgg {
             }
             let value = self.base.args[1].eval(sctx, *row).map_err(ExecError::Eval)?;
             let real_val = get_real_json_value(&value, &value_type)?;
-            let key_len = key.len() as i64;
-            let val_delta = get_val_mem_delta(&real_val);
-            let (delta, insert) = p.entries.set_ext(key, real_val);
-            if insert {
-                mem_delta += key_len + val_delta + delta;
-            }
+            mem_delta += p.set(key, real_val);
         }
         Ok(mem_delta)
     }
@@ -214,7 +222,7 @@ impl AggFunc for JsonObjectAgg {
         let p2 = partial::<PartialResult4JsonObjectAgg>(dst);
         let mut mem_delta = 0;
         for (k, v) in source {
-            mem_delta += k.len() as i64 + get_val_mem_delta(&v) + p2.entries.set(k, v);
+            mem_delta += p2.set(k, v);
         }
         Ok(mem_delta)
     }
