@@ -39,7 +39,32 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
+
+const s3BaseClientLogMode = aws.LogRetries | aws.LogDeprecatedUsage
+
+// dynamicRequestResponseLogging syncs smithy-go's RequestResponseLogger flags
+// with logger's current level before each operation. Enabling aws.LogRequest
+// statically causes httputil.DumpRequestOut to read and buffer ContentLength
+// placeholder bytes on every upload even when zap drops Debug logs, while
+// snapshotting the level at client creation misses runtime log-level changes.
+func dynamicRequestResponseLogging(logger *zap.Logger) func(*middleware.Stack) error {
+	return func(stack *middleware.Stack) error {
+		m, ok := stack.Deserialize.Get("RequestResponseLogger")
+		if !ok {
+			return nil
+		}
+		rr, ok := m.(*smithyhttp.RequestResponseLogger)
+		if !ok {
+			return nil
+		}
+		debugEnabled := logger.Core().Enabled(zapcore.DebugLevel)
+		rr.LogRequest = debugEnabled
+		rr.LogResponse = debugEnabled
+		return nil
+	}
+}
 
 const (
 	defaultRegion = "us-east-1"
@@ -85,7 +110,10 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	configOpts = append(configOpts,
 		config.WithRegion(region),
 		config.WithLogger(newLogger(logger)),
-		config.WithClientLogMode(aws.LogRequest|aws.LogRetries|aws.LogResponse|aws.LogDeprecatedUsage),
+		config.WithClientLogMode(s3BaseClientLogMode),
+		config.WithAPIOptions([]func(*middleware.Stack) error{
+			dynamicRequestResponseLogging(logger),
+		}),
 		config.WithLogConfigurationWarnings(true),
 	)
 
@@ -145,8 +173,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	s3Opts = append(s3Opts, func(o *s3.Options) {
 		o.Logger = newLogger(logger)
 		o.DisableLogOutputChecksumValidationSkipped = true
-		// These logs will be printed when log level is `DEBUG`.
-		o.ClientLogMode |= aws.LogRetries | aws.LogRequest | aws.LogResponse | aws.LogDeprecatedUsage
+		// Request/response dumping is toggled per operation by dynamicRequestResponseLogging.
+		o.ClientLogMode |= s3BaseClientLogMode
 	})
 	if gcsS3Compatible {
 		s3Opts = append(s3Opts, func(o *s3.Options) {
