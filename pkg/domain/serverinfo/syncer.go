@@ -100,7 +100,10 @@ func NewSyncer(
 	reporter MinStartTSReporter,
 	options ...SyncerOption,
 ) *Syncer {
-	return newSyncer(uuid, serverIDGetter, etcdCli, reporter, "", options...)
+	s := newSyncer(uuid, serverIDGetter, etcdCli, reporter, "", options...)
+	info := s.GetLocalServerInfo()
+	metrics.ServerInfo.WithLabelValues(mysql.TiDBReleaseVersion, info.GitHash).Set(float64(info.StartTimestamp))
+	return s
 }
 
 // NewCrossKSSyncer creates a new Syncer instance for cross keyspace scenarios.
@@ -145,7 +148,7 @@ func (s *Syncer) NewSessionAndStoreServerInfo(ctx context.Context) error {
 	}
 	s.cleanupStaleServerAndOwnerInfo(ctx)
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", s.serverInfoPath)
-	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, util.SessionTTL)
+	session, err := tidbutil.NewSessionWithMetricLabel(ctx, logPrefix, "server-info-syncer", s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, util.SessionTTL)
 	if err != nil {
 		return err
 	}
@@ -392,7 +395,7 @@ func (s *Syncer) RevokeSession() {
 }
 
 // ServerInfoSyncLoop syncs the server information periodically.
-func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) {
+func (s *Syncer) ServerInfoSyncLoop(ctx context.Context, store tidbkv.Storage, exitCh chan struct{}) {
 	defer func() {
 		logutil.BgLogger().Info("server info sync loop exited.")
 	}()
@@ -411,7 +414,7 @@ func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) 
 				return
 			}
 			logutil.BgLogger().Info("server info syncer need to restart")
-			if err := s.Restart(context.Background()); err != nil {
+			if err := s.Restart(ctx); err != nil {
 				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
 			} else {
 				logutil.BgLogger().Info("server info syncer restarted")
@@ -631,8 +634,6 @@ func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string, di
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
-
-	metrics.ServerInfo.WithLabelValues(mysql.TiDBReleaseVersion, info.GitHash).Set(float64(info.StartTimestamp))
 
 	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {

@@ -701,6 +701,7 @@ func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
 			ExpectedLastSuccessReadTSONull:     false,
 			NextRefreshUnixSeconds:             &nextRefreshUnixSeconds,
 			ShouldUpdateNextRefreshUnixSeconds: true,
+			OldMViewHasAffinity:                true,
 		},
 		{
 			OldMViewID:                         101,

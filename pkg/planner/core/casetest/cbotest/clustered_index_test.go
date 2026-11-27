@@ -63,7 +63,7 @@ func TestClusteredIndexPlansWithStats(t *testing.T) {
 		)`, schema.primaryKey))
 		for _, table := range []string{"tbl_0", "tbl_2"} {
 			require.NoError(t, testkit.LoadTableStats(schema.name+"_"+table+".json", dom))
-			dom.StatsHandle().WaitForAsyncUpdates()
+			dom.StatsHandle().Cache().WaitForAsyncUpdates()
 		}
 	}
 

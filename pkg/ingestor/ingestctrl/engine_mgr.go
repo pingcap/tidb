@@ -16,6 +16,7 @@ package ingestctrl
 
 import (
 	"context"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -32,22 +33,13 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/lightning/manual"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-)
-
-var (
-	// RunInTest indicates whether the current process is running in test.
-	RunInTest bool
-	// LastAlloc is the last ID allocator.
-	LastAlloc atomic.Pointer[manual.Allocator]
 )
 
 // StoreHelper have some api to help encode or store KV data
@@ -57,20 +49,19 @@ type StoreHelper interface {
 }
 
 // engineManager manages local engines. External engines are owned by their
-// callers, see Backend.IngestExternalEngine.
+// callers, see Ingestor.IngestExternalEngine.
 type engineManager struct {
 	BackendConfig
 	StoreHelper
-	engines     sync.Map // sync version of map[uuid.UUID]*Engine
+	engines sync.Map // sync version of map[uuid.UUID]*Engine
+	// bufferPool is borrowed from Ingestor and outlives local engines.
 	bufferPool  *membuf.Pool
 	duplicateDB *pebble.DB
 	keyAdapter  common.KeyAdapter
 	logger      log.Logger
 }
 
-var inMemTest = false
-
-func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.Logger) (_ *engineManager, err error) {
+func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.Logger, bufferPool *membuf.Pool) (_ *engineManager, err error) {
 	var duplicateDB *pebble.DB
 	defer func() {
 		if err != nil && duplicateDB != nil {
@@ -90,21 +81,11 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 		}
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
-	alloc := manual.Allocator{}
-	if RunInTest {
-		alloc.RefCnt = new(atomic.Int64)
-		LastAlloc.Store(&alloc)
-	}
-	var opts = make([]membuf.Option, 0, 1)
-	if !inMemTest {
-		// otherwise, we use the default allocator that can be tracked by golang runtime.
-		opts = append(opts, membuf.WithAllocator(alloc))
-	}
 	return &engineManager{
 		BackendConfig: config,
 		StoreHelper:   storeHelper,
 		engines:       sync.Map{},
-		bufferPool:    membuf.NewPool(opts...),
+		bufferPool:    bufferPool,
 		duplicateDB:   duplicateDB,
 		keyAdapter:    keyAdapter,
 		logger:        logger,
@@ -224,8 +205,25 @@ func (em *engineManager) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*peb
 	}
 
 	dbPath := filepath.Join(em.LocalStoreDir, engineUUID.String())
-	db, err := pebble.Open(dbPath, opt)
+	db, err := openPebbleDB(dbPath, opt)
 	return db, errors.Trace(err)
+}
+
+func openPebbleDB(dbPath string, opts *pebble.Options) (*pebble.DB, error) {
+	if opts.FS != nil {
+		return pebble.Open(dbPath, opts)
+	}
+
+	// Keep ownership of Pebble's default disk-health-checking FS until Open succeeds.
+	// A failed Open returns no DB, so there is otherwise no handle that can close it.
+	// See https://github.com/pingcap/tidb/issues/71107.
+	opts = opts.Clone().EnsureDefaults()
+	fsCloser, ok := opts.FS.(io.Closer)
+	db, err := pebble.Open(dbPath, opts)
+	if err != nil && ok {
+		_ = fsCloser.Close()
+	}
+	return db, err
 }
 
 // openEngine must be called with holding mutex of Engine.
@@ -472,7 +470,6 @@ func (em *engineManager) close() {
 		e.unlock()
 	}
 	em.engines = sync.Map{}
-	em.bufferPool.Destroy()
 
 	if em.duplicateDB != nil {
 		// Check if there are duplicates that are not collected.
@@ -523,7 +520,7 @@ func (em *engineManager) totalMemoryConsume() int64 {
 		}
 		return true
 	})
-	return memConsume + em.bufferPool.TotalSize()
+	return memConsume
 }
 
 func (em *engineManager) getDuplicateDB() *pebble.DB {
@@ -532,10 +529,6 @@ func (em *engineManager) getDuplicateDB() *pebble.DB {
 
 func (em *engineManager) getKeyAdapter() common.KeyAdapter {
 	return em.keyAdapter
-}
-
-func (em *engineManager) getBufferPool() *membuf.Pool {
-	return em.bufferPool
 }
 
 // only used in tests
@@ -568,7 +561,7 @@ func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	failpoint.Inject("slowCreateFS", func() {
 		opts.FS = slowCreateFS{vfs.Default}
 	})
-	return pebble.Open(dbPath, opts)
+	return openPebbleDB(dbPath, opts)
 }
 
 func prepareSortDir(config BackendConfig) error {

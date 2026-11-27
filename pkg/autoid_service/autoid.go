@@ -300,10 +300,20 @@ type Service struct {
 
 	leaderShip owner.Manager
 	store      kv.Storage
+	cancel     context.CancelFunc
+	// etcdCli is owned by this service; clients passed to newWithCli remain caller-owned.
+	etcdCli   *clientv3.Client
+	closeOnce sync.Once
 }
 
-// New return a Service instance.
-func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Config) *Service {
+// New returns a Service instance or an initialization error.
+func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Config) (*Service, error) {
+	return NewWithContext(context.Background(), selfAddr, etcdAddr, store, tlsConfig)
+}
+
+// NewWithContext allows cancellation while initializing the AutoID service.
+// After it succeeds, ctx no longer controls the service; the caller must Close it.
+func NewWithContext(ctx context.Context, selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Config) (*Service, error) {
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
 
@@ -321,21 +331,40 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 		},
 		TLS: tlsConfig,
 	})
+	if err != nil {
+		return nil, err
+	}
 	if store.GetCodec().GetKeyspace() != nil {
 		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespaceSlash(store.GetCodec()))
 	}
+	service, err := newWithCli(ctx, selfAddr, cli, store)
 	if err != nil {
-		panic(err)
+		if closeErr := cli.Close(); closeErr != nil {
+			logutil.BgLogger().Warn("close auto ID service etcd client failed", zap.Error(closeErr))
+		}
+		return nil, err
 	}
-	return newWithCli(selfAddr, cli, store)
+	service.etcdCli = cli
+	return service, nil
 }
 
-func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
-	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
+func newWithCli(ctx context.Context, selfAddr string, cli *clientv3.Client, store kv.Storage) (*Service, error) {
+	// Startup cancellation is forwarded only until construction completes.
+	ownerCtx, cancel := context.WithCancel(context.Background())
+	stopCancel := context.AfterFunc(ctx, cancel)
+	defer stopCancel()
+	// etcd resigns canceled campaigns using the session client's context. Tie
+	// that cleanup to the service lifetime while keeping the underlying client
+	// available for bounded lease revocation. Do not Close this client wrapper:
+	// its Lease and Watcher are borrowed from cli.
+	ownerCli := clientv3.NewCtxClient(ownerCtx)
+	ownerCli.KV, ownerCli.Lease, ownerCli.Watcher = cli.KV, cli.Lease, cli.Watcher
+	l := owner.NewOwnerManager(ownerCtx, ownerCli, "autoid", selfAddr, autoIDLeaderPath)
 	service := &Service{
 		autoIDMap:  make(map[autoIDKey]*autoIDValue),
 		leaderShip: l,
 		store:      store,
+		cancel:     cancel,
 	}
 	l.SetListener(&ownerListener{
 		Service:  service,
@@ -343,11 +372,19 @@ func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Servic
 	})
 	// 10 means that autoid service's etcd lease is 10s.
 	err := l.CampaignOwner(10)
+	failpoint.InjectCall("afterAutoIDCampaign", service)
+	if !stopCancel() {
+		// The callback may not have run yet. Cancel before joining the owner loop.
+		cancel()
+		err = ctx.Err()
+	}
 	if err != nil {
-		panic(err)
+		cancel()
+		service.Close()
+		return nil, err
 	}
 
-	return service
+	return service, nil
 }
 
 type mockClient struct {
@@ -383,9 +420,20 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 
 // Close closes the Service and clean up resource.
 func (s *Service) Close() {
-	if s.leaderShip != nil {
-		s.leaderShip.Close()
-	}
+	s.closeOnce.Do(func() {
+		// Cancel election cleanup before joining the campaign goroutine.
+		if s.cancel != nil {
+			s.cancel()
+		}
+		if s.leaderShip != nil {
+			s.leaderShip.Close()
+		}
+		if s.etcdCli != nil {
+			if err := s.etcdCli.Close(); err != nil {
+				logutil.BgLogger().Warn("close auto ID service etcd client failed", zap.Error(err))
+			}
+		}
+	})
 }
 
 // IsOwner returns whether this service is the current auto ID owner.

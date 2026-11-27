@@ -455,7 +455,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(ctx context.Context, ind
 		results: make(map[int64]*statistics.AnalyzeResults, len(indexInfos)),
 	}
 	var err error
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(e.ctx)
 	for panicCnt < samplingStatsConcurrency {
 		results, ok := <-resultsCh
 		if !ok {
@@ -494,7 +494,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(ctx context.Context, ind
 // subIndexWorker receive the task for each index and return the result for them.
 func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(ctx context.Context, taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults) {
 	var task *analyzeTask
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(e.ctx)
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -647,7 +647,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 		e.memTracker.Release(retCollector.Base().MemSize)
 		retCollector.DestroyAndPutToPool()
 	}
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(e.ctx)
 	// Merge sampled batches until the producer closes taskCh or cancellation arrives.
 	for {
 		select {

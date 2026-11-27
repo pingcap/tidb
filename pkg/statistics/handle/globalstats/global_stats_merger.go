@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -92,7 +91,8 @@ func toSQLIndex(isIndex bool) int {
 // └────────────────────────┘        └───────────────────────┘
 type globalStatsMerger struct {
 	is                  infoschema.InfoSchema
-	statsHandle         statstypes.StatsHandle
+	pool                util.SessionPool
+	tables              util.TableInfoGetter
 	globalStats         *GlobalStats
 	cmsketch            chan mergeItem[*statistics.CMSketch]
 	fmsketch            chan mergeItem[*statistics.FMSketch]
@@ -121,13 +121,15 @@ type globalStatsMerger struct {
 }
 
 func newGlobalStatsMerger(
-	statsHandle statstypes.StatsHandle,
+	pool util.SessionPool,
+	tables util.TableInfoGetter,
 	globalTableInfo *model.TableInfo,
 	histIDs []int64,
 	is infoschema.InfoSchema) *globalStatsMerger {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	return &globalStatsMerger{
-		statsHandle:             statsHandle,
+		pool:                    pool,
+		tables:                  tables,
 		cmsketch:                make(chan mergeItem[*statistics.CMSketch], 5),
 		fmsketch:                make(chan mergeItem[*statistics.FMSketch], 5),
 		histogramAndTopn:        make(chan mergeItem[*statsWrapper]),
@@ -170,7 +172,7 @@ func (a *globalStatsMerger) prepare(sctx sessionctx.Context, isIndex bool) (err 
 		partitionID := def.ID
 		a.partitionIDs = append(a.partitionIDs, partitionID)
 		a.PartitionDefinition[partitionID] = def
-		partitionTable, ok := a.statsHandle.TableInfoByID(a.is, partitionID)
+		partitionTable, ok := a.tables.TableInfoByID(a.is, partitionID)
 		if !ok {
 			return errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", partitionID)
 		}
@@ -352,7 +354,7 @@ func (a *globalStatsMerger) MergePartitionStats2GlobalStats(
 	// independent of the user's query, so its killer wouldn't reflect
 	// user-initiated KILL / connection close.
 	killer := &sctx.GetSessionVars().SQLKiller
-	return util.CallWithSCtx(a.statsHandle.SPool(),
+	return util.CallWithSCtx(a.pool.SPool(),
 		func(sctx sessionctx.Context) error {
 			err := a.prepare(sctx, isIndex)
 			if err != nil {

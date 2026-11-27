@@ -82,7 +82,7 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	tblStats := handle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 
-	job.Analyze(handle, dom.SysProcTracker())
+	job.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -96,7 +96,7 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	// row, which would raise the NDV rate to 1.
 	tk.MustExec("analyze table t with 0.3 samplerate")
 	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
-	require.NoError(t, job.Analyze(handle, dom.SysProcTracker()))
+	require.NoError(t, job.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker()))
 	tk.MustQuery("select job_info from mysql.analyze_jobs where table_name = 't' order by id desc limit 1").CheckContain("0.3333333333333333 ndvrate")
 }
 
@@ -125,7 +125,7 @@ func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
 	valid, failReason := job.ValidateAndPrepare(tk.Session())
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
-	job.Analyze(handle, dom.SysProcTracker())
+	job.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))

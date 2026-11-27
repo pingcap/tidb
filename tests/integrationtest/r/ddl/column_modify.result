@@ -226,16 +226,18 @@ text_default_json	CREATE TABLE `text_default_json` (
 set sql_mode=default;
 drop table if exists t;
 create table t(a varchar(10) charset binary);
+insert into t values ('abc');
 alter table t modify column a varchar(10) charset utf8 collate utf8_bin;
-Error 8200 (HY000): Unsupported modify charset from binary to utf8
 alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin;
-Error 8200 (HY000): Unsupported modify charset from binary to utf8mb4
 alter table t modify column a varchar(10) charset latin1 collate latin1_bin;
-Error 8200 (HY000): Unsupported modify charset from binary to latin1
+select * from t;
+a
+abc
+admin check table t;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` varbinary(10) DEFAULT NULL
+  `a` varchar(10) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop database if exists ddl__column_modify2;
 create database ddl__column_modify2;

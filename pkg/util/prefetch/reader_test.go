@@ -19,6 +19,7 @@ import (
 	"io"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -92,11 +93,15 @@ func TestConvertUnexpectedEOF(t *testing.T) {
 }
 
 func TestCloseBeforeDrainRead(t *testing.T) {
-	data := make([]byte, 1024)
-	source := bytes.NewReader(data)
-	r := NewReader(io.NopCloser(source), source.Size(), 2)
-	err := r.Close()
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		data := make([]byte, 1024)
+		source := bytes.NewReader(data)
+		r := NewReader(io.NopCloser(source), source.Size(), 2)
+		err := r.Close()
+		require.NoError(t, err)
+		_, err = r.Read(make([]byte, 1))
+		require.ErrorIs(t, err, io.ErrClosedPipe)
+	})
 }
 
 type fragmentReader struct {

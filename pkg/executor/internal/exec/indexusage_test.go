@@ -57,7 +57,7 @@ func TestIndexUsageReporter(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()
-		usage := dom.StatsHandle().GetIndexUsage(tableID, indexID)
+		usage := dom.StatsHandle().Usage().GetIndexUsage(tableID, indexID)
 		return usage.QueryTotal == 1 && usage.RowAccessTotal == 2024 && usage.KvReqTotal == 1
 	}, time.Second*5, time.Millisecond)
 
@@ -77,7 +77,7 @@ func TestIndexUsageReporter(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()
-		usage := dom.StatsHandle().GetIndexUsage(tableID, indexID)
+		usage := dom.StatsHandle().Usage().GetIndexUsage(tableID, indexID)
 		return usage.QueryTotal == 1 && usage.RowAccessTotal == 2024+2024 && usage.KvReqTotal == 2
 	}, time.Second*5, time.Millisecond)
 
@@ -90,7 +90,7 @@ func TestIndexUsageReporter(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()
-		usage := dom.StatsHandle().GetIndexUsage(tableID, indexID)
+		usage := dom.StatsHandle().Usage().GetIndexUsage(tableID, indexID)
 		return usage.QueryTotal == 1 && usage.RowAccessTotal == 2024+2024+2024 && usage.KvReqTotal == 3
 	}, time.Second*5, time.Millisecond)
 }
@@ -153,7 +153,7 @@ func runIndexUsageTestCases(t *testing.T, dom *domain.Domain, tk *testkit.TestKi
 
 			result := true
 			for _, idx := range c.expects {
-				usage := dom.StatsHandle().GetIndexUsage(idx.tableID, idx.idxID)
+				usage := dom.StatsHandle().Usage().GetIndexUsage(idx.tableID, idx.idxID)
 				require.NotNil(t, usage)
 
 				globalIdxID := indexusage.GlobalIndexID{TableID: idx.tableID, IndexID: idx.idxID}
@@ -431,7 +431,7 @@ func TestDisableIndexUsageReporter(t *testing.T) {
 	tk.MustQuery("select id_1 from t where id_1 >= 30")
 	tk.RefreshSession()
 	require.Eventually(t, func() bool {
-		return dom.StatsHandle().GetIndexUsage(tableID, idx1ID).QueryTotal == 1
+		return dom.StatsHandle().Usage().GetIndexUsage(tableID, idx1ID).QueryTotal == 1
 	}, time.Second*5, time.Millisecond*100)
 	tk.MustExec("use test")
 	// turn off the index usage collection
@@ -442,7 +442,7 @@ func TestDisableIndexUsageReporter(t *testing.T) {
 	tk.MustQuery("select id_1 from t where id_1 >= 30")
 	tk.RefreshSession()
 	for range 10 {
-		require.Equal(t, uint64(1), dom.StatsHandle().GetIndexUsage(tableID, idx1ID).QueryTotal)
+		require.Equal(t, uint64(1), dom.StatsHandle().Usage().GetIndexUsage(tableID, idx1ID).QueryTotal)
 		time.Sleep(time.Millisecond * 100)
 	}
 }

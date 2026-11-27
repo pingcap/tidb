@@ -178,7 +178,7 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 	do, err := session.GetDomain(store)
 	require.NoError(t, err)
 	statsHandle := do.StatsHandle()
-	require.NoError(t, statsHandle.DumpColStatsUsageToKV())
+	require.NoError(t, statsHandle.Usage().DumpColStatsUsageToKV())
 	testcases := []struct {
 		concurrency string
 	}{

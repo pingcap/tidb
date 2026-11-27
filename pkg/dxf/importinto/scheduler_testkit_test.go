@@ -130,7 +130,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	d := sch.MockScheduler(task)
 	var taskMgr scheduler.TaskManager = manager
 	ext := importinto.NewImportSchedulerForTest(proto.ImportStepImport, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, 1, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	nextStep := ext.GetNextStep(&task.TaskBase)
@@ -152,7 +152,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		require.NoError(t, manager.FinishSubtask(ctx, s.ExecID, s.ID, []byte("{}")))
 	}
 	// to post-process stage, job should be running and in validating step
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, 1, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(&task.TaskBase)
@@ -162,7 +162,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// on next stage, job should be finished
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, 1, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(&task.TaskBase)
@@ -248,7 +248,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		require.Equal(t, "cancelled", gotJobInfo.Status)
 		require.Equal(t, "", gotJobInfo.Step)
 
-		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, 1, ext.GetNextStep(&task.TaskBase))
 		require.Error(t, err)
 		require.True(t, storage.IsCancelledErr(err), err)
 		require.Nil(t, subtaskMetas)
@@ -256,7 +256,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		// Classic has no dangling import job window: CANCEL IMPORT JOB changes the
 		// DXF task to cancelling, so this import-job status check must not reject
 		// scheduler planning if a test calls the hook directly.
-		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, 1, ext.GetNextStep(&task.TaskBase))
 		require.NoError(t, err)
 		require.NotNil(t, subtaskMetas)
 	}
@@ -404,7 +404,7 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 		task.Step = proto.StepPrepared
 		nextStep := ext.GetNextStep(&task.TaskBase)
 		require.Equal(t, proto.ImportStepEncodeAndSort, nextStep)
-		metas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, nextStep)
+		metas, err := ext.OnNextSubtasksBatch(ctx, d, task, 1, nextStep)
 		require.NoError(t, err)
 		require.NotEmpty(t, metas)
 		info, err = importer.GetJob(ctx, conn, jobID, "root", true)
@@ -447,7 +447,7 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 		task.Step = proto.StepPrepared
 		nextStep := ext.GetNextStep(&task.TaskBase)
 		require.Equal(t, proto.ImportStepEncodeAndSort, nextStep)
-		metas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, nextStep)
+		metas, err := ext.OnNextSubtasksBatch(ctx, d, task, 1, nextStep)
 		require.Error(t, err)
 		require.True(t, storage.IsCancelledErr(err), err)
 		require.Nil(t, metas)
@@ -646,7 +646,7 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 	ext := importinto.NewImportSchedulerForTest(sourceStep, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 	task.Keyspace = keyspace
 	require.NoError(t, ext.Init())
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, 1, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, sourceSubtasks)
 	nextStep := ext.GetNextStep(&task.TaskBase)
@@ -704,7 +704,7 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 
 	// to merge-sort stage
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/forceMergeSort", `return("data")`)
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, 1, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	nextStep = ext.GetNextStep(&task.TaskBase)
@@ -740,7 +740,7 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 
 	// to write-and-ingest stage
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/mockWriteIngestSpecs", "return(true)")
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, 1, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
 	task.Step = ext.GetNextStep(&task.TaskBase)
@@ -750,7 +750,7 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "importing", gotJobInfo.Step)
 	// to collect-conflicts state
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, 1, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(&task.TaskBase)
@@ -760,7 +760,7 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "resolving-conflicts", gotJobInfo.Step)
 	// to conflict-resolution state
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, 1, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(&task.TaskBase)
@@ -770,7 +770,7 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "resolving-conflicts", gotJobInfo.Step)
 	// on next stage, to post-process stage
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, 1, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(&task.TaskBase)
@@ -783,7 +783,7 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// next stage, done
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, 1, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(&task.TaskBase)
