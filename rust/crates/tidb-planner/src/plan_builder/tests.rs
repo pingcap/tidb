@@ -124,6 +124,20 @@ fn catalog() -> TestCatalog {
                 columns: std::sync::Arc::new(vec![column(0, "a", true), column(1, "y", false)]),
                 ..SourceTable::default()
             }; fixture.set_table_id(200); fixture.set_table_name("hs".to_owned()); fixture },
+            // Go's mock `t`, 12 columns wide, for the projection name index.
+            { let mut fixture = SourceTable {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { pk_is_handle: true, ..tidb_model::TableInfo::default() })),
+                db_name: "test".to_owned(),
+                physical_table_id: 300,
+                columns: std::sync::Arc::new(
+                    ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"]
+                        .iter()
+                        .enumerate()
+                        .map(|(offset, name)| column(offset, name, offset == 0))
+                        .collect(),
+                ),
+                ..SourceTable::default()
+            }; fixture.set_table_id(300); fixture.set_table_name("w".to_owned()); fixture },
         ],
     };
     // Go hands the planner each table's `TableInfo`, as `planner_view` does.
@@ -1836,4 +1850,114 @@ fn test_build_profile_refresh_materialized_view_plan() {
     };
     assert_eq!(1, profile_plan.schema.columns.len());
     assert_eq!("refresh steps", profile_plan.names[0].names.column.original.to_lowercase());
+}
+
+/// Go `TestProjectionNameIndex`'s cases (`logical_plans_test.go`,
+/// 8626dd78607): wide select lists (at least `projNameIndexThreshold`
+/// fields and input names; `w` has 12 columns) resolve their fields
+/// through the projection name index; lookups fall back to scanning once a
+/// subquery in the select list grows the input plan (and so its names); a
+/// nested wide projection inside such a subquery uses its own index; the
+/// index is restored afterwards; and every field still resolves to the
+/// right input column.
+#[test]
+fn test_projection_name_index() {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::rc::Rc;
+    let lookups: Rc<RefCell<Vec<(String, bool)>>> = Rc::default();
+    {
+        let lookups = Rc::clone(&lookups);
+        super::FIELD_NAME_LOOKUP_HOOK_FOR_TEST.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |table: &str, indexed: bool| {
+                lookups.borrow_mut().push((table.to_owned(), indexed));
+            }));
+        });
+    }
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            super::FIELD_NAME_LOOKUP_HOOK_FOR_TEST.with(|hook| *hook.borrow_mut() = None);
+        }
+    }
+    let _reset = Reset;
+    let counts = |pairs: &[(&str, usize)]| -> HashMap<String, usize> {
+        pairs.iter().map(|(table, n)| ((*table).to_owned(), *n)).collect()
+    };
+    let cases: [(&str, HashMap<String, usize>, HashMap<String, usize>, Option<&str>); 4] = [
+        (
+            "select t1.*, t2.*, t3.* from w t1, w t2, w t3",
+            counts(&[("t1", 12), ("t2", 12), ("t3", 12)]),
+            HashMap::new(),
+            None,
+        ),
+        (
+            // The correlated scalar subquery adds an Apply, so the fields
+            // after it resolve against a different names slice and must scan.
+            "select t1.*, t2.*, (select max(s.a) from w s where s.b = t1.c), t3.* from w t1, w t2, w t3",
+            counts(&[("t1", 12), ("t2", 12)]),
+            counts(&[("t3", 12)]),
+            None,
+        ),
+        (
+            // The EXISTS subquery builds its own wide projection, which indexes
+            // its own input names; the outer index is restored after it.
+            "select t1.*, t2.*, exists (select s1.*, s2.*, s3.* from w s1, w s2, w s3 where s1.a = t1.a), t3.* from w t1, w t2, w t3",
+            counts(&[("t1", 12), ("t2", 12), ("s1", 12), ("s2", 12), ("s3", 12)]),
+            counts(&[("t3", 12)]),
+            None,
+        ),
+        (
+            "select t1.*, t2.*, t3.*, a from w t1, w t2, w t3",
+            counts(&[("t1", 12), ("t2", 12), ("t3", 12), ("", 1)]),
+            HashMap::new(),
+            Some("Column 'a' in field list is ambiguous"),
+        ),
+    ];
+    let harness = Harness::new();
+    for (sql, indexed, scanned, error) in cases {
+        lookups.borrow_mut().clear();
+        let mut builder = harness.builder();
+        let built = builder.build_select(&parse_select(sql));
+        assert!(builder.proj_name_index.is_none(), "for {sql}");
+        let mut got_indexed = HashMap::new();
+        let mut got_scanned: HashMap<String, usize> = HashMap::new();
+        for (table, was_indexed) in lookups.borrow().iter() {
+            let map = if *was_indexed { &mut got_indexed } else { &mut got_scanned };
+            *map.entry(table.clone()).or_insert(0) += 1;
+        }
+        assert_eq!(got_indexed, indexed, "for {sql}; scanned {got_scanned:?}");
+        for (table, n) in &scanned {
+            assert_eq!(got_scanned.get(table), Some(n), "for {sql} table {table}");
+        }
+        if let Some(error) = error {
+            let built_error = built.expect_err(sql);
+            assert!(
+                built_error.equal(&tidb_plannererrors::ERR_AMBIGUOUS) && built_error.message() == error,
+                "for {sql}: {built_error:?}"
+            );
+            continue;
+        }
+        let (plan, _) = built.unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        // Every output column of the top projection is the input column with
+        // the same table and column name.
+        let LogicalPlan::Projection(projection) = &plan else {
+            panic!("for {sql}: expected a Projection");
+        };
+        let child = &projection.base.children()[0];
+        let output_names = plan.output_names();
+        for (i, expr) in projection.exprs.iter().enumerate() {
+            let Expression::Column(column) = expr else {
+                continue;
+            };
+            if output_names[i].names.table.lower.is_empty() {
+                continue;
+            }
+            let j = child.schema().expect("a schema").column_index(column);
+            assert!(j >= 0, "for {sql} field {i}");
+            let input = &child.output_names()[j as usize];
+            assert_eq!(output_names[i].names.table.lower, input.names.table.lower, "for {sql} field {i}");
+            assert_eq!(output_names[i].names.column.lower, input.names.column.lower, "for {sql} field {i}");
+        }
+    }
 }

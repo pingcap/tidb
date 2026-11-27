@@ -14,6 +14,7 @@
 
 //! Direct field-name resolution from `pkg/expression/simple_rewriter.go`.
 
+use std::collections::HashMap;
 use std::fmt;
 
 use tidb_datatype::{FieldName, QualifiedColumnName};
@@ -49,7 +50,7 @@ impl fmt::Display for NonUniqueFieldName {
 
 impl std::error::Error for NonUniqueFieldName {}
 
-/// Finds the source index of a column in a `types.NameSlice`.
+/// Go `FindFieldName`: the source index of a column in a `types.NameSlice`.
 ///
 /// This preserves Go's scan order exactly. Non-explicit fields are ignored;
 /// any number of redundant matches retain the first redundant index; a later
@@ -59,9 +60,23 @@ pub fn find_field_name(
     names: &[FieldName],
     column: &QualifiedColumnName,
 ) -> Result<Option<usize>, NonUniqueFieldName> {
+    find_field_name_in(names, column, 0..names.len())
+}
+
+/// Go `findFieldName`: [`find_field_name`] over `positions`, every position
+/// of `names` or only those an index holds for the column's name. Both
+/// visit the matching positions in the same ascending order, and the full
+/// scan skips exactly the positions the index leaves out on the column
+/// name, so both return the same result.
+fn find_field_name_in(
+    names: &[FieldName],
+    column: &QualifiedColumnName,
+    positions: impl Iterator<Item = usize>,
+) -> Result<Option<usize>, NonUniqueFieldName> {
     let mut index: Option<usize> = None;
 
-    for (candidate_index, name) in names.iter().enumerate() {
+    for candidate_index in positions {
+        let name = &names[candidate_index];
         if name.not_explicit_usable
             || name.names.column.lower != column.column.lower
             || (!column.database.lower.is_empty()
@@ -84,6 +99,74 @@ pub fn find_field_name(
     }
 
     Ok(index)
+}
+
+/// Go `FieldNameIndex`: a `NameSlice` indexed by lower-case column name, so
+/// resolving many column references against a wide one (the thousands of
+/// columns `SELECT *` expands to on a wide table) does not scan the whole
+/// slice for every reference.
+#[derive(Debug)]
+pub struct FieldNameIndex {
+    /// The indexed slice's address and length, for [`Self::covers`]: Go
+    /// keeps the slice itself and compares its backing array.
+    address: usize,
+    len: usize,
+    /// Go `first`: each lower-case column name's first position.
+    first: HashMap<String, usize>,
+    /// Go `next`: the next position after `i` with the same column name.
+    next: Vec<Option<usize>>,
+}
+
+impl FieldNameIndex {
+    /// Go `NewFieldNameIndex`. The index is valid only while `names` is
+    /// unchanged; [`Self::covers`] checks that it still applies.
+    #[must_use]
+    pub fn new(names: &[FieldName]) -> Self {
+        let mut first: HashMap<String, usize> = HashMap::with_capacity(names.len());
+        let mut next = vec![None; names.len()];
+        // Walk backwards so that first ends up holding the lowest position of
+        // each name and next links the positions in ascending order.
+        for (i, name) in names.iter().enumerate().rev() {
+            let column = &name.names.column.lower;
+            next[i] = first.get(column).copied();
+            first.insert(column.clone(), i);
+        }
+        Self {
+            address: names.as_ptr() as usize,
+            len: names.len(),
+            first,
+            next,
+        }
+    }
+
+    /// Go `Covers`: whether `names` is the slice (same storage and length)
+    /// the index was built from.
+    #[must_use]
+    pub fn covers(&self, names: &[FieldName]) -> bool {
+        !names.is_empty() && names.len() == self.len && names.as_ptr() as usize == self.address
+    }
+
+    /// The positions whose lower-case column name is `lower_column`, in
+    /// ascending order (Go's `first` / `next` walk).
+    pub fn positions<'a>(&'a self, lower_column: &str) -> impl Iterator<Item = usize> + 'a {
+        let mut cursor = self.first.get(lower_column).copied();
+        std::iter::from_fn(move || {
+            let current = cursor?;
+            cursor = self.next[current];
+            Some(current)
+        })
+    }
+
+    /// Go `FieldNameIndex.FindFieldName`: [`find_field_name`] on the indexed
+    /// slice, which `names` must be ([`Self::covers`]).
+    pub fn find_field_name(
+        &self,
+        names: &[FieldName],
+        column: &QualifiedColumnName,
+    ) -> Result<Option<usize>, NonUniqueFieldName> {
+        debug_assert_eq!(names.len(), self.len, "a FieldNameIndex answers only for the slice it indexed");
+        find_field_name_in(names, column, self.positions(&column.column.lower))
+    }
 }
 
 /// Go's `FindFieldNameIdxByColName`: first exact normalized-name match.
@@ -182,6 +265,92 @@ mod tests {
         };
         let names = [redundant_first, redundant_second, redundant_third];
         assert_eq!(find_field_name(&names, &matching_column).unwrap(), Some(0));
+    }
+
+    /// Go `TestFindFieldName`'s cases added with the index (8626dd78607),
+    /// each also resolved through a [`FieldNameIndex`], which must agree with
+    /// the full scan.
+    #[test]
+    fn test_find_field_name_indexed_agrees_with_the_scan() {
+        let not_explicit = |db: &str, table: &str, column: &str| {
+            let mut name = field_name(db, table, column);
+            name.not_explicit_usable = true;
+            name
+        };
+        let cases: Vec<(Vec<FieldName>, QualifiedColumnName, Result<Option<usize>, &str>)> = vec![
+            (
+                vec![
+                    field_name("db", "t1", "a"),
+                    field_name("db", "t1", "col"),
+                    field_name("db", "t2", "a"),
+                    field_name("db", "t2", "col"),
+                ],
+                qualified_column("", "t2", "col"),
+                Ok(Some(3)),
+            ),
+            (
+                vec![field_name("db", "t1", "col"), field_name("db", "t1", "b"), field_name("db", "t2", "col")],
+                qualified_column("", "", "col"),
+                Err("Column 'col' in field list is ambiguous"),
+            ),
+            (
+                vec![not_explicit("db", "tbl", "col"), field_name("db", "tbl", "b"), field_name("db", "tbl", "col")],
+                qualified_column("", "", "col"),
+                Ok(Some(2)),
+            ),
+            (Vec::new(), qualified_column("", "", "col"), Ok(None)),
+        ];
+        for (names, column, expected) in cases {
+            let scanned = find_field_name(&names, &column);
+            let indexed = FieldNameIndex::new(&names).find_field_name(&names, &column);
+            match expected {
+                Ok(expected) => assert_eq!(scanned.as_ref().ok(), Some(&expected)),
+                Err(message) => assert_eq!(scanned.as_ref().unwrap_err().sql_error.message, message),
+            }
+            assert_eq!(scanned.as_ref().ok(), indexed.as_ref().ok());
+            assert_eq!(
+                scanned.as_ref().err().map(|error| error.sql_error.message.clone()),
+                indexed.as_ref().err().map(|error| error.sql_error.message.clone())
+            );
+        }
+    }
+
+    /// Go `TestFindFieldName`: a [`FieldNameIndex`] covers only the exact
+    /// slice it was built from, and every name of a wide slice, qualified
+    /// or not, resolves through it as by the full scan.
+    #[test]
+    fn a_field_name_index_covers_its_slice_and_resolves_a_wide_one() {
+        let names: Vec<FieldName> = (0..4).map(|i| field_name("db", "tbl", &format!("c{i}"))).collect();
+        let index = FieldNameIndex::new(&names);
+        assert!(index.covers(&names));
+        let copy = names.clone();
+        assert!(!index.covers(&copy));
+        assert!(!index.covers(&names[..3]));
+        assert!(!index.covers(&[]));
+        assert!(!FieldNameIndex::new(&[]).covers(&[]));
+
+        let mut wide = Vec::with_capacity(600);
+        for i in 0..300 {
+            for table in ["t1", "t2"] {
+                let mut name = field_name("db", table, &format!("c{}", i % 250));
+                name.redundant = i % 7 == 0 && table == "t2";
+                wide.push(name);
+            }
+        }
+        let wide_index = FieldNameIndex::new(&wide);
+        for name in &wide {
+            let names = &name.names;
+            for column in [
+                qualified_column("", "", &names.column.original),
+                qualified_column("", &names.table.original, &names.column.original),
+                qualified_column(&names.database.original, &names.table.original, &names.column.original),
+            ] {
+                let want = find_field_name(&wide, &column);
+                let got = wide_index.find_field_name(&wide, &column);
+                assert_eq!(want.as_ref().ok(), got.as_ref().ok(), "{}", column.display_name());
+                assert_eq!(want.is_err(), got.is_err(), "{}", column.display_name());
+            }
+        }
     }
 
     #[test]

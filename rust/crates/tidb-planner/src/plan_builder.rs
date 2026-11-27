@@ -744,6 +744,12 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `allNames [][]*types.FieldName`: the output names as they stood
     /// BEFORE each projection, which `evalDefaultExpr` searches.
     pub all_names: Vec<Vec<FieldName>>,
+    /// Go `projNameIndex`: the input names of the projection
+    /// `buildProjection` is building, indexed so resolving many select
+    /// fields (`SELECT *` on a wide table) does not scan every input name
+    /// once per field. A lookup uses it only when the rewriter's names are
+    /// exactly the indexed slice.
+    pub(crate) proj_name_index: Option<tidb_expr::FieldNameIndex>,
     /// The VALUES of Go `correlatedAggMapper`; the key is the
     /// [`MarkerKind::CorrelatedAgg`] marker's index. See section 2.
     pub correlated_agg_columns: Vec<tidb_expr::column::CorrelatedColumn>,
@@ -911,6 +917,25 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
 /// `SetChildren(p)`; here that would be a use-after-move, so every builder
 /// starts with this.
 #[must_use]
+/// Go `projNameIndexThreshold`: the number of select fields and input
+/// columns from which `buildProjection` indexes the input names. Below it,
+/// scanning the names for each field is cheaper than building the index.
+const PROJ_NAME_INDEX_THRESHOLD: usize = 32;
+
+/// Go `rewriterNames`: the names an expression rewriter over `plan` resolves
+/// column references against first. Go reads a join's `FullNames` when the
+/// plan is that join; the port's resolver reads the full names of the join
+/// it finds through the plans above it (`find_join_full_schema`) when they
+/// are as long as the output names (`PlanScopeResolver::resolve_column`),
+/// so those are the slice to index.
+fn rewriter_names(plan: &LogicalPlan) -> &[FieldName] {
+    let names = plan.output_names();
+    from::find_join_full_schema(plan)
+        .map(|(_, full_names)| full_names)
+        .filter(|full_names| full_names.len() == names.len())
+        .unwrap_or(names)
+}
+
 pub fn snapshot_schema_and_names(plan: &LogicalPlan) -> (Schema, Vec<FieldName>) {
     (
         plan.schema().cloned().unwrap_or_default(),
@@ -990,6 +1015,9 @@ pub struct PlanScopeResolver<'a> {
     /// the executable join schema.
     full_schema: Option<&'a Schema>,
     full_names: Option<&'a [FieldName]>,
+    /// Go `PlanBuilder.projNameIndex`: the input names of the projection
+    /// being built, indexed; a lookup uses it when it covers the names.
+    name_index: Option<&'a tidb_expr::FieldNameIndex>,
     /// The columns a marker index refers to, per [`MarkerKind`]. A kind absent
     /// from this map has no producer yet in the current build.
     marker_columns: &'a BTreeMap<MarkerKind, Vec<Column>>,
@@ -1123,6 +1151,7 @@ impl<'a> PlanScopeResolver<'a> {
             names,
             full_schema: None,
             full_names: None,
+            name_index: None,
             marker_columns,
             marker_constants: None,
             correlated_agg_columns: &[],
@@ -1164,6 +1193,7 @@ impl<'a> PlanScopeResolver<'a> {
             names,
             full_schema: None,
             full_names: None,
+            name_index: None,
             marker_columns,
             marker_constants: None,
             correlated_agg_columns: &[],
@@ -1299,6 +1329,29 @@ impl<'a> PlanScopeResolver<'a> {
         self
     }
 
+    /// Resolves names through `index` where it covers them (Go
+    /// `expressionRewriter.findFieldName`).
+    #[must_use]
+    pub const fn with_field_name_index(mut self, index: Option<&'a tidb_expr::FieldNameIndex>) -> Self {
+        self.name_index = index;
+        self
+    }
+
+    /// Go `expressionRewriter.findFieldName`: the projection name index when
+    /// it covers `names`, else the full scan. `first` marks a reference's
+    /// first lookup, the one Go makes; the port's retries on the other name
+    /// slices are not reported to the test hook.
+    fn find_field_name(&self, names: &[FieldName], path: &[String], first: bool) -> Option<usize> {
+        let index = self.name_index.filter(|index| index.covers(names));
+        #[cfg(test)]
+        if first {
+            field_name_lookup_hook_for_test(path, index.is_some());
+        }
+        #[cfg(not(test))]
+        let _ = first;
+        find_field_name_in(names, path, index)
+    }
+
     /// Attach a join's `FullSchema`/`FullNames` for qualified resolution.
     /// The ordinary visible schema remains authoritative for unqualified
     /// names and wildcard expansion; the full pair is only a fallback for a
@@ -1335,14 +1388,31 @@ impl<'a> PlanScopeResolver<'a> {
 /// same permissive arm.
 #[must_use]
 pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
+    find_field_name_in(names, path, None)
+}
+
+/// Go `findFieldName`: [`find_field_name`] over every position of `names`,
+/// or, with `index` (which covers `names`), only the positions whose column
+/// name is the written one, in the same ascending order.
+fn find_field_name_in(
+    names: &[FieldName],
+    path: &[String],
+    index: Option<&tidb_expr::FieldNameIndex>,
+) -> Option<usize> {
     let (db, table, column) = match path {
         [column] => (None, None, column.as_str()),
         [table, column] => (None, Some(table.as_str()), column.as_str()),
         [db, table, column] => (Some(db.as_str()), Some(table.as_str()), column.as_str()),
         _ => return None,
     };
+    let lower_column = index.map(|_| tidb_mysql::to_lowercase(column));
+    let positions: Box<dyn Iterator<Item = usize>> = match (index, &lower_column) {
+        (Some(index), Some(lower_column)) => Box::new(index.positions(lower_column)),
+        _ => Box::new(0..names.len()),
+    };
     let mut found = None;
-    for (index, name) in names.iter().enumerate() {
+    for index in positions {
+        let name = &names[index];
         if name.hidden || name.not_explicit_usable {
             continue;
         }
@@ -1367,6 +1437,28 @@ pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
         }
     }
     found
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Go `fieldNameLookupHookForTest`: told, for each column reference a
+    /// rewriter resolves, its written table qualifier (lower-case) and
+    /// whether the projection name index served it.
+    pub(crate) static FIELD_NAME_LOOKUP_HOOK_FOR_TEST: std::cell::RefCell<Option<Box<dyn FnMut(&str, bool)>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+fn field_name_lookup_hook_for_test(path: &[String], indexed: bool) {
+    FIELD_NAME_LOOKUP_HOOK_FOR_TEST.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().as_mut() {
+            let table = match path {
+                [_, table, _] | [table, _] => tidb_mysql::to_lowercase(table),
+                _ => String::new(),
+            };
+            hook(&table, indexed);
+        }
+    });
 }
 
 /// Whether a written identifier names `lower`, a stored `CIStr.L`: Go
@@ -1616,7 +1708,7 @@ impl ColumnResolver for PlanScopeResolver<'_> {
             .full_names
             .filter(|full| full.len() == self.names.len());
         let full_hit = full.and_then(|full| {
-            let index = match find_field_name(full, path) {
+            let index = match self.find_field_name(full, path, true) {
                 Some(index) => index,
                 None => {
                     self.record_ambiguity(Some(full), path);
@@ -1627,12 +1719,12 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         });
         let (schema, index) = if let Some(hit) = full_hit {
             hit
-        } else if let Some(index) = find_field_name(self.names, path) {
+        } else if let Some(index) = self.find_field_name(self.names, path, full.is_none()) {
             (self.schema, index)
         } else {
             self.record_ambiguity(Some(self.names), path);
             let full_names = self.full_names?;
-            let index = match find_field_name(full_names, path) {
+            let index = match self.find_field_name(full_names, path, false) {
                 Some(index) => index,
                 None => {
                     self.record_ambiguity(Some(full_names), path);
@@ -1759,6 +1851,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             values_scope: None,
             subquery_constants: Vec::new(),
             all_names: Vec::new(),
+            proj_name_index: None,
             correlated_agg_columns: Vec::new(),
             building_cte: false,
             is_cte: false,
@@ -2273,7 +2366,10 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         plan: &LogicalPlan,
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
     ) -> Result<Expression, PlanError> {
-        let (schema, names) = snapshot_schema_and_names(plan);
+        // The plan's own names, not a copy: the projection name index covers
+        // only the slice it was built over.
+        let schema = plan.schema().cloned().unwrap_or_default();
+        let names = plan.output_names();
         let full = from::find_join_full_schema(plan);
         let (full_schema, full_names) = full
             .map(|(schema, names)| (Some(schema), Some(names)))
@@ -2284,7 +2380,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         let rewritten = self.rewrite_scalar_with_scope(
             expr,
             &schema,
-            &names,
+            names,
             full_schema,
             full_names,
             markers,
@@ -2359,7 +2455,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         .with_clause_message(self.cur_clause.message())
         .with_over_union_all(self.rewriting_over_union_all.get())
         .with_allow_build_cast_array(self.allow_build_cast_array.get())
-        .with_warning_context(self.ctx);
+        .with_warning_context(self.ctx)
+        .with_field_name_index(self.proj_name_index.as_ref());
         resolver.block_expand = self.current_block_expand.as_ref();
         let default_lookup = |path: &[String]| self.eval_default_expr(path, names);
         let mut resolver = resolver.with_default_lookup(&default_lookup);
@@ -4890,6 +4987,28 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// `expand_generate_column` is Go's flag of that name, set when the
     /// SELECT has an ORDER BY.
     fn build_projection_with_order_by(
+        &mut self,
+        plan: LogicalPlan,
+        fields: &[ProjectionField],
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+        order_by_range: Option<(usize, usize)>,
+        expand_generate_column: bool,
+    ) -> Result<(LogicalPlan, Vec<Expression>), PlanError> {
+        // Go: index the names the field rewriters resolve against once,
+        // instead of scanning them for every column reference in the fields
+        // (`defer` restores the enclosing projection's index).
+        let input_names = rewriter_names(&plan);
+        let index = (fields.len() >= PROJ_NAME_INDEX_THRESHOLD && input_names.len() >= PROJ_NAME_INDEX_THRESHOLD)
+            .then(|| tidb_expr::FieldNameIndex::new(input_names));
+        let old_proj_name_index = std::mem::replace(&mut self.proj_name_index, index);
+        let result =
+            self.build_projection_fields(plan, fields, markers, order_by_range, expand_generate_column);
+        self.proj_name_index = old_proj_name_index;
+        result
+    }
+
+    /// The body of Go `buildProjection` the name index's `defer` wraps.
+    fn build_projection_fields(
         &mut self,
         plan: LogicalPlan,
         fields: &[ProjectionField],

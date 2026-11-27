@@ -120,7 +120,7 @@ mod string_signature;
 mod time_fn;
 pub mod time_literal;
 
-pub use field_name::{find_field_name, find_field_name_idx_by_col_name, NonUniqueFieldName};
+pub use field_name::{find_field_name, find_field_name_idx_by_col_name, FieldNameIndex, NonUniqueFieldName};
 
 pub use build::{BuildContext, BuiltStringLength, StringLengthFunction, StringLengthSignature};
 pub use coerce::{truthy_in, truthy_of};
