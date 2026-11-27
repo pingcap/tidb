@@ -572,23 +572,7 @@ func (p *OnDemandStatsProvider) populateDistributionsForChunk(
 		if span, ok := bucketsByKey[key]; ok {
 			itemBuckets = bucketRows[span.start:span.end]
 		}
-		var tp *types.FieldType
-		if key.isIndex {
-			tp = types.NewFieldType(mysql.TypeBlob)
-		} else {
-			tp = &meta.colInfo.FieldType
-		}
-		hg, err := decodeHistogramFromBucketRows(histogramLoadParams{
-			tp:          tp,
-			tableID:     key.tableID,
-			histID:      key.histID,
-			ndv:         meta.distinct,
-			isIndex:     key.isIndex,
-			version:     meta.histVer,
-			nullCount:   meta.nullCount,
-			totColSize:  meta.totColSize,
-			correlation: meta.correlation,
-		}, itemBuckets, 3, lowerFieldTp, upperFieldTp)
+		hg, err := decodeHistogramFromBucketRows(meta, itemBuckets, lowerFieldTp, upperFieldTp)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -640,4 +624,84 @@ func (p *OnDemandStatsProvider) populateDistributionsForChunk(
 		}
 	}
 	return nil
+}
+
+func decodeHistogramFromBucketRows(
+	meta *pendingHistMeta,
+	rows []chunk.Row,
+	lowerFieldTp, upperFieldTp *types.FieldType,
+) (*statistics.Histogram, error) {
+	var tp *types.FieldType
+	if meta.key.isIndex {
+		tp = types.NewFieldType(mysql.TypeBlob)
+	} else {
+		tp = &meta.colInfo.FieldType
+	}
+	hg := statistics.NewHistogram(
+		meta.key.histID,
+		meta.distinct,
+		meta.nullCount,
+		meta.histVer,
+		tp,
+		len(rows),
+		meta.totColSize,
+	)
+	hg.Correlation = meta.correlation
+	boundTp := tp
+	if !meta.key.isIndex && boundTp.EvalType() == types.ETString && boundTp.GetType() != mysql.TypeEnum && boundTp.GetType() != mysql.TypeSet {
+		boundTp = types.NewFieldType(mysql.TypeBlob)
+	}
+	totalCount := int64(0)
+	for i := range rows {
+		count := rows[i].GetInt64(3)
+		repeats := rows[i].GetInt64(4)
+		var lowerBound, upperBound types.Datum
+		if meta.key.isIndex {
+			lowerBound = rows[i].GetDatum(5, lowerFieldTp)
+			upperBound = rows[i].GetDatum(6, upperFieldTp)
+		} else {
+			var err error
+			d := rows[i].GetDatum(5, lowerFieldTp)
+			lowerBound, err = convertBoundFromBlob(statistics.UTCWithAllowInvalidDateCtx, d, boundTp)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			d = rows[i].GetDatum(6, upperFieldTp)
+			upperBound, err = convertBoundFromBlob(statistics.UTCWithAllowInvalidDateCtx, d, boundTp)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		totalCount += count
+		hg.AppendBucketWithNDV(&lowerBound, &upperBound, totalCount, repeats, rows[i].GetInt64(7))
+	}
+	hg.PreCalculateScalar()
+	return hg, nil
+}
+
+func resetDroppedTableStatsVer(tbl *statistics.Table) {
+	if !statistics.IsAnalyzed(int64(tbl.StatsVer)) {
+		return
+	}
+	hasStats := false
+	allZero := true
+	tbl.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
+		hasStats = true
+		if statistics.IsAnalyzed(c.StatsVer) {
+			allZero = false
+			return true
+		}
+		return false
+	})
+	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+		hasStats = true
+		if statistics.IsAnalyzed(idx.StatsVer) {
+			allZero = false
+			return true
+		}
+		return false
+	})
+	if hasStats && allZero {
+		tbl.StatsVer = statistics.Version0
+	}
 }

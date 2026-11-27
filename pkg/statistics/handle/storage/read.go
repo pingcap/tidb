@@ -253,62 +253,44 @@ func histogramFromStorageWithParams(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var lowerFieldTp, upperFieldTp *types.FieldType
-	if len(fields) >= 4 {
-		lowerFieldTp = &fields[2].Column.FieldType
-		upperFieldTp = &fields[3].Column.FieldType
-	}
-	return decodeHistogramFromBucketRows(params, rows, 0, lowerFieldTp, upperFieldTp)
-}
-
-// decodeHistogramFromBucketRows decodes bucket rows ordered by bucket_id into a Histogram.
-// colOffset is the starting column index of (count, repeats, lower_bound, upper_bound, ndv).
-func decodeHistogramFromBucketRows(
-	params histogramLoadParams,
-	rows []chunk.Row,
-	colOffset int,
-	lowerFieldTp, upperFieldTp *types.FieldType,
-) (*statistics.Histogram, error) {
 	bucketSize := len(rows)
 	tp := params.tp
 	hg := statistics.NewHistogram(
 		params.histID, params.ndv, params.nullCount, params.version,
 		tp, bucketSize, params.totColSize)
 	hg.Correlation = params.correlation
-	// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
-	// original value.
-	// But there's additional conversion logic for new collation data, and the collate key might be longer than
-	// the FieldType.flen.
-	// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
-	// or "Data too long".
-	// So we change it to TypeBlob to bypass those logics here.
-	boundTp := tp
-	if !params.isIndex && boundTp.EvalType() == types.ETString && boundTp.GetType() != mysql.TypeEnum && boundTp.GetType() != mysql.TypeSet {
-		boundTp = types.NewFieldType(mysql.TypeBlob)
-	}
 	totalCount := int64(0)
 	for i := range bucketSize {
-		count := rows[i].GetInt64(colOffset)
-		repeats := rows[i].GetInt64(colOffset + 1)
+		count := rows[i].GetInt64(0)
+		repeats := rows[i].GetInt64(1)
 		var upperBound, lowerBound types.Datum
 		if params.isIndex {
-			lowerBound = rows[i].GetDatum(colOffset+2, lowerFieldTp)
-			upperBound = rows[i].GetDatum(colOffset+3, upperFieldTp)
+			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
+			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 		} else {
-			var err error
-			d := rows[i].GetDatum(colOffset+2, lowerFieldTp)
-			lowerBound, err = convertBoundFromBlob(statistics.UTCWithAllowInvalidDateCtx, d, boundTp)
+			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
+			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
+			// original value.
+			// But there's additional conversion logic for new collation data, and the collate key might be longer than
+			// the FieldType.flen.
+			// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
+			// or "Data too long".
+			// So we change it to TypeBlob to bypass those logics here.
+			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
+				tp = types.NewFieldType(mysql.TypeBlob)
+			}
+			lowerBound, err = convertBoundFromBlob(statistics.UTCWithAllowInvalidDateCtx, d, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			d = rows[i].GetDatum(colOffset+3, upperFieldTp)
-			upperBound, err = convertBoundFromBlob(statistics.UTCWithAllowInvalidDateCtx, d, boundTp)
+			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
+			upperBound, err = convertBoundFromBlob(statistics.UTCWithAllowInvalidDateCtx, d, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
 		totalCount += count
-		hg.AppendBucketWithNDV(&lowerBound, &upperBound, totalCount, repeats, rows[i].GetInt64(colOffset+4))
+		hg.AppendBucketWithNDV(&lowerBound, &upperBound, totalCount, repeats, rows[i].GetInt64(4))
 	}
 	hg.PreCalculateScalar()
 	return hg, nil
@@ -707,38 +689,35 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			return nil, err
 		}
 	}
-	resetDroppedTableStatsVer(table)
+	// If DROP STATS executes, we need to reset the stats version to 0.
+	// Only reset if we actually have columns/indices in the table. If all stats were skipped
+	// due to lazy loading, we should keep the StatsVer that was set from the storage row.
+	if statistics.IsAnalyzed(int64(table.StatsVer)) {
+		hasStats := false
+		allZero := true
+		table.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
+			hasStats = true
+			if statistics.IsAnalyzed(c.StatsVer) {
+				allZero = false
+				return true
+			}
+			return false
+		})
+		table.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+			hasStats = true
+			if statistics.IsAnalyzed(idx.StatsVer) {
+				allZero = false
+				return true
+			}
+			return false
+		})
+		// Only reset if we have stats in memory and they're all Version0.
+		// If all stats were skipped due to lazy loading, keep the StatsVer from storage.
+		if hasStats && allZero {
+			table.StatsVer = statistics.Version0
+		}
+	}
 	return table, nil
-}
-
-// resetDroppedTableStatsVer resets table.StatsVer to Version0 after DROP STATS when
-// all loaded column/index stats have Version0. If all stats were skipped due to lazy
-// loading, the StatsVer loaded from storage is preserved.
-func resetDroppedTableStatsVer(table *statistics.Table) {
-	if !statistics.IsAnalyzed(int64(table.StatsVer)) {
-		return
-	}
-	hasStats := false
-	allZero := true
-	table.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
-		hasStats = true
-		if statistics.IsAnalyzed(c.StatsVer) {
-			allZero = false
-			return true
-		}
-		return false
-	})
-	table.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		hasStats = true
-		if statistics.IsAnalyzed(idx.StatsVer) {
-			allZero = false
-			return true
-		}
-		return false
-	})
-	if hasStats && allZero {
-		table.StatsVer = statistics.Version0
-	}
 }
 
 // LoadHistogram will load histogram from storage.
