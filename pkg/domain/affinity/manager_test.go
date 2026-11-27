@@ -361,14 +361,16 @@ func TestGetAffinityGroupsBatches(t *testing.T) {
 }
 
 func TestGetAffinityGroupsBatchesCompatibility(t *testing.T) {
+	const unrequestedID = "unrequested"
 	ids := make([]string, 250)
 	allGroups := make(map[string]*pdhttp.AffinityGroupState, len(ids)+1)
 	for i := range ids {
 		ids[i] = fmt.Sprintf("g%03d", i)
 		allGroups[ids[i]] = affinityGroupState(ids[i])
 	}
-	allGroups["unrequested"] = affinityGroupState("unrequested")
+	allGroups[unrequestedID] = affinityGroupState(unrequestedID)
 	expected := filterAffinityGroups(allGroups, ids)
+	secondBatchID := ids[maxAffinityGroupIDsCount]
 
 	t.Run("unsupported query on a later batch", func(t *testing.T) {
 		client := &mockPDClient{}
@@ -410,9 +412,16 @@ func TestGetAffinityGroupsBatchesCompatibility(t *testing.T) {
 	}{
 		{"first batch and full scan return 404", false, nil, pdStatusErr(http.StatusNotFound), map[string]*pdhttp.AffinityGroupState{}},
 		{"later batch and full scan return 404", true, nil, pdStatusErr(http.StatusNotFound), map[string]*pdhttp.AffinityGroupState{ids[0]: allGroups[ids[0]], ids[1]: allGroups[ids[1]]}},
-		{"full scan merges and updates known states", true,
-			map[string]*pdhttp.AffinityGroupState{ids[0]: {ID: ids[0], RangeCount: 2}, ids[100]: allGroups[ids[100]], "unrequested": allGroups["unrequested"]}, nil,
-			map[string]*pdhttp.AffinityGroupState{ids[0]: {ID: ids[0], RangeCount: 2}, ids[1]: allGroups[ids[1]], ids[100]: allGroups[ids[100]]}},
+		{"full scan replaces partial results and drops deleted groups", true,
+			map[string]*pdhttp.AffinityGroupState{
+				ids[0]:        {ID: ids[0], RangeCount: 2},
+				secondBatchID: allGroups[secondBatchID],
+				unrequestedID: allGroups[unrequestedID],
+			}, nil,
+			map[string]*pdhttp.AffinityGroupState{
+				ids[0]:        {ID: ids[0], RangeCount: 2},
+				secondBatchID: allGroups[secondBatchID],
+			}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &mockPDClient{}

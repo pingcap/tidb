@@ -127,10 +127,11 @@ Key behaviors:
 - At finalization, `DroppingDefinitions` limits global-index cleanup, the schema
   diff, and delete-range GC to the partitions this job replaced. Only jobs
   published by an older owner without `AffinityGroupsPrepared` create groups in
-  this step. For partition affinity they request just the matched replacements,
-  if any. They retry creation errors with a delay because the replacement IDs
-  are already visible. The truncate notification pairs each dropped definition
-  with the replacement ID originally assigned to its old ID.
+  this step. For partition affinity they request groups for all current
+  partitions, including untouched ones. They retry creation errors with a delay
+  because the replacement IDs are already visible. The truncate notification
+  pairs each dropped definition with the replacement ID originally assigned to
+  its old ID.
 
 ## REORGANIZE PARTITION (`ActionReorganizePartition`)
 

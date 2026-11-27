@@ -2858,12 +2858,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DDLState = model.StateNone
 		pi.DDLAction = model.ActionNone
 
-		// Prepare groups for jobs that already passed StateWriteOnly on an older
-		// TiDB version before groups were prepared ahead of publication.
-		// The replacement is already visible, so failures here must retry.
-		if tblInfo.Affinity != nil && !args.AffinityGroupsPrepared &&
-			(tblInfo.Affinity.Level != ast.TableAffinityLevelPartition || len(newDefinitions) > 0) {
-			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo, newDefinitions...); err != nil {
+		// Backfill groups for all current partitions if an older owner already
+		// published the replacement without preparing affinity groups.
+		// Retry on failure because the replacement is already visible.
+		if tblInfo.Affinity != nil && !args.AffinityGroupsPrepared {
+			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
 				return ver, errors.Trace(err)
 			}
 		}

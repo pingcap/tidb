@@ -224,15 +224,7 @@ func (m *pdManager) getAffinityGroupsByScanningAll(
 		}
 		return nil, err
 	}
-	if partial == nil {
-		return filterAffinityGroups(allGroups, ids), nil
-	}
-	for _, id := range ids {
-		if group, ok := allGroups[id]; ok {
-			partial[id] = group
-		}
-	}
-	return partial, nil
+	return filterAffinityGroups(allGroups, ids), nil
 }
 
 func affinityGroupIDsEscapedQueryLen(ids []string) int {

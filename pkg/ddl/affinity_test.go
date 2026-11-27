@@ -1484,6 +1484,23 @@ func TestAffinityTruncatePartitionPreparation(t *testing.T) {
 							t.Error(err)
 							return
 						}
+						if scenario == "legacy finalization" {
+							replacementID := ddl.GetPartitionAffinityGroupID(
+								s.store.GetCodec(),
+								before.ID,
+								legacyArgs.NewPartitionIDs[0],
+							)
+							// Simulate missing groups on an owner upgrade.
+							err = s.cli.BatchDeleteAffinityGroups(
+								context.Background(),
+								[]string{replacementID, untouchedID},
+								true,
+							)
+							if err != nil {
+								t.Error(err)
+								return
+							}
+						}
 					}
 					if scenario == "legacy finalization" {
 						s.cli.notFoundCreates.Store(3)
@@ -1521,8 +1538,9 @@ func TestAffinityTruncatePartitionPreparation(t *testing.T) {
 								"legacy finalization keeps backing off beyond the DDL error limit")
 						}
 						replacementID := ddl.GetPartitionAffinityGroupID(s.store.GetCodec(), before.ID, after.Partition.Definitions[0].ID)
-						require.Contains(t, s.cli.lastCreatedGroups.Load(), replacementID)
-						require.Len(t, s.cli.lastCreatedGroups.Load(), 1, "legacy finalization only creates replacement groups")
+						created := s.cli.lastCreatedGroups.Load()
+						require.Contains(t, created, replacementID)
+						require.Contains(t, created, untouchedID)
 					}
 					requireAffinityGroupsWithLabelRules(t, s.cli, s.groupsOf(t, after), true, "all current partition groups must exist")
 					s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("11"))
