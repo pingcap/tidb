@@ -1887,18 +1887,18 @@ func TestForeignKeyOnUpdateCascade2(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t0 (id int, unique index(id))")
 	tk.MustExec("insert into t0 values (1)")
-	for i := 1; i < 17; i++ {
+	for i := 1; i < 16; i++ {
 		tk.MustExec(fmt.Sprintf("create table t%v (id int, unique index(id), foreign key (id) references t%v(id) on update cascade)", i, i-1))
 		tk.MustExec(fmt.Sprintf("insert into t%v values (1)", i))
 	}
 	tk.MustGetDBError("update t0 set id=10 where id=1;", exeerrors.ErrForeignKeyCascadeDepthExceeded)
 	tk.MustQuery("select id from t0").Check(testkit.Rows("1"))
-	tk.MustQuery("select id from t15").Check(testkit.Rows("1"))
-	tk.MustExec("drop table if exists t16")
+	tk.MustQuery("select id from t14").Check(testkit.Rows("1"))
+	tk.MustExec("drop table if exists t15")
 	tk.MustExec("update t0 set id=10 where id=1;")
 	tk.MustQuery("select id from t0").Check(testkit.Rows("10"))
-	tk.MustQuery("select id from t15").Check(testkit.Rows("10"))
-	for i := 16; i > -1; i-- {
+	tk.MustQuery("select id from t14").Check(testkit.Rows("10"))
+	for i := 15; i > -1; i-- {
 		tk.MustExec("drop table if exists t" + strconv.Itoa(i))
 	}
 
@@ -2628,4 +2628,43 @@ func TestLockKeysInInsertIgnore(t *testing.T) {
 	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
 	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
+}
+
+func TestForeignKeyCascadeDepthBoundary(t *testing.T) {
+	for _, operation := range []string{"delete", "update"} {
+		for _, tc := range []struct{ tables, rows int }{{15, 15}, {16, 16}, {17, 17}, {17, 15}} {
+			t.Run(fmt.Sprintf("%s/tables=%d/rows=%d", operation, tc.tables, tc.rows), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec("set foreign_key_checks=1")
+				tk.MustExec("create table t0 (id int primary key)")
+				for i := 1; i < tc.tables; i++ {
+					tk.MustExec(fmt.Sprintf("create table t%d (id int primary key, foreign key (id) references t%d(id) on delete cascade on update cascade)", i, i-1))
+				}
+				for i := 0; i < tc.rows; i++ {
+					tk.MustExec(fmt.Sprintf("insert into t%d values (1)", i))
+				}
+				stmt := "delete from t0 where id=1"
+				if operation == "update" {
+					stmt = "update t0 set id=2 where id=1"
+				}
+				if tc.rows > 15 {
+					tk.MustGetDBError(stmt, exeerrors.ErrForeignKeyCascadeDepthExceeded)
+					for i := 0; i < tc.rows; i++ {
+						tk.MustQuery(fmt.Sprintf("select id from t%d", i)).Check(testkit.Rows("1"))
+					}
+				} else {
+					tk.MustExec(stmt)
+					for i := 0; i < tc.tables; i++ {
+						want := testkit.Rows()
+						if operation == "update" && i < tc.rows {
+							want = testkit.Rows("2")
+						}
+						tk.MustQuery(fmt.Sprintf("select id from t%d", i)).Check(want)
+					}
+				}
+			})
+		}
+	}
 }
