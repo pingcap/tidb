@@ -327,7 +327,7 @@ TableReader	106389.00	root		data:Selection
 explain format = 'brief' select * from keyword where ((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'));
 id	estRows	task	access object	operator info
 IndexLookUp	901.00	root		
-├─IndexRangeScan(Build)	901.00	cop[tikv]	table:keyword, index:itest(phonetic_code, keyword)	range:("R1652" "ecg-monitor","R1652" "killers"), keep order:false
+├─IndexRangeScan(Build)	901.00	cop[tikv]	table:keyword, index:itest(phonetic_code, keyword)	range:["R1652" "ecg-monitor","R1652" "killers"), keep order:false
 └─Selection(Probe)	901.00	cop[tikv]		gt(imdbload.keyword.keyword, "ecg-monitor"), lt(imdbload.keyword.keyword, "killers")
   └─TableRowIDScan	901.00	cop[tikv]	table:keyword	keep order:false
 explain format = 'brief' select * from cast_info where (nr_order is null) and (person_role_id = 2) and (note >= '(key set pa: Florida');

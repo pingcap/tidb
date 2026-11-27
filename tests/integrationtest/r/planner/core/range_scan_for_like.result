@@ -700,7 +700,7 @@ id	task	access object	operator info
 Projection	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexLookUp	root		
-    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ia(a, b)	range:("\x00A\x00A",+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ia(a, b)	range:["\x00A\x00A",+inf], keep order:false, stats:pseudo
     └─Selection(Probe)	cop[tikv]		gt(planner__core__range_scan_for_like.t.a, "aa")
       └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t use index (ia) where a > 'aa' order by a,_tidb_rowid;
@@ -1000,7 +1000,7 @@ id	task	access object	operator info
 Projection	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
 └─Sort	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexLookUp	root		
-    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:ia(a, b)	range:(NULL,"\x00D\x00D"), ("\x00D\x00D",+inf], keep order:false, stats:pseudo
+    ├─IndexFullScan(Build)	cop[tikv]	table:t, index:ia(a, b)	keep order:false, stats:pseudo
     └─Selection(Probe)	cop[tikv]		not(in(planner__core__range_scan_for_like.t.a, "aabc", "dd"))
       └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t use index (ia) where a not in ('aabc','dd') order by a,_tidb_rowid;
