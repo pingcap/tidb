@@ -559,6 +559,31 @@ func TestSpecificConstant(t *testing.T) {
 	require.Equal(t, null.RetType.GetDecimal(), 0)
 }
 
+func TestConstantEqualBinaryLiteral(t *testing.T) {
+	ctx := mock.NewContext()
+	tests := []struct {
+		name        string
+		left, right []byte
+		equal       bool
+	}{
+		{name: "same bytes", left: []byte{0x2a}, right: []byte{0x2a}, equal: true},
+		{name: "leading zero", left: []byte{0x2a}, right: []byte{0x00, 0x2a}, equal: false},
+		{name: "different widths", left: []byte{0x2a}, right: []byte{0x00, 0x00, 0x2a}, equal: false},
+		{name: "all zero widths", left: []byte{0x00}, right: []byte{0x00, 0x00}, equal: false},
+		{name: "empty and zero", left: []byte{}, right: []byte{0x00}, equal: false},
+		{name: "different bytes", left: []byte{0x2a}, right: []byte{0x2b}, equal: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			left := &Constant{Value: types.NewBinaryLiteralDatum(tt.left), RetType: newBinaryLiteralFieldType()}
+			right := &Constant{Value: types.NewBinaryLiteralDatum(tt.right), RetType: newBinaryLiteralFieldType()}
+			require.Equal(t, tt.equal, left.Equal(ctx, right))
+			require.Equal(t, tt.equal, right.Equal(ctx, left))
+			require.Equal(t, tt.equal, left.Equals(right))
+		})
+	}
+}
+
 func TestConstantHashEquals(t *testing.T) {
 	// Test for Hash64 interface
 	cst1 := &Constant{Value: types.NewIntDatum(2333), RetType: newIntFieldType()}
