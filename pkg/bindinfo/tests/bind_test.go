@@ -311,12 +311,15 @@ func TestStmtHints(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("set @@tidb_mem_quota_query = 536870912")
 	memQuotaQuery := tk.Session().GetSessionVars().MemTracker.GetBytesLimit()
-	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(100), SET_VAR(TIKV_CLIENT_READ_TIMEOUT=20), MEMORY_QUOTA(2 GB) */ * from t use index(idx)")
+	// Test hint propagation and reset; a short deadline can expire while validating the binding.
+	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(600000), SET_VAR(TIKV_CLIENT_READ_TIMEOUT=20), MEMORY_QUOTA(2 GB) */ * from t use index(idx)")
 	tk.MustQuery("select * from t")
+	require.True(t, tk.Session().GetSessionVars().FoundInBinding)
 	require.Equal(t, int64(2147483648), tk.Session().GetSessionVars().MemTracker.GetBytesLimit())
-	require.Equal(t, uint64(100), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
+	require.Equal(t, uint64(600000), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	require.Equal(t, uint64(20), tk.Session().GetSessionVars().GetTiKVClientReadTimeout())
 	tk.MustQuery("select a, b from t")
+	require.False(t, tk.Session().GetSessionVars().FoundInBinding)
 	require.Equal(t, memQuotaQuery, tk.Session().GetSessionVars().MemTracker.GetBytesLimit())
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	// TODO(crazycs520): Fix me.
