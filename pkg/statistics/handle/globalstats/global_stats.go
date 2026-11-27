@@ -66,7 +66,6 @@ func (sg *Merger) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context
 // In the index statistics, the variable `num` is always equal to one.
 type GlobalStats struct {
 	Hg                    []*statistics.Histogram
-	Cms                   []*statistics.CMSketch
 	TopN                  []*statistics.TopN
 	MissingPartitionStats []string
 	Num                   int
@@ -79,7 +78,6 @@ func newGlobalStats(histCount int) *GlobalStats {
 	globalStats.Num = histCount
 	globalStats.Count = 0
 	globalStats.Hg = make([]*statistics.Histogram, globalStats.Num)
-	globalStats.Cms = make([]*statistics.CMSketch, globalStats.Num)
 	globalStats.TopN = make([]*statistics.TopN, globalStats.Num)
 
 	return globalStats
@@ -165,7 +163,7 @@ func uniqueGlobalNDV(partitionHists []*statistics.Histogram, count int64) int64 
 func WriteGlobalStatsToStorage(saver statstypes.ColOrIdxStatsSaver, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (err error) {
 	// Dump global-level stats to kv.
 	for i := range globalStats.Num {
-		hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
+		hg, topN := globalStats.Hg[i], globalStats.TopN[i]
 		if hg == nil {
 			// All partitions have no stats so global stats are not created.
 			continue
@@ -176,7 +174,7 @@ func WriteGlobalStatsToStorage(saver statstypes.ColOrIdxStatsSaver, globalStats 
 			globalStats.ModifyCount,
 			info.IsIndex,
 			hg,
-			cms,
+			nil,
 			topN,
 			nil,
 			info.StatsVersion,

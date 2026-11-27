@@ -316,15 +316,6 @@ func CMSketchAndTopNFromStorageWithHighPriority(sctx sessionctx.Context, tblID i
 	return statistics.DecodeCMSketchAndTopN(rows[0].GetBytes(0), topNRows)
 }
 
-// CMSketchFromStorage reads CMSketch from storage
-func CMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.CMSketch, err error) {
-	rows, _, err := util.ExecRows(sctx, "select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
-	if err != nil || len(rows) == 0 {
-		return nil, err
-	}
-	return statistics.DecodeCMSketch(rows[0].GetBytes(0))
-}
-
 // TopNFromStorage reads TopN from storage
 func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.TopN, err error) {
 	return topNFromStorageWithParams(util.StatsCtx, sctx, topNLoadParams{

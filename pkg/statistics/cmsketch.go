@@ -291,21 +291,6 @@ func (c *CMSketch) queryHashValue(_ planctx.PlanContext, h1, h2 uint64) (result 
 	return uint64(res)
 }
 
-// MergeTopNAndUpdateCMSketch merges the src TopN into the dst, and spilled values will be inserted into the CMSketch.
-func MergeTopNAndUpdateCMSketch(dst, src *TopN, c *CMSketch, numTop uint32) []TopNMeta {
-	topNs := []*TopN{src, dst}
-	mergedTopN, popedTopNPair := MergeTopN(topNs, numTop)
-	if mergedTopN == nil {
-		// mergedTopN == nil means the total count of the input TopN are equal to zero
-		return popedTopNPair
-	}
-	dst.TopN = mergedTopN.TopN
-	for _, topNMeta := range popedTopNPair {
-		c.InsertBytesByCount(topNMeta.Encoded, topNMeta.Count)
-	}
-	return popedTopNPair
-}
-
 // MergeCMSketch merges two CM Sketch.
 func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 	if c == nil || rc == nil {
@@ -474,12 +459,6 @@ func (c *CMSketch) Copy() *CMSketch {
 // GetWidthAndDepth returns the width and depth of CM Sketch.
 func (c *CMSketch) GetWidthAndDepth() (width, depth int32) {
 	return c.width, c.depth
-}
-
-// CalcDefaultValForAnalyze calculate the default value for Analyze.
-// The value of it is count / NDV in CMSketch. This means count and NDV are not include topN.
-func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
-	c.defaultValue = c.count / max(1, ndv)
 }
 
 // TopN stores most-common values, which is used to estimate point queries.

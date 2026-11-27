@@ -76,7 +76,7 @@ func toSQLIndex(isIndex bool) int {
 
 // globalStatsMerger is used to merge partition stats to global stats.
 // it divides the merge task into two parts.
-// - IOWorker: load stats from storage. it will load fmsketch, cmsketch, histogram and topn. and send them to cpuWorker.
+// - IOWorker: load stats from storage. it will load fmsketch, histogram and topn. and send them to cpuWorker.
 // - CPUWorker: merge the stats from IOWorker and generate global stats.
 //
 // ┌────────────────────────┐        ┌───────────────────────┐
@@ -94,7 +94,6 @@ type globalStatsMerger struct {
 	pool                util.SessionPool
 	tables              util.TableInfoGetter
 	globalStats         *GlobalStats
-	cmsketch            chan mergeItem[*statistics.CMSketch]
 	fmsketch            chan mergeItem[*statistics.FMSketch]
 	histogramAndTopn    chan mergeItem[*statsWrapper]
 	PartitionDefinition map[int64]model.PartitionDefinition
@@ -130,7 +129,6 @@ func newGlobalStatsMerger(
 	return &globalStatsMerger{
 		pool:                    pool,
 		tables:                  tables,
-		cmsketch:                make(chan mergeItem[*statistics.CMSketch], 5),
 		fmsketch:                make(chan mergeItem[*statistics.FMSketch], 5),
 		histogramAndTopn:        make(chan mergeItem[*statsWrapper]),
 		PartitionDefinition:     make(map[int64]model.PartitionDefinition),
@@ -282,12 +280,6 @@ func (a *globalStatsMerger) ioWorker(sctx sessionctx.Context, isIndex bool) (err
 		return err
 	}
 	close(a.fmsketch)
-	err = a.loadCMsketch(sctx, isIndex)
-	if err != nil {
-		close(a.ioWorkerExitWhenErrChan)
-		return err
-	}
-	close(a.cmsketch)
 	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			time.Sleep(1 * time.Second)
@@ -316,11 +308,6 @@ func (a *globalStatsMerger) cpuWorker(stmtCtx *stmtctx.StatementContext, killer 
 	case <-a.ioWorkerExitWhenErrChan:
 		return nil
 	default:
-	}
-	err = a.dealCMSketch()
-	if err != nil {
-		statslogutil.StatsLogger().Warn("dealCMSketch failed", zap.Error(err))
-		return err
 	}
 	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
@@ -428,42 +415,8 @@ func (a *globalStatsMerger) loadFmsketch(sctx sessionctx.Context, isIndex bool) 
 	return nil
 }
 
-func (a *globalStatsMerger) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
-	failpoint.Inject("PanicInIOWorker", nil)
-	statslogutil.StatsLogger().Info("global stats load: cmsketch",
-		zap.String("table", a.globalTableInfo.Name.L),
-		zap.Int64("tableID", a.globalTableInfo.ID),
-		zap.Bool("isIndex", isIndex),
-		zap.Int("histIDs", a.globalStats.Num),
-		zap.Int("partitions", len(a.partitionIDs)),
-		zap.String("reads", "mysql.stats_histograms"))
-	for i := range a.globalStats.Num {
-		for _, partitionID := range a.partitionIDs {
-			_, ok := a.skipPartition[partitionItemID{
-				histID:      a.histIDs[i],
-				partitionID: partitionID,
-			}]
-			if ok {
-				continue
-			}
-			cmsketch, err := storage.CMSketchFromStorage(sctx, partitionID, toSQLIndex(isIndex), a.histIDs[i])
-			if err != nil {
-				return err
-			}
-			select {
-			case a.cmsketch <- mergeItem[*statistics.CMSketch]{
-				cmsketch, i,
-			}:
-			case <-a.cpuWorkerExitChan:
-				statslogutil.StatsLogger().Warn("ioWorker detects CPUWorker has exited")
-				return nil
-			}
-		}
-	}
-	return nil
-}
-
 func (a *globalStatsMerger) loadHistogramAndTopN(sctx sessionctx.Context, tableInfo *model.TableInfo, isIndex bool) error {
+	failpoint.Inject("PanicInIOWorker", nil)
 	failpoint.Inject("ErrorSameTime", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			time.Sleep(1 * time.Second)
@@ -540,32 +493,6 @@ func (a *globalStatsMerger) dealFMSketch() {
 			ndvMergers[fms.idx].Merge(fms.item)
 		case <-a.ioWorkerExitWhenErrChan:
 			return
-		}
-	}
-}
-
-func (a *globalStatsMerger) dealCMSketch() error {
-	failpoint.Inject("dealCMSketchErr", func(val failpoint.Value) {
-		if val, _ := val.(bool); val {
-			failpoint.Return(errors.New("dealCMSketch returned error"))
-		}
-	})
-	for {
-		select {
-		case cms, ok := <-a.cmsketch:
-			if !ok {
-				return nil
-			}
-			if a.globalStats.Cms[cms.idx] == nil {
-				a.globalStats.Cms[cms.idx] = cms.item
-			} else {
-				err := a.globalStats.Cms[cms.idx].MergeCMSketch(cms.item)
-				if err != nil {
-					return err
-				}
-			}
-		case <-a.ioWorkerExitWhenErrChan:
-			return nil
 		}
 	}
 }
