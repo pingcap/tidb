@@ -814,6 +814,13 @@ type SessionVars struct {
 	*UserVars
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
+	// systemsMu protects systems. The read path GetSessionOrGlobalSystemVar
+	// lazily populates systems, and the branches of a UNION (or a parallel
+	// projection) run that path concurrently on the same SessionVars, which
+	// otherwise triggers a Go "concurrent map read and map write" fatal (#73702).
+	// Every access to systems must hold this lock; keep the critical sections
+	// short and never call another systems-accessing function while holding it.
+	systemsMu sync.RWMutex
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
@@ -2601,7 +2608,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	if vardef.EnableRowLevelChecksum.Load() {
 		vars.EnableRowLevelChecksum = true
 	}
+	vars.systemsMu.Lock()
 	vars.systems[vardef.CharacterSetConnection], vars.systems[vardef.CollationConnection] = charset.GetDefaultCharsetAndCollate()
+	vars.systemsMu.Unlock()
 	return vars
 }
 
@@ -2760,8 +2769,10 @@ func (s *SessionVars) RegisterScalarSubQ(scalarSubQ any) {
 // have their own collation, which has a higher collation precedence.
 // See https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
 func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
+	s.systemsMu.RLock()
 	charset = s.systems[vardef.CharacterSetConnection]
 	collation = s.systems[vardef.CollationConnection]
+	s.systemsMu.RUnlock()
 	return
 }
 
@@ -2931,7 +2942,9 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	} else if name == vardef.ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
 	}
+	s.systemsMu.RLock()
 	val, ok := s.systems[name]
+	s.systemsMu.RUnlock()
 	return val, ok
 }
 
@@ -3057,13 +3070,20 @@ func (s *SessionVars) GetSessionOrGlobalSystemVar(ctx context.Context, name stri
 			// shortcut to the getter, we won't use the value
 			return sv.GetSessionFromHook(s)
 		}
-		if _, ok := s.systems[sv.Name]; !ok {
+		s.systemsMu.RLock()
+		_, ok := s.systems[sv.Name]
+		s.systemsMu.RUnlock()
+		if !ok {
 			if sv.HasGlobalScope() {
 				if val, err := s.GlobalVarsAccessor.GetGlobalSysVar(sv.Name); err == nil {
+					s.systemsMu.Lock()
 					s.systems[sv.Name] = val
+					s.systemsMu.Unlock()
 				}
 			} else {
+				s.systemsMu.Lock()
 				s.systems[sv.Name] = sv.Value // no global scope, use default
+				s.systemsMu.Unlock()
 			}
 		}
 		return sv.GetSessionFromHook(s)
@@ -3088,7 +3108,10 @@ func (s *SessionVars) GetSessionStatesSystemVar(name string) (string, bool, erro
 		return val, err == nil, err
 	}
 	// Only get the cached value. No need to check the global or default value.
-	if val, ok := s.systems[sv.Name]; ok {
+	s.systemsMu.RLock()
+	val, ok := s.systems[sv.Name]
+	s.systemsMu.RUnlock()
+	if ok {
 		return val, true, nil
 	}
 	return "", false, nil
@@ -3101,7 +3124,10 @@ func getSnapshotTSState(s *SessionVars) (string, bool, error) {
 		return "", false, nil
 	}
 	// Preserve the client's spelling when it still denotes the effective timestamp.
-	if value, ok := s.systems[vardef.TiDBSnapshot]; ok {
+	s.systemsMu.RLock()
+	value, ok := s.systems[vardef.TiDBSnapshot]
+	s.systemsMu.RUnlock()
+	if ok {
 		if ts, err := parseTSFromNumberOrTime(s, value); err == nil && ts == s.SnapshotTS {
 			return value, true, nil
 		}
