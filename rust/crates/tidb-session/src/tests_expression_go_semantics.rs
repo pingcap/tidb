@@ -702,3 +702,21 @@ fn test_soundex() {
     assert_eq!(code(&mut tk, "select soundex()").0, 1582);
     assert_eq!(code(&mut tk, "select soundex('a', 'b')").0, 1582);
 }
+
+/// Go `TestRegexp...`'s "numeric regexp result" (e7c11282c9c): REGEXP_LIKE
+/// and REGEXP_INSTR return numbers, so their results carry numeric
+/// coercibility and feed a string function without a collation conflict.
+#[test]
+fn test_regexp_numeric_result_coercibility() {
+    let mut tk = Session::new();
+    tk.run("create table t (a varchar(10))").unwrap();
+    tk.run("insert into t values ('1')").unwrap();
+    for function in ["regexp_like", "regexp_instr"] {
+        assert_eq!(cell(&mut tk, &format!("select coercibility({function}(a, '[0-9]')) from t")), "5", "{function}");
+        assert_eq!(
+            cell(&mut tk, &format!("select regexp_replace({function}(a, '[0-9]'), '[0-9]', 'aaaaa') from t")),
+            "aaaaa",
+            "{function}"
+        );
+    }
+}

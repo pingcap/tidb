@@ -635,8 +635,7 @@ pub(crate) fn derive_collation_with_arg_tps(
                 connection,
             )
         }
-        "locate" | "instr" | "position" | "regexp_like" | "regexp_substr" | "regexp_instr"
-            if args.len() >= 2 =>
+        "locate" | "instr" | "position" | "regexp_substr" if args.len() >= 2 =>
         {
             check_and_derive_collation_from_exprs_with_connection(
                 func_name,
@@ -686,7 +685,7 @@ pub(crate) fn derive_collation_with_arg_tps(
         "ifnull" if args.len() == 2 => check_and_derive_collation_from_exprs_with_connection(
             func_name, ret_type, args, connection,
         ),
-        "like" | "ilike" if args.len() >= 2 => {
+        "like" | "ilike" | "regexp_like" | "regexp_instr" if args.len() >= 2 => {
             let mut ec = check_and_derive_collation_from_exprs_with_connection(
                 func_name,
                 EvalType::Int,
