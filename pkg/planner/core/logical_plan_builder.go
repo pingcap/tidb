@@ -30,7 +30,6 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -4810,17 +4810,17 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 // In such case, compared to getStatsTable(), this function can save some copies, memory allocations and unnecessary
 // checks. Also, this function won't trigger metrics changes.
 func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) (version uint64) {
-	statsHandle := domain.GetDomain(ctx).StatsHandle()
+	statsProvider := stats.GetStatsProvider(ctx.GetPlanCtx())
 	// 1. tidb-server started and statistics handle has not been initialized. Pseudo stats table.
-	if statsHandle == nil {
+	if statsProvider == nil {
 		return 0
 	}
 
 	var statsTbl *statistics.Table
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+		statsTbl = statsProvider.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	} else {
-		statsTbl = statsHandle.GetPhysicalTableStats(pid, tblInfo)
+		statsTbl = statsProvider.GetPhysicalTableStats(pid, tblInfo)
 	}
 
 	// 2. Table row count from statistics is zero. Pseudo stats table.
@@ -5116,10 +5116,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode {
 				b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 			} else {
-				h := domain.GetDomain(b.ctx).StatsHandle()
-				tblStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+				globalStatsReady := false
+				if statsProvider := stats.GetStatsProvider(b.ctx); statsProvider != nil {
+					tblStats := statsProvider.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+					globalStatsReady = tblStats.IsAnalyzed()
+				}
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
-				globalStatsReady := tblStats.IsAnalyzed()
 				skipMissingPartition := b.ctx.GetSessionVars().SkipMissingPartitionStats
 				// If we already enabled the tidb_skip_missing_partition_stats, the global stats can be treated as exist.
 				allowDynamicWithoutStats := fixcontrol.GetBoolWithDefault(b.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44262, skipMissingPartition)

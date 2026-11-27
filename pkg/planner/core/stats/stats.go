@@ -26,9 +26,30 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
+
+// PhysicalTableStatsProvider provides read-only physical table statistics for planning.
+// Both *handle.Handle and lightweight on-demand loaders (for example, cross-keyspace
+// session loaders) implement this interface.
+// Implementations must return a non-nil *statistics.Table for a non-nil tblInfo,
+// falling back to a pseudo stats table when real stats are unavailable (matching
+// (*handle.Handle).GetPhysicalTableStats).
+type PhysicalTableStatsProvider interface {
+	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
+}
+
+// GetStatsProvider returns Domain's StatsHandle when available, or falls back to
+// SessionVars.StatsProvider.
+func GetStatsProvider(ctx base.PlanContext) PhysicalTableStatsProvider {
+	if dom := domain.GetDomain(ctx); dom != nil && dom.StatsHandle() != nil {
+		return dom.StatsHandle()
+	}
+	if p, ok := ctx.GetSessionVars().StatsProvider.(PhysicalTableStatsProvider); ok {
+		return p
+	}
+	return nil
+}
 
 // GetTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable
 // that will be used to record used stats.
@@ -58,22 +79,18 @@ func GetTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (
 // 3. statistics is outdated.
 // Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
 func GetStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	var statsHandle *handle.Handle
-	dom := domain.GetDomain(ctx)
-	if dom != nil {
-		statsHandle = dom.StatsHandle()
-	}
 	var pseudoStatsForUninitialized, pseudoStatsForOutdated bool
 	var statsTbl *statistics.Table
+	statsProvider := GetStatsProvider(ctx)
 	// 1. tidb-server started and statistics handle has not been initialized.
-	if statsHandle == nil {
+	if statsProvider == nil {
 		return statistics.PseudoTable(tblInfo, false, true)
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+		statsTbl = statsProvider.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	} else {
-		statsTbl = statsHandle.GetPhysicalTableStats(pid, tblInfo)
+		statsTbl = statsProvider.GetPhysicalTableStats(pid, tblInfo)
 	}
 	intest.Assert(statsTbl.ColAndIdxExistenceMap != nil, "The existence checking map must not be nil.")
 

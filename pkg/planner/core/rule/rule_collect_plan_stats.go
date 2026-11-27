@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -63,6 +63,17 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
 	}
 
+	// Prune indexes before collecting sync indices to avoid loading stats for indexes that will be pruned.
+	// This must happen after InterestingColumns is set (which happens in CollectColumnStatsUsage).
+	keptIndexIDs := c.pruneIndexesForAllDataSources(plan)
+
+	// Sync/async histogram loading only applies when Domain.StatsHandle() is available.
+	dom := domain.GetDomain(plan.SCtx())
+	if dom == nil || dom.StatsHandle() == nil {
+		return plan, planChanged, nil
+	}
+	statsHandle := dom.StatsHandle()
+
 	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and trigger extra sync/async
 	// stats loading for the determinate mode.
 	is := plan.SCtx().GetLatestInfoSchema()
@@ -75,15 +86,11 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 		tblID2TblInfo[int64(physicalTblID)] = tblInfo
 	})
 
-	c.markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, tblID2TblInfo, predicateColumns, syncLoadEnabled)
+	c.markAtLeastOneFullStatsLoadForEachTable(statsHandle, visitedPhysTblIDs, tblID2TblInfo, predicateColumns, syncLoadEnabled)
 	histNeededColumns := make([]model.StatsLoadItem, 0, len(predicateColumns))
 	for item, fullLoad := range predicateColumns {
 		histNeededColumns = append(histNeededColumns, model.StatsLoadItem{TableItemID: item, FullLoad: fullLoad})
 	}
-
-	// Prune indexes before collecting sync indices to avoid loading stats for indexes that will be pruned.
-	// This must happen after InterestingColumns is set (which happens in CollectColumnStatsUsage).
-	keptIndexIDs := c.pruneIndexesForAllDataSources(plan)
 
 	// collect needed virtual columns from already needed columns
 	// Note that we use the dependingVirtualCols only to collect needed index stats, but not to trigger stats loading on
@@ -91,7 +98,7 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	// indexes, which are indexes on virtual columns, have statistics. We don't waste the resource here now.
 	dependingVirtualCols := CollectDependingVirtualCols(tblID2TblInfo, histNeededColumns)
 
-	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo, keptIndexIDs)
+	histNeededIndices := collectSyncIndices(statsHandle, append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo, keptIndexIDs)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	// TODO: this part should be removed once we don't support the static pruning mode.
 	histNeededItems = c.expandStatsNeededColumnsForStaticPruning(histNeededItems, tid2pids)
@@ -113,17 +120,12 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 // markAtLeastOneFullStatsLoadForEachTable marks at least one full stats load for each table.
 // It should be called after we use c.predicateCols to update the usage of predicate columns.
 func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
-	sctx planctx.PlanContext,
+	statsProvider stats.PhysicalTableStatsProvider,
 	visitedPhysTblIDs *intset.FastIntSet,
 	tblID2TblInfo map[int64]*model.TableInfo,
 	predicateCols map[model.TableItemID]bool,
 	histNeeded bool,
 ) {
-	statsHandle := domain.GetDomain(sctx).StatsHandle()
-	if statsHandle == nil {
-		// If there's no stats handler, it's abnormal status. Return directly.
-		return
-	}
 	physTblIDsWithNeededCols := intset.NewFastIntSet()
 	for neededCol, fullLoad := range predicateCols {
 		if !fullLoad {
@@ -134,7 +136,7 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		if tblInfo == nil {
 			continue
 		}
-		tableStats := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+		tableStats := statsProvider.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 		if tableStats == nil || tableStats.Pseudo {
 			continue
 		}
@@ -156,7 +158,7 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		if physTblIDsWithNeededCols.Has(physicalTblID) {
 			return
 		}
-		tblStats := statsHandle.GetPhysicalTableStats(tbl.ID, tbl)
+		tblStats := statsProvider.GetPhysicalTableStats(tbl.ID, tbl)
 		if tblStats == nil || tblStats.Pseudo {
 			return
 		}
@@ -479,13 +481,12 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]*model.TableInfo, neededIte
 // composed up by A column, then we thought the idx_a should be collected
 // 2. The stats condition of idx_a can't meet IsFullLoad, which means its stats was evicted previously
 // 3. The index must be in keptIndexIDs if provided (to avoid loading stats for indexes that will be pruned)
-func collectSyncIndices(ctx base.PlanContext,
+func collectSyncIndices(statsProvider stats.PhysicalTableStatsProvider,
 	histNeededColumns []model.StatsLoadItem,
 	tblID2Tbl map[int64]*model.TableInfo,
 	keptIndexIDs map[int64]map[int64]struct{},
 ) map[model.TableItemID]struct{} {
 	histNeededIndices := make(map[model.TableItemID]struct{})
-	stats := domain.GetDomain(ctx).StatsHandle()
 	for _, column := range histNeededColumns {
 		if column.IsIndex {
 			continue
@@ -513,7 +514,7 @@ func collectSyncIndices(ctx base.PlanContext,
 						}
 					}
 				}
-				tblStats := stats.GetPhysicalTableStats(tbl.ID, tbl)
+				tblStats := statsProvider.GetPhysicalTableStats(tbl.ID, tbl)
 				if tblStats == nil || tblStats.Pseudo {
 					continue
 				}
@@ -555,17 +556,19 @@ func recordTableRuntimeStats(sctx base.PlanContext, tbls map[int64]struct{}) {
 	sctx.GetSessionVars().StmtCtx.TableStats = tblStats
 }
 
-func recordSingleTableRuntimeStats(sctx base.PlanContext, tblID int64) (stats *statistics.Table, skip bool, err error) {
-	dom := domain.GetDomain(sctx)
-	statsHandle := dom.StatsHandle()
+func recordSingleTableRuntimeStats(sctx base.PlanContext, tblID int64) (statsTbl *statistics.Table, skip bool, err error) {
+	statsProvider := stats.GetStatsProvider(sctx)
+	if statsProvider == nil {
+		return nil, true, nil
+	}
 	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := is.TableByID(context.Background(), tblID)
 	if !ok {
 		return nil, false, nil
 	}
 	tableInfo := tbl.Meta()
-	stats = statsHandle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	statsTbl = statsProvider.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// Skip the warning if the table is a temporary table because the temporary table doesn't have stats.
 	skip = tableInfo.TempTableType != model.TempTableNone
-	return stats, skip, nil
+	return statsTbl, skip, nil
 }

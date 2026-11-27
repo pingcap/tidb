@@ -105,8 +105,6 @@ func prepareImportQuery(
 		// context, so select the execution group before compilation starts.
 		vars.SetResourceGroupName(resourcegroup.DefaultResourceGroupName)
 	}
-	// Without a statistics provider, this worker uses static partition pruning.
-	vars.PartitionPruneMode.Store("static")
 	vars.InMViewMaintenance = q.InMViewMaintenance
 	vars.InRestrictedSQL = true
 	vars.InternalSQLScanUserTable = false

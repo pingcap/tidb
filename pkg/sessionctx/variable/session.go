@@ -929,6 +929,14 @@ type SessionVars struct {
 	// version, we load an old version schema for query.
 	SnapshotInfoschema any
 
+	// StatsProvider is an optional planner stats provider (planner/core/stats.PhysicalTableStatsProvider)
+	// used when Domain.StatsHandle() is unavailable, such as in cross-keyspace sessions.
+	// Typed as `any` to avoid a circular dependency with pkg/statistics.
+	// Note: neither statement resets nor SessionPool.Put clear this field automatically;
+	// callers attaching a scoped provider to a pooled session must clear StatsProvider
+	// before Put (or Destroy the session).
+	StatsProvider any
+
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
