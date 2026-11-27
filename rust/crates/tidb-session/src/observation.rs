@@ -1219,6 +1219,7 @@ fn is_crucial_stmt(stmt: &Stmt) -> bool {
                 create.options.index_type != Some(tidb_ast::IndexType::HYPO)
             }
             tidb_ast::DdlStmt::AlterTable(_)
+            | tidb_ast::DdlStmt::AlterDatabase { .. }
             | tidb_ast::DdlStmt::CreateDatabase { .. }
             | tidb_ast::DdlStmt::CreateTable(_)
             | tidb_ast::DdlStmt::DropDatabase { .. }

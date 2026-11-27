@@ -76,6 +76,9 @@ impl QuerySession for Session {
     fn extension_connection_event_info(&self) -> Option<tidb_extension::ConnEventInfo> {
         Session::extension_connection_event_info(self)
     }
+    fn session_user_for_log(&self) -> String {
+        Session::session_user_for_log(self)
+    }
     fn on_extension_stmt_end(
         &mut self,
         stmt_ctx_valid: bool,

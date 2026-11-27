@@ -56,6 +56,10 @@ pub trait QuerySession {
     fn current_database(&self) -> &str {
         ""
     }
+    /// Go `SessionVars.User.String()`, as the connection event log prints it.
+    fn session_user_for_log(&self) -> String {
+        String::new()
+    }
     /// Go `AuthWithoutVerification` does not bind plugin authorization callbacks.
     fn auth_without_verification(&mut self) {}
 

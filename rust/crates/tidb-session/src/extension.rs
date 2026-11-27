@@ -146,6 +146,16 @@ impl Session {
             current_user: false,
         })
     }
+    /// Go `SessionVars.User.String()`: the matched account when there is
+    /// one, else the login; empty for a session with no user.
+    pub fn session_user_for_log(&self) -> String {
+        match self.extension_user() {
+            Some(user) if !user.auth_username.is_empty() => format!("{}@{}", user.auth_username, user.auth_hostname),
+            Some(user) => format!("{}@{}", user.username, user.hostname),
+            None => String::new(),
+        }
+    }
+
     /// Go `clientConn.onExtensionConnEvent`'s session fields.
     pub fn extension_connection_event_info(&self) -> Option<ConnEventInfo> {
         Some(ConnEventInfo {

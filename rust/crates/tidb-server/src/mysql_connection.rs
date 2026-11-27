@@ -1928,6 +1928,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         events.info = info;
     }
     events.emit(tidb_extension::ConnEventTp::HandshakeAccepted);
+    log_connection_event(&engine, connection_id, &peer_addr.remote_addr(), "login_success");
     let reset_session = |engine: &mut F::Session| -> Result<(), SqlQueryError> {
         let database = engine.current_database().to_owned();
         engine.close_for_reset();
@@ -2024,6 +2025,22 @@ impl Drop for ConnectionAliveGuard {
 /// session's SQL killer, which checks it at its own execution checkpoints
 /// (`HandleSignal`, at most once a second) -- no background monitor, so a
 /// short statement pays nothing.
+/// Go `clientConn.logConnectionEvent`: the connection's login and logout,
+/// under `tidb_enable_connection_event_log`.
+fn log_connection_event<S: QuerySession>(engine: &S, connection_id: u64, remote_addr: &str, event: &str) {
+    if !tidb_vardef::ENABLE_CONNECTION_EVENT_LOG.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    tidb_logutil::with_conn_id(&tidb_logutil::bg_logger(), connection_id).info(
+        "connection event",
+        &[
+            tidb_log::Field::new("event", tidb_log::Value::Str(event.to_owned())),
+            tidb_log::Field::new("user", tidb_log::Value::Str(engine.session_user_for_log())),
+            tidb_log::Field::new("remoteAddr", tidb_log::Value::Str(remote_addr.to_owned())),
+        ],
+    );
+}
+
 fn set_sql_killer_connection_alive<S: QuerySession>(
     engine: &S,
     probe: &Arc<ConnectionAliveProbe>,
@@ -2507,6 +2524,7 @@ fn run_connection_commands<S: QuerySession>(
                 .map(|active| cancellation.install(active));
             match command {
                 Command::Quit => {
+                    log_connection_event(&*engine, connection_id, &conn_info.addr, "logout");
                     return Ok(Some(ConnectionReport {
                         connection_id,
                         queries,
