@@ -538,12 +538,15 @@ func ParseBinaryJSONFromString(s string) (bj BinaryJSON, err error) {
 		return
 	}
 	data := hack.Slice(s)
-	if !json.Valid(data) {
-		err = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
-		return
-	}
-	if err = bj.UnmarshalJSON(data); err != nil && !ErrJSONObjectKeyTooLong.Equal(err) && !ErrJSONDocumentTooDeep.Equal(err) {
-		err = ErrInvalidJSONText.GenWithStackByArgs(err)
+	if err = bj.UnmarshalJSON(data); err != nil {
+		if ErrJSONObjectKeyTooLong.Equal(err) ||
+			ErrJSONDocumentTooDeep.Equal(err) ||
+			ErrInvalidJSONText.Equal(err) {
+			return
+		}
+		// Wrapping the errors is critical to allow JSON functions to get the details
+		// of the json.SyntaxError, e.g. the Offset of the syntax.
+		err = ErrInvalidJSONText.Wrap(err).GenWithStackByArgs(err)
 	}
 	return
 }
