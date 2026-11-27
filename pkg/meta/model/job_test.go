@@ -279,6 +279,25 @@ func TestMayNeedReorg(t *testing.T) {
 		job.Type = jobType
 		require.False(t, job.MayNeedReorg())
 	}
+
+	modifyJob := &Job{Type: ActionModifyColumn}
+	require.False(t, modifyJob.MayNeedReorg())
+	modifyJob.Version = JobVersion2
+	modifyJob.RawArgs = []byte("null")
+	require.False(t, modifyJob.MayNeedReorg())
+	modifyJob.FillArgs(&ModifyColumnArgs{ModifyColumnType: ModifyTypeNoReorgWithCheck})
+	require.False(t, modifyJob.MayNeedReorg())
+	modifyJob.FillArgs(&ModifyColumnArgs{ModifyColumnType: ModifyTypeReorg})
+	require.True(t, modifyJob.MayNeedReorg())
+
+	multiJob := &Job{
+		Version: JobVersion2,
+		Type:    ActionMultiSchemaChange,
+		MultiSchemaInfo: &MultiSchemaInfo{
+			SubJobs: []*SubJob{{Type: ActionModifyColumn}},
+		},
+	}
+	require.False(t, multiJob.MayNeedReorg())
 }
 
 func TestCreateMaterializedViewRollbackable(t *testing.T) {
