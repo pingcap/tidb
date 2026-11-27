@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -64,11 +64,10 @@ type AnalysisJob interface {
 	) (bool, string)
 
 	// Analyze executes the analyze statement within a transaction. It runs in the sessions of pool,
-	// and takes the process ID of the statement from procIDs.
+	// and runs the statements through runner.
 	Analyze(
 		pool statsutil.SessionPool,
-		procIDs statsutil.AutoAnalyzeProcIDGenerator,
-		sysProcTracker sysproctrack.Tracker,
+		runner *exec.Runner,
 	) error
 
 	// SetWeight sets the weight of the job.

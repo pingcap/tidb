@@ -1820,6 +1820,12 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableDistAutoAnalyze, Value: BoolToOnOff(vardef.DefTiDBEnableDistAutoAnalyze), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		vardef.EnableDistAutoAnalyze.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableDistAutoAnalyze.Load()), nil
+	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableMDL, Value: BoolToOnOff(vardef.DefTiDBEnableMDL), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, vars *SessionVars, val string) error {
 		if vardef.IsMDLEnabled() != TiDBOptOn(val) {
 			err := SwitchMDL(TiDBOptOn(val))

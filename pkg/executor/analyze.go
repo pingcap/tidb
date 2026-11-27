@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -71,6 +72,9 @@ type AnalyzeExec struct {
 	gp         *gp.Pool
 	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
 	errExitCh chan struct{}
+	// sampledNDVThreshold is tidb_analyze_sampled_ndv_threshold of the session
+	// keyspace, read one time, so that all tasks of the statement use one value.
+	sampledNDVThreshold int64
 }
 
 var (
@@ -105,7 +109,39 @@ func runningUnderGoTest() bool {
 // tasks will capture base count / modify_count from mysql.stats_meta. Without this, a stale
 // pre-analyze delta can be applied later and double count rows or modifications.
 func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) error {
-	flushObjects := collectStatsDeltaFlushObjectsForAnalyze(plan)
+	if sctx.GetPlanCtx().IsCrossKS() {
+		// The broadcast goes to the TiDB servers of the keyspace of this TiDB, not of the session.
+		// Whoever asks a node of another keyspace to analyze must first flush in the table's keyspace.
+		return nil
+	}
+	return flushStatsDelta(ctx, sctx, collectStatsDeltaFlushObjectsForAnalyze(plan), func() []int64 {
+		return collectAnalyzeStatsDeltaTargetIDsForTest(plan)
+	})
+}
+
+// FlushTableStatsDeltaForAnalyze flushes the pending stats deltas of the table and its partitions on
+// the TiDB servers of the session's keyspace, the same way ANALYZE does before it builds its tasks.
+// It is for a node that asks a node of another keyspace to analyze the table.
+func FlushTableStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, dbName ast.CIStr, tblInfo *model.TableInfo) error {
+	flushObjects := []*ast.StatsObject{{
+		StatsObjectScope: ast.StatsObjectScopeTable,
+		DBName:           dbName,
+		TableName:        tblInfo.Name,
+	}}
+	return flushStatsDelta(ctx, sctx, flushObjects, func() []int64 {
+		ids := []int64{tblInfo.ID}
+		if pi := tblInfo.GetPartitionInfo(); pi != nil {
+			for _, def := range pi.Definitions {
+				ids = append(ids, def.ID)
+			}
+		}
+		return ids
+	})
+}
+
+// flushStatsDelta flushes the pending stats deltas of flushObjects on the TiDB servers. In a test
+// binary that cannot broadcast, it dumps the deltas of the IDs from targetIDs locally instead.
+func flushStatsDelta(ctx context.Context, sctx sessionctx.Context, flushObjects []*ast.StatsObject, targetIDs func() []int64) error {
 	if len(flushObjects) == 0 {
 		return nil
 	}
@@ -115,7 +151,7 @@ func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, pla
 
 	// HACK: test binaries have no real RPC peer to broadcast to; dump locally instead.
 	if runningUnderGoTest() {
-		flushedLocally, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, plan)
+		flushedLocally, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, targetIDs)
 		if err != nil {
 			return err
 		}
@@ -204,7 +240,7 @@ func collectStatsDeltaFlushObjectsForAnalyze(plan *core.Analyze) []*ast.StatsObj
 	return flushObjects
 }
 
-func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) (bool, error) {
+func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context, targetIDs func() []int64) (bool, error) {
 	canBroadcast, err := canBroadcastAnalyzeStatsDeltaForTest(ctx)
 	if err != nil {
 		return false, err
@@ -214,11 +250,11 @@ func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context,
 	if canBroadcast {
 		return false, nil
 	}
-	targetIDs := collectAnalyzeStatsDeltaTargetIDsForTest(plan)
-	if len(targetIDs) == 0 {
+	ids := targetIDs()
+	if len(ids) == 0 {
 		return false, nil
 	}
-	return true, domain.GetDomain(sctx).StatsHandle().Usage().DumpStatsDeltaToKV(true, targetIDs...)
+	return true, domain.GetDomain(sctx).StatsHandle().Usage().DumpStatsDeltaToKV(true, ids...)
 }
 
 func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
@@ -320,7 +356,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		return err
 	}
 	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
-	warnUnusedNDVRate(sessionVars, tasks)
+	warnUnusedNDVRate(sessionVars, tasks, e.sampledNDVThreshold)
 
 	if len(tasks) == 0 {
 		return nil
@@ -576,10 +612,9 @@ func warnLockedTableMsg(sessionVars *variable.SessionVars, needAnalyzeTableCnt u
 
 // warnUnusedNDVRate warns when the tables and partitions to analyze ask for an
 // NDVRATE below 1, in the statement or in saved options, but none samples rows
-// because none has more than tidb_analyze_sampled_ndv_threshold rows.
-func warnUnusedNDVRate(sessionVars *variable.SessionVars, tasks []*analyzeTask) {
+// because none has more than threshold rows.
+func warnUnusedNDVRate(sessionVars *variable.SessionVars, tasks []*analyzeTask, threshold int64) {
 	// Zero turns sampled NDV off, so skip the warning.
-	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
 	if threshold == 0 {
 		return
 	}
@@ -640,8 +675,12 @@ func writeSavedAnalyzeOption(sql *strings.Builder, rawOpts map[ast.AnalyzeOption
 }
 
 func (e *AnalyzeExec) saveAnalyzeOptions() error {
-	if !vardef.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
+	if len(e.OptionsMap) == 0 {
 		return nil
+	}
+	persist, err := core.PersistAnalyzeOptions(e.Ctx().GetPlanCtx())
+	if err != nil || !persist {
+		return err
 	}
 	// only to save table options if dynamic prune mode
 	dynamicPrune := variable.PartitionPruneMode(e.Ctx().GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
@@ -688,7 +727,7 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	exec := e.Ctx().GetRestrictedSQLExecutor()
-	_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
+	_, _, err = exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return err
 	}

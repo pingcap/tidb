@@ -25,9 +25,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // GlobalPDHelper is the global variable for PDHelper.
@@ -66,8 +68,12 @@ func (p *PDHelper) Stop() {
 	p.wg.Wait()
 }
 
-func approximateTableCountKey(tid int64, dbName, tableName, partitionName string) string {
-	return strings.Join([]string{strconv.FormatInt(tid, 10), dbName, tableName, partitionName}, "_")
+// approximateTableCountKey includes the keyspace: a TiDB may run statements of
+// other keyspaces, and the tables of two keyspaces can share IDs and names.
+// NUL separates the fields: keyspace names and table IDs cannot contain it, so two
+// keys are equal only for the same table of the same keyspace.
+func approximateTableCountKey(keyspace string, tid int64, dbName, tableName, partitionName string) string {
+	return strings.Join([]string{keyspace, strconv.FormatInt(tid, 10), dbName, tableName, partitionName}, "\x00")
 }
 
 // GetApproximateTableCountFromStorage gets the approximate count of the table.
@@ -75,7 +81,7 @@ func (p *PDHelper) GetApproximateTableCountFromStorage(
 	ctx context.Context, sctx sessionctx.Context,
 	tid int64, dbName, tableName, partitionName string,
 ) (float64, bool) {
-	key := approximateTableCountKey(tid, dbName, tableName, partitionName)
+	key := approximateTableCountKey(sctx.GetStore().GetKeyspace(), tid, dbName, tableName, partitionName)
 	if item := p.cacheForApproximateTableCountFromStorage.Get(key); item != nil {
 		return item.Value(), true
 	}
@@ -116,7 +122,17 @@ func getApproximateTableCountFromStorage(
 		sqlescape.MustFormatSQL(sql, " partition(%n)", partitionName)
 	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
-	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql.String())
+	var opts []sqlexec.OptionFuncAlias
+	// The ANALYZE on a DXF service node has an info schema of its own, without a snapshot read.
+	// The internal session sees the table only through it.
+	if vars := sctx.GetSessionVars(); vars.SnapshotInfoschema != nil && vars.SnapshotTS == 0 {
+		is := vars.SnapshotInfoschema
+		opts = append(opts, sqlexec.ExecOptionWithSessionVarsSetup(func(internal *variable.SessionVars) func() {
+			internal.SnapshotInfoschema = is
+			return func() { internal.SnapshotInfoschema = nil }
+		}))
+	}
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, opts, sql.String())
 	if err != nil {
 		return 0, false
 	}

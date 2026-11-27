@@ -92,6 +92,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -249,6 +250,10 @@ type Domain struct {
 	// extWorkloadMgr coordinates background workloads such as TTL with the
 	// external workload controller in Starter deployments.
 	extWorkloadMgr extworkload.Manager
+
+	// newAutoAnalyzeDispatcher creates the dispatcher of the auto-analyze statements of the stats
+	// handle. It is nil when the statements run on this node only.
+	newAutoAnalyzeDispatcher exec.NewDispatcherFunc
 }
 
 var _ sqlsvrapi.Server = (*Domain)(nil)
@@ -994,6 +999,12 @@ func (do *Domain) SetOnClose(onClose func()) {
 // background components that coordinate work with an external controller.
 func (do *Domain) SetExternalWorkloadManager(manager extworkload.Manager) {
 	do.extWorkloadMgr = manager
+}
+
+// SetAutoAnalyzeDispatcher installs the function that creates the dispatcher of the auto-analyze
+// statements. Call it before the stats handle is created.
+func (do *Domain) SetAutoAnalyzeDispatcher(newDispatcher exec.NewDispatcherFunc) {
+	do.newAutoAnalyzeDispatcher = newDispatcher
 }
 
 // ExternalWorkloadManager returns the external workload manager for this domain.
@@ -1973,6 +1984,7 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) error {
 		do.ddlNotifier,
 		do.NextConnID,
 		do.ReleaseConnID,
+		do.newAutoAnalyzeDispatcher,
 	)
 	if err != nil {
 		return err
@@ -2017,6 +2029,7 @@ func (do *Domain) UpdateTableStatsLoop() error {
 		do.ddlNotifier,
 		do.NextConnID,
 		do.ReleaseConnID,
+		do.newAutoAnalyzeDispatcher,
 	)
 	if err != nil {
 		return err
@@ -3006,6 +3019,12 @@ func (do *Domain) TTLJobManager() *ttlworker.JobManager {
 // StopAutoAnalyze stops (*Domain).autoAnalyzeWorker to launch new auto analyze jobs.
 func (do *Domain) StopAutoAnalyze() {
 	do.stopAutoAnalyze.Store(true)
+}
+
+// AutoAnalyzeStopped reports whether StopAutoAnalyze was called. A graceful shutdown calls it
+// before it kills the sys processes, so a killed auto-analyze process can tell that kill apart.
+func (do *Domain) AutoAnalyzeStopped() bool {
+	return do.stopAutoAnalyze.Load()
 }
 
 // InitInstancePlanCache initializes the instance level plan cache for this Domain.

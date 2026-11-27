@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -101,8 +100,7 @@ func (j *DynamicPartitionedTableAnalysisJob) GetTableID() int64 {
 // Analyze analyzes the partitions or partition indexes.
 func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 	pool statsutil.SessionPool,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
-	sysProcTracker sysproctrack.Tracker,
+	runner *exec.Runner,
 ) error {
 	success := true
 	defer func() {
@@ -120,9 +118,9 @@ func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 	return statsutil.CallWithSCtx(pool.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeDynamicPartition:
-			success = j.analyzePartitions(sctx, procIDs, sysProcTracker)
+			success = j.analyzePartitions(sctx, runner)
 		case analyzeDynamicPartitionIndex:
-			success = j.analyzePartitionIndexes(sctx, procIDs, sysProcTracker)
+			success = j.analyzePartitionIndexes(sctx, runner)
 		}
 		return nil
 	})
@@ -277,8 +275,7 @@ func (j *DynamicPartitionedTableAnalysisJob) String() string {
 // we can reduce the overhead of this merging process.
 func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 	sctx sessionctx.Context,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
-	sysProcTracker sysproctrack.Tracker,
+	runner *exec.Runner,
 ) bool {
 	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
 	needAnalyzePartitionNames := make([]any, 0, len(j.PartitionNames))
@@ -291,7 +288,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 
 		sql := getPartitionSQL("analyze table %n.%n partition", "", end-start)
 		params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
-		success := exec.AutoAnalyze(sctx, procIDs, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+		success := runner.AutoAnalyze(sctx, j.TableStatsVer, j.NeedVersionRewriteWarn, exec.AnalyzedTable{ID: j.GlobalTableID}, sql, params...)
 		if !success {
 			return false
 		}
@@ -302,8 +299,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 // analyzePartitionIndexes performs analysis on the specified partition indexes.
 func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 	sctx sessionctx.Context,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
-	sysProcTracker sysproctrack.Tracker,
+	runner *exec.Runner,
 ) (success bool) {
 	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
 	// Analyze version 2 refreshes the partition columns and other indexes when analyzing one index.
@@ -320,7 +316,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
 			params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
-			success = exec.AutoAnalyze(sctx, procIDs, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+			success = runner.AutoAnalyze(sctx, j.TableStatsVer, j.NeedVersionRewriteWarn, exec.AnalyzedTable{ID: j.GlobalTableID}, sql, params...)
 			if !success {
 				return false
 			}

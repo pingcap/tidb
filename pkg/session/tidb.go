@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	dxfautoanalyze "github.com/pingcap/tidb/pkg/dxf/autoanalyze"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extworkload"
@@ -42,9 +43,13 @@ import (
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	autoanalyzeexec "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -63,6 +68,19 @@ const StoreBootstrappedKey = "bootstrap"
 type domainMap struct {
 	mu      syncutil.Mutex
 	domains map[string]*domain.Domain
+}
+
+// newAutoAnalyzeDispatcher returns the function that creates the dispatcher that runs the
+// auto-analyze statements of a stats handle as DXF tasks. The dispatcher stops waiting for a task
+// when shuttingDown reports true.
+func newAutoAnalyzeDispatcher(shuttingDown func() bool) autoanalyzeexec.NewDispatcherFunc {
+	return func(
+		statsCache statstypes.StatsCacheLoader,
+		procIDs statsutil.AutoAnalyzeProcIDGenerator,
+		sysProcTracker sysproctrack.Tracker,
+	) autoanalyzeexec.Dispatcher {
+		return dxfautoanalyze.NewDispatcher(statsCache, procIDs, sysProcTracker, shuttingDown)
+	}
 }
 
 type domainCreateOptions struct {
@@ -134,6 +152,7 @@ func (dm *domainMap) getWithEtcdClient(
 			opts.serverInfoSyncerOptions...,
 		)
 		d.SetExternalWorkloadManager(opts.extWorkloadMgr)
+		d.SetAutoAnalyzeDispatcher(newAutoAnalyzeDispatcher(d.AutoAnalyzeStopped))
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {

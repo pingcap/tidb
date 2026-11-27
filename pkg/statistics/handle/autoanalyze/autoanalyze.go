@@ -25,8 +25,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -63,22 +65,28 @@ func newAnalyzeJobRecorder(pool statsutil.SessionPool) *analyzeJobRecorder {
 	return &analyzeJobRecorder{pool: pool}
 }
 
+// NewAnalyzeJobRecorder creates a statstypes.AnalyzeJobRecorder that records the jobs in the
+// sessions of pool. It needs no stats cache.
+func NewAnalyzeJobRecorder(pool statsutil.SessionPool) statstypes.AnalyzeJobRecorder {
+	return newAnalyzeJobRecorder(pool)
+}
+
 // Analyzer analyzes the outdated tables in the background, and manages the analyze jobs.
 type Analyzer struct {
 	*analyzeJobRecorder
 
 	pool       statsutil.SessionPool
-	procIDs    statsutil.AutoAnalyzeProcIDGenerator
 	tableStats statstypes.NonPseudoPhysicalTableStatsGetter
-	// sysProcTracker is used to track sys process like analyze
-	sysProcTracker sysproctrack.Tracker
+	// runner runs the auto-analyze statements.
+	runner *exec.Runner
 	// refresher is used to refresh the analyze job queue and analyze the highest priority tables.
 	// It is only used when auto-analyze priority queue is enabled.
 	refresher *refresher.Refresher
 }
 
 // NewAnalyzer creates an Analyzer that analyzes the outdated tables in the sessions
-// of pool. It finds them from the stats in statsCache and tableStats.
+// of pool. It finds them from the stats in statsCache and tableStats. A non-nil dispatcher
+// runs the statements when tidb_enable_dist_auto_analyze is ON.
 func NewAnalyzer(
 	ctx context.Context,
 	pool statsutil.SessionPool,
@@ -88,16 +96,17 @@ func NewAnalyzer(
 	tableStats statstypes.NonPseudoPhysicalTableStatsGetter,
 	sysProcTracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
+	dispatcher exec.Dispatcher,
 ) *Analyzer {
 	// Usually, we should only create the refresher when auto-analyze priority queue is enabled.
 	// But to allow users to enable auto-analyze priority queue on the fly, we need to create the refresher here.
-	r := refresher.NewRefresher(ctx, pool, procIDs, tables, statsCache, tableStats, sysProcTracker, ddlNotifier)
+	runner := exec.NewRunner(procIDs, sysProcTracker, dispatcher)
+	r := refresher.NewRefresher(ctx, pool, tables, statsCache, tableStats, runner, ddlNotifier)
 	return &Analyzer{
 		analyzeJobRecorder: newAnalyzeJobRecorder(pool),
 		pool:               pool,
-		procIDs:            procIDs,
 		tableStats:         tableStats,
-		sysProcTracker:     sysProcTracker,
+		runner:             runner,
 		refresher:          r,
 	}
 }
@@ -276,6 +285,21 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 		instance := net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port)))
 		instances[instance] = struct{}{}
 	}
+	if kerneltype.IsNextGen() {
+		// A job can also run on a DXF service node, which is not a server of this keyspace. Its node
+		// ID is also IP:Port. On a list error the function returns: it marks no live job as failed.
+		taskMgr, err := storage.GetDXFSvcTaskMgr()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		nodes, err := taskMgr.GetAllNodes(statsutil.StatsCtx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, node := range nodes {
+			instances[node.ID] = struct{}{}
+		}
+	}
 
 	jobIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
@@ -365,9 +389,8 @@ func (sa *Analyzer) handleAutoAnalyze(sctx sessionctx.Context) bool {
 
 	return RandomPickOneTableAndTryAutoAnalyze(
 		sctx,
-		sa.procIDs,
+		sa.runner,
 		sa.tableStats,
-		sa.sysProcTracker,
 		autoAnalyzeRatio,
 		pruneMode,
 		start,
@@ -415,9 +438,8 @@ func checkAutoAnalyzeWindow(parameters map[string]string) (_, _ time.Time, _ boo
 // Exposed solely for testing.
 func RandomPickOneTableAndTryAutoAnalyze(
 	sctx sessionctx.Context,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
+	runner *exec.Runner,
 	tableStats statstypes.NonPseudoPhysicalTableStatsGetter,
-	sysProcTracker sysproctrack.Tracker,
 	autoAnalyzeRatio float64,
 	pruneMode variable.PartitionPruneMode,
 	start, end time.Time,
@@ -482,7 +504,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 				}
 
 				sql := "analyze table %n.%n"
-				analyzed := tryAutoAnalyzeTable(sctx, procIDs, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
+				analyzed := tryAutoAnalyzeTable(sctx, runner, tblInfo, statsTbl, autoAnalyzeRatio, exec.AnalyzedTable{ID: tblInfo.ID}, sql, db, tblInfo.Name.O)
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
 					// others will be analyzed next round which is just 3s later.
@@ -501,8 +523,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			if pruneMode == variable.Dynamic {
 				analyzed := tryAutoAnalyzePartitionTableInDynamicMode(
 					sctx,
-					procIDs,
-					sysProcTracker,
+					runner,
 					tblInfo,
 					partitionDefs,
 					partitionStats,
@@ -517,7 +538,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			for _, def := range partitionDefs {
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := partitionStats[def.ID]
-				analyzed := tryAutoAnalyzeTable(sctx, procIDs, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+				analyzed := tryAutoAnalyzeTable(sctx, runner, tblInfo, statsTbl, autoAnalyzeRatio, exec.AnalyzedTable{ID: tblInfo.ID}, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return true
 				}
@@ -559,11 +580,11 @@ func getPartitionStats(
 // Determine whether the table and index require analysis.
 func tryAutoAnalyzeTable(
 	sctx sessionctx.Context,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
-	sysProcTracker sysproctrack.Tracker,
+	runner *exec.Runner,
 	tblInfo *model.TableInfo,
 	statsTbl *statistics.Table,
 	ratio float64,
+	table exec.AnalyzedTable,
 	sql string,
 	params ...any,
 ) bool {
@@ -592,7 +613,7 @@ func tryAutoAnalyzeTable(
 			zap.String("reason", reason),
 		)
 
-		exec.AutoAnalyze(sctx, procIDs, sysProcTracker, requestedVersion, !versionMatches, sql, params...)
+		runner.AutoAnalyze(sctx, requestedVersion, !versionMatches, table, sql, params...)
 
 		return true
 	}
@@ -615,7 +636,7 @@ func tryAutoAnalyzeTable(
 				"auto analyze for unanalyzed indexes",
 				zap.String("sql", escaped),
 			)
-			exec.AutoAnalyze(sctx, procIDs, sysProcTracker, requestedVersion, !versionMatches, sqlWithIdx, paramsWithIdx...)
+			runner.AutoAnalyze(sctx, requestedVersion, !versionMatches, table, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}
@@ -652,8 +673,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, autoAnalyzeRatio float64) (bool, st
 // It is very similar to tryAutoAnalyzeTable, but it commits the analyze job in batch for partitions.
 func tryAutoAnalyzePartitionTableInDynamicMode(
 	sctx sessionctx.Context,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
-	sysProcTracker sysproctrack.Tracker,
+	runner *exec.Runner,
 	tblInfo *model.TableInfo,
 	partitionDefs []model.PartitionDefinition,
 	partitionStats map[int64]*statistics.Table,
@@ -728,7 +748,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 			)
-			exec.AutoAnalyze(sctx, procIDs, sysProcTracker, requestedVersion, !versionMatches, sql, params...)
+			runner.AutoAnalyze(sctx, requestedVersion, !versionMatches, exec.AnalyzedTable{ID: tblInfo.ID}, sql, params...)
 		}
 
 		return true
@@ -769,7 +789,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 				)
-				exec.AutoAnalyze(sctx, procIDs, sysProcTracker, requestedVersion, !versionMatches, sql, params...)
+				runner.AutoAnalyze(sctx, requestedVersion, !versionMatches, exec.AnalyzedTable{ID: tblInfo.ID}, sql, params...)
 			}
 
 			return true

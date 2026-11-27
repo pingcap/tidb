@@ -2339,7 +2339,7 @@ func (b *PlanBuilder) getPredicateColumns(tbl *resolve.TableNameW, cols *calcOnc
 	tblInfo := tbl.TableInfo
 	cols.data = make(map[int64]struct{}, len(tblInfo.Columns))
 	h := domain.GetAnalyzeStatsHandle(b.ctx)
-	colList, err := h.GetPredicateColumns(tblInfo.ID)
+	colList, err := h.GetPredicateColumns(tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -2411,7 +2411,10 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 
 	switch columnChoice {
 	case ast.DefaultChoice:
-		columnOptions := vardef.AnalyzeColumnOptions.Load()
+		columnOptions, err := keyspaceGlobalVar(b.ctx, vardef.TiDBAnalyzeColumnOptions, vardef.AnalyzeColumnOptions.Load())
+		if err != nil {
+			return nil, nil, err
+		}
 		switch columnOptions {
 		case ast.AllColumns.String():
 			return tbl.TableInfo.Columns, nil, nil
@@ -2898,7 +2901,11 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		maps.Copy(resetOpts, astResets)
 	}
 
-	tblFilledOpts := fillAnalyzeOptions(tblOpts)
+	optDefaults, err := keyspaceAnalyzeOptionDefaults(b.ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	tblFilledOpts := fillAnalyzeOptions(optDefaults, tblOpts)
 
 	tblColsInfo, tblColList, err := b.getFullAnalyzeColumnsInfo(tbl, tblColChoice, tblColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 	if err != nil {
@@ -2957,7 +2964,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 			savedColChoice, savedColList := pickColumnList(parSavedColChoice, parSavedColList, tblSavedColChoice, tblSavedColList)
 			// then merge statement level options
 			mergedOpts := mergeAnalyzeOptions(astOpts, stmtResets, savedOpts)
-			filledMergedOpts := fillAnalyzeOptions(mergedOpts)
+			filledMergedOpts := fillAnalyzeOptions(optDefaults, mergedOpts)
 			finalColChoice, mergedColList := pickColumnList(astColChoice, astColList, savedColChoice, savedColList)
 			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 			if err != nil {
@@ -3118,7 +3125,10 @@ func (b *PlanBuilder) appendAnalyzeVersionOverwriteWarning() {
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (base.Plan, error) {
 	p := Analyze{Opts: opts}.Init(b.ctx, b.getSelectOffset())
 	p.OptionsMap = make(map[int64]V2AnalyzeOptions)
-	usePersistedOptions := vardef.PersistAnalyzeOptions.Load()
+	usePersistedOptions, err := PersistAnalyzeOptions(b.ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Construct tasks for each table.
 	for _, tbl := range as.TableNames {
@@ -3218,6 +3228,56 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNDVRate:       math.Float64bits(1),
 }
 
+// keyspaceGlobalVar returns the GLOBAL value of a variable in the keyspace of the session.
+// processValue, the process level mirror, is only right outside a cross keyspace session.
+func keyspaceGlobalVar(sctx base.PlanContext, name string, processValue string) (string, error) {
+	if !sctx.IsCrossKS() {
+		return processValue, nil
+	}
+	return sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(name)
+}
+
+// SampledNDVThreshold returns tidb_analyze_sampled_ndv_threshold of the keyspace
+// of the session, see keyspaceGlobalVar.
+func SampledNDVThreshold(sctx base.PlanContext) (int64, error) {
+	val, err := keyspaceGlobalVar(sctx, vardef.TiDBAnalyzeSampledNDVThreshold,
+		strconv.FormatInt(vardef.AnalyzeSampledNDVThreshold.Load(), 10))
+	if err != nil {
+		return 0, err
+	}
+	threshold, err := strconv.ParseInt(val, 10, 64)
+	return threshold, errors.Trace(err)
+}
+
+// PersistAnalyzeOptions returns tidb_persist_analyze_options of the keyspace of
+// the session, see keyspaceGlobalVar.
+func PersistAnalyzeOptions(sctx base.PlanContext) (bool, error) {
+	val, err := keyspaceGlobalVar(sctx, vardef.TiDBPersistAnalyzeOptions,
+		variable.BoolToOnOff(vardef.PersistAnalyzeOptions.Load()))
+	return variable.TiDBOptOn(val), err
+}
+
+// keyspaceAnalyzeOptionDefaults returns the default analyze options of the keyspace
+// of the session, see keyspaceGlobalVar.
+func keyspaceAnalyzeOptionDefaults(sctx base.PlanContext) (map[ast.AnalyzeOptionType]uint64, error) {
+	defaults := AnalyzeOptionDefault()
+	for opt, name := range map[ast.AnalyzeOptionType]string{
+		ast.AnalyzeOptNumBuckets: vardef.TiDBAnalyzeDefaultNumBuckets,
+		ast.AnalyzeOptNumTopN:    vardef.TiDBAnalyzeDefaultNumTopN,
+	} {
+		val, err := keyspaceGlobalVar(sctx, name, strconv.FormatUint(defaults[opt], 10))
+		if err != nil {
+			return nil, err
+		}
+		n, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		defaults[opt] = n
+	}
+	return defaults, nil
+}
+
 // AnalyzeOptionDefault returns the default analyze options.
 // TopN reduced from 500 to 100 due to concerns over large number of TopN values collected for customers with many tables.
 // 100 is more inline with other databases. 100-256 is also common for NumBuckets with other databases.
@@ -3312,8 +3372,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 	return optMap, resetOpts, nil
 }
 
-func fillAnalyzeOptions(optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
-	defaults := AnalyzeOptionDefault()
+func fillAnalyzeOptions(defaults, optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
 	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(defaults))
 	for key, defaultVal := range defaults {
 		if val, ok := optMap[key]; ok {
@@ -3340,8 +3399,14 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	if err != nil {
 		return nil, err
 	}
-	if bits, explicit := stmtOpts[ast.AnalyzeOptNDVRate]; explicit && math.Float64frombits(bits) < 1 && vardef.AnalyzeSampledNDVThreshold.Load() == 0 {
-		return nil, errors.Errorf("sampled NDV is disabled because %s is 0", vardef.TiDBAnalyzeSampledNDVThreshold)
+	if bits, explicit := stmtOpts[ast.AnalyzeOptNDVRate]; explicit && math.Float64frombits(bits) < 1 {
+		threshold, err := SampledNDVThreshold(b.ctx)
+		if err != nil {
+			return nil, err
+		}
+		if threshold == 0 {
+			return nil, errors.Errorf("sampled NDV is disabled because %s is 0", vardef.TiDBAnalyzeSampledNDVThreshold)
+		}
 	}
 	// These options are the fallback used when tidb_persist_analyze_options is
 	// off, so there is no saved value for an option given as DEFAULT to reset and
@@ -3349,7 +3414,11 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	// saved options drops it and fillAnalyzeOptions supplies the default. When
 	// persistence is on, the per-table options built by
 	// buildAnalyzeFullSamplingTask take precedence over these in the executor.
-	filledOpts := fillAnalyzeOptions(mergeAnalyzeOptions(stmtOpts, stmtResets, nil))
+	optDefaults, err := keyspaceAnalyzeOptionDefaults(b.ctx)
+	if err != nil {
+		return nil, err
+	}
+	filledOpts := fillAnalyzeOptions(optDefaults, mergeAnalyzeOptions(stmtOpts, stmtResets, nil))
 
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {

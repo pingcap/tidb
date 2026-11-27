@@ -29,11 +29,31 @@ func GetDomain(ctx contextutil.ValueStoreContext) *Domain {
 	return nil
 }
 
-// GetAnalyzeStatsHandle returns the stats handle that ANALYZE uses in the session.
+type statsHandleKeyType struct{}
+
+func (statsHandleKeyType) String() string {
+	return "session_stats_handle"
+}
+
+// statsHandleKey is the key of the stats handle bound to a session that has no domain.
+var statsHandleKey statsHandleKeyType
+
+// BindAnalyzeStatsHandle binds the stats handle of an ANALYZE statement to a session that has no domain,
+// i.e. a cross keyspace session. The binding stays for the life of the session.
+func BindAnalyzeStatsHandle(ctx contextutil.ValueStoreContext, h *handle.AnalyzeHandle) {
+	ctx.SetValue(statsHandleKey, h)
+}
+
+// GetAnalyzeStatsHandle returns the stats handle that ANALYZE uses in the session: the one of
+// the session's domain, or the one bound to the session when it has no domain.
 func GetAnalyzeStatsHandle(ctx contextutil.ValueStoreContext) *handle.AnalyzeHandle {
-	h := GetDomain(ctx).StatsHandle()
-	if h == nil {
-		return nil
+	if do := GetDomain(ctx); do != nil {
+		h := do.StatsHandle()
+		if h == nil {
+			return nil
+		}
+		return h.AnalyzeHandle()
 	}
-	return h.AnalyzeHandle()
+	h, _ := ctx.Value(statsHandleKey).(*handle.AnalyzeHandle)
+	return h
 }

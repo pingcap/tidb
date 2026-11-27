@@ -49,7 +49,7 @@ func TestCleanupPredicateColumns(t *testing.T) {
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	columns, err := h.Usage().GetPredicateColumns(tbl.Meta().ID)
+	columns, err := h.Usage().GetPredicateColumns(tbl.Meta())
 	require.NoError(t, err)
 	require.Len(t, columns, 1)
 }

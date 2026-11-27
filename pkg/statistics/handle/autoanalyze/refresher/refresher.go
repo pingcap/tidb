@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
@@ -42,8 +41,6 @@ type Refresher struct {
 	// This will be refreshed every time we rebuild the priority queue.
 	autoAnalysisTimeWindow priorityqueue.AutoAnalysisTimeWindow
 
-	sysProcTracker sysproctrack.Tracker
-
 	// jobs is the priority queue of analysis jobs.
 	jobs *priorityqueue.AnalysisPriorityQueue
 
@@ -60,23 +57,22 @@ type Refresher struct {
 }
 
 // NewRefresher creates a new Refresher and starts the goroutine. Its jobs run in the sessions
-// of pool, and it makes them from the stats in statsCache and tableStats.
+// of pool and run their statements through runner, and it makes them from the stats in
+// statsCache and tableStats.
 func NewRefresher(
 	ctx context.Context,
 	pool statsutil.SessionPool,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
 	tables statsutil.TableInfoGetter,
 	statsCache priorityqueue.StatsCache,
 	tableStats statstypes.NonPseudoPhysicalTableStatsGetter,
-	sysProcTracker sysproctrack.Tracker,
+	runner *exec.Runner,
 	ddlNotifier *notifier.DDLNotifier,
 ) *Refresher {
 	maxConcurrency := int(vardef.AutoAnalyzeConcurrency.Load())
 	r := &Refresher{
-		ctx:            ctx,
-		sysProcTracker: sysProcTracker,
-		jobs:           priorityqueue.NewAnalysisPriorityQueue(pool, tables, statsCache, tableStats),
-		worker:         NewWorker(pool, procIDs, sysProcTracker, maxConcurrency),
+		ctx:    ctx,
+		jobs:   priorityqueue.NewAnalysisPriorityQueue(pool, tables, statsCache, tableStats),
+		worker: NewWorker(pool, runner, maxConcurrency),
 	}
 	if ddlNotifier != nil {
 		ddlNotifier.RegisterHandler(notifier.PriorityQueueHandlerID, r.jobs.HandleDDLEvent)

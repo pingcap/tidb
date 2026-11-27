@@ -32,6 +32,14 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
+// unexpectedDispatcher fails every statement that the runner dispatches.
+type unexpectedDispatcher struct{}
+
+// Dispatch implements exec.Dispatcher.
+func (unexpectedDispatcher) Dispatch(sessionctx.Context, exec.AnalyzedTable, string, ...any) error {
+	return fmt.Errorf("unexpected dispatch")
+}
+
 func TestExecAutoAnalyzes(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -44,12 +52,12 @@ func TestExecAutoAnalyzes(t *testing.T) {
 	sctx := se.(sessionctx.Context)
 	handle := dom.StatsHandle()
 
-	exec.AutoAnalyze(
-		sctx,
-		handle.ProcIDs(),
-		dom.SysProcTracker(),
-		2, false, "analyze table %n", "t",
-	)
+	// Upgraded clusters keep tidb_enable_dist_auto_analyze OFF, so the statement runs on this
+	// node although the runner has a dispatcher.
+	tk.MustExec("set global tidb_enable_dist_auto_analyze = OFF")
+	defer tk.MustExec("set global tidb_enable_dist_auto_analyze = ON")
+	runner := exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker(), unexpectedDispatcher{})
+	require.True(t, runner.AutoAnalyze(sctx, 2, false, exec.AnalyzedTable{}, "analyze table %n", "t"))
 
 	// Check the result of analyze.
 	is := dom.InfoSchema()
@@ -77,12 +85,11 @@ func TestExecAutoAnalyzeRewritesLegacyStatsVersionToV2(t *testing.T) {
 	handle := dom.StatsHandle()
 
 	require.NotPanics(t, func() {
-		ok := exec.AutoAnalyze(
+		ok := exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker(), nil).AutoAnalyze(
 			sctx,
-			handle.ProcIDs(),
-			dom.SysProcTracker(),
 			statistics.Version2,
 			true,
+			exec.AnalyzedTable{},
 			"analyze table %n",
 			"t",
 		)
@@ -125,12 +132,11 @@ partition by range (a) (
 	require.Equal(t, statistics.Version1, handle.GetPhysicalTableStats(pi.Definitions[1].ID, partitionedTbl.Meta()).StatsVer)
 
 	require.NotPanics(t, func() {
-		ok := exec.AutoAnalyze(
+		ok := exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker(), nil).AutoAnalyze(
 			sctx,
-			handle.ProcIDs(),
-			dom.SysProcTracker(),
 			statistics.Version2,
 			true,
+			exec.AnalyzedTable{},
 			"analyze table %n partition %n",
 			"pt",
 			"p0",

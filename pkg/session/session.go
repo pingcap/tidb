@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
+	dxfautoanalyze "github.com/pingcap/tidb/pkg/dxf/autoanalyze"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
@@ -219,6 +220,10 @@ type session struct {
 	schemaValidator validatorapi.Validator
 	infoCache       *infoschema.InfoCache
 	store           kv.Storage
+
+	// crossKSSessPool is the session pool of the keyspace runtime that a cross
+	// keyspace session belongs to.
+	crossKSSessPool util.SessionPool
 
 	sessionPlanCache sessionctx.SessionPlanCache
 
@@ -1322,6 +1327,11 @@ func sqlForLog(sql string) string {
 }
 
 func (s *session) sysSessionPool() util.SessionPool {
+	if s.crossKSSessPool != nil {
+		// A cross keyspace session has no domain, its internal sessions come from
+		// the pool of the runtime of its keyspace.
+		return s.crossKSSessPool
+	}
 	return domain.GetDomain(s).SysSessionPool()
 }
 
@@ -1873,6 +1883,12 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		pi.Host = s.sessionVars.User.Hostname
 	}
 	s.processInfo.Store(&pi)
+}
+
+// ClearProcessInfo removes the process info of the session. SetProcessInfo
+// otherwise keeps the plan of the last statement in the next process info.
+func (s *session) ClearProcessInfo() {
+	s.processInfo.Store(nil)
 }
 
 // UpdateProcessInfo updates the session's process info for the running statement.
@@ -2742,7 +2758,8 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 
 		memPriority := memory.ArbitrationPriorityMedium
 
-		if sg, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(ast.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); ok {
+		// A cross keyspace session has no domain, use its own info schema.
+		if sg, ok := s.infoCache.GetLatest().ResourceGroupByName(ast.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); ok {
 			switch sg.Priority {
 			case ast.LowPriorityValue:
 				memPriority = memory.ArbitrationPriorityLow
@@ -4711,6 +4728,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return importinto.NewImportExecutor(ctx, task, param)
 		},
 	)
+	dxfautoanalyze.Register()
 
 	concurrency := config.GetGlobalConfig().Performance.StatsLoadConcurrency
 	if concurrency == 0 {
@@ -5121,6 +5139,10 @@ func createCrossKSSession(currKSStore kv.Storage, targetKS string, validator val
 	if err != nil {
 		return nil, err
 	}
+	sessPool, err := dom.GetKSSessPool(targetKS)
+	if err != nil {
+		return nil, err
+	}
 	// TODO: use the schema validator of the target keyspace when we implement
 	// the info schema syncer for cross keyspace access.
 	s, err := createSessionWithOpt(store, nil, validator, infoCache, nil)
@@ -5128,6 +5150,7 @@ func createCrossKSSession(currKSStore kv.Storage, targetKS string, validator val
 		return nil, err
 	}
 	s.sessionVars.GlobalVarsAccessor = globalVars
+	s.crossKSSessPool = sessPool
 	return s, nil
 }
 

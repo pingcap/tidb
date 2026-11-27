@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -52,7 +53,7 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 
-	job.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker())
+	job.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker(), nil))
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -98,7 +99,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 
 	valid, _ := job.ValidateAndPrepare(tk.Session())
 	require.True(t, valid)
-	job.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker())
+	job.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker(), nil))
 	// Check the result of analyze index.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))

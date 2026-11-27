@@ -553,6 +553,9 @@ const (
 
 	// version322 creates storage-class transition history for legacy NextGen keyspaces.
 	version322 = 322
+
+	// version323 sets tidb_enable_dist_auto_analyze to OFF for upgraded clusters.
+	version323 = 323
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -566,7 +569,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version322
+var currentBootstrapVersion int64 = version323
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -763,6 +766,7 @@ var (
 		{version: version320, fn: upgradeToVer320},
 		{version: version321, fn: upgradeToVer321},
 		{version: version322, fn: upgradeToVer322},
+		{version: version323, fn: upgradeToVer323},
 	}
 )
 
@@ -2417,4 +2421,10 @@ func upgradeToVer322(s sessionapi.Session, _ int64) {
 		// Legacy keyspaces skip the reserved-ID NextGen schema bootstrap.
 		doReentrantDDL(s, metadef.CreateTiDBStorageClassTransitionHistoryTable)
 	}
+}
+
+func upgradeToVer323(s sessionapi.Session, _ int64) {
+	// Keep auto-analyze on the stats owner in upgraded clusters: a node of an
+	// old version cannot run the tasks, so only new clusters get the ON default.
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableDistAutoAnalyze, vardef.Off)
 }

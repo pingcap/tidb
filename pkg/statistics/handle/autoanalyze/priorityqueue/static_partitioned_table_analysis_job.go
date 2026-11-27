@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -90,8 +89,7 @@ func (j *StaticPartitionedTableAnalysisJob) GetTableID() int64 {
 // Analyze analyzes the specified static partition or indexes.
 func (j *StaticPartitionedTableAnalysisJob) Analyze(
 	pool statsutil.SessionPool,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
-	sysProcTracker sysproctrack.Tracker,
+	runner *exec.Runner,
 ) error {
 	success := true
 	defer func() {
@@ -109,9 +107,9 @@ func (j *StaticPartitionedTableAnalysisJob) Analyze(
 	return statsutil.CallWithSCtx(pool.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeStaticPartition:
-			success = j.analyzeStaticPartition(sctx, procIDs, sysProcTracker)
+			success = j.analyzeStaticPartition(sctx, runner)
 		case analyzeStaticPartitionIndex:
-			success = j.analyzeStaticPartitionIndexes(sctx, procIDs, sysProcTracker)
+			success = j.analyzeStaticPartitionIndexes(sctx, runner)
 		}
 		return nil
 	})
@@ -264,17 +262,15 @@ func (j *StaticPartitionedTableAnalysisJob) getAnalyzeType() analyzeType {
 
 func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartition(
 	sctx sessionctx.Context,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
-	sysProcTracker sysproctrack.Tracker,
+	runner *exec.Runner,
 ) bool {
 	sql, params := j.GenSQLForAnalyzeStaticPartition()
-	return exec.AutoAnalyze(sctx, procIDs, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return runner.AutoAnalyze(sctx, j.TableStatsVer, j.NeedVersionRewriteWarn, exec.AnalyzedTable{ID: j.GlobalTableID}, sql, params...)
 }
 
 func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	sctx sessionctx.Context,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
-	sysProcTracker sysproctrack.Tracker,
+	runner *exec.Runner,
 ) bool {
 	if len(j.IndexNames) == 0 {
 		return true
@@ -283,7 +279,7 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	// Therefore, to avoid redundancy, only analyze the first index.
 	firstIndex := j.IndexNames[0]
 	sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(firstIndex)
-	return exec.AutoAnalyze(sctx, procIDs, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return runner.AutoAnalyze(sctx, j.TableStatsVer, j.NeedVersionRewriteWarn, exec.AnalyzedTable{ID: j.GlobalTableID}, sql, params...)
 }
 
 // GenSQLForAnalyzeStaticPartition generates the SQL for analyzing the specified static partition.

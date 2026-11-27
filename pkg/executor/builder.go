@@ -3543,6 +3543,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	opts map[ast.AnalyzeOptionType]uint64,
 	schemaForVirtualColEval *expression.Schema,
 	planID int,
+	sampledNDVThreshold int64,
 ) *analyzeTask {
 	if task.V2Options != nil {
 		opts = task.V2Options.FilledOpts
@@ -3652,7 +3653,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	}
 	// A rate raised to 1 is still sent, so the job shows it and NDVRATE does not
 	// look unused. TiKV reads every row at 1.
-	if rate, raised := b.chooseNDVRate(task, opts, count, *sampleRate); rate < 1 || raised {
+	if rate, raised := b.chooseNDVRate(task, opts, count, *sampleRate, sampledNDVThreshold); rate < 1 || raised {
 		e.analyzePB.ColReq.NdvRate = &rate
 	}
 	if task.TblInfo != nil {
@@ -3676,8 +3677,7 @@ const minNDVRate = 0.05
 // threshold / rows). Others use full input. TiKV draws the TopN and histogram
 // rows from the rows selected for NDV, so the rate covers sampleRate, or with
 // a fixed sample size that many rows. It also reports whether it raised the rate.
-func (b *executorBuilder) chooseNDVRate(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, count int64, sampleRate float64) (float64, bool) {
-	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
+func (b *executorBuilder) chooseNDVRate(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, count int64, sampleRate float64, threshold int64) (float64, bool) {
 	rate := math.Float64frombits(opts[ast.AnalyzeOptNDVRate])
 	// 1 NDVRATE reads every row whatever the row count, so skip the PD lookup.
 	if threshold == 0 || rate >= 1 {
@@ -3780,14 +3780,20 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(ctx context.Contex
 
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	gp := domain.GetAnalyzeStatsHandle(b.sctx).GPool()
+	sampledNDVThreshold, err := plannercore.SampledNDVThreshold(b.sctx.GetPlanCtx())
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	e := &AnalyzeExec{
-		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
-		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
-		opts:         v.Opts,
-		OptionsMap:   v.OptionsMap,
-		wg:           util.NewWaitGroupPool(gp),
-		gp:           gp,
-		errExitCh:    make(chan struct{}),
+		BaseExecutor:        exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		tasks:               make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
+		opts:                v.Opts,
+		OptionsMap:          v.OptionsMap,
+		wg:                  util.NewWaitGroupPool(gp),
+		gp:                  gp,
+		errExitCh:           make(chan struct{}),
+		sampledNDVThreshold: sampledNDVThreshold,
 	}
 	autoAnalyze := ""
 	if b.sctx.GetSessionVars().InRestrictedSQL {
@@ -3827,7 +3833,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 			return nil
 		}
 		schema := expression.NewSchema(columns...)
-		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema, v.ID()))
+		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema, v.ID(), sampledNDVThreshold))
 		// Other functions may set b.err, so we need to check it here.
 		if b.err != nil {
 			return nil

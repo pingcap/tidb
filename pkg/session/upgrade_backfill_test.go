@@ -197,12 +197,27 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(2) == 1)
 		require.Equal(t, sampledNDVThreshold, chk.GetRow(0).GetString(3))
 	}
+	// tidb_enable_dist_auto_analyze has no session scope, so check only the global value.
+	assertDistAutoAnalyze := func(expected string) {
+		res := MustExecToRecodeSet(t, se, fmt.Sprintf(
+			"select variable_value, @@global.tidb_enable_dist_auto_analyze from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+			vardef.TiDBEnableDistAutoAnalyze,
+		))
+		defer func() { require.NoError(t, res.Close()) }()
+		chk := res.NewChunk(nil)
+		require.NoError(t, res.Next(ctx, chk))
+		require.Equal(t, 1, chk.NumRows())
+		require.Equal(t, expected, chk.GetRow(0).GetString(0))
+		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(1) == 1)
+	}
 	// Initial bootstrap uses the new-cluster policy.
 	assertValue(vardef.On, "100000000")
 	// The upgrade backfill must preserve an existing value.
 	upgradeToVer317(se, version316)
 	upgradeToVer319(se, version318)
+	upgradeToVer323(se, version322)
 	assertValue(vardef.On, "100000000")
+	assertDistAutoAnalyze(vardef.On)
 
 	// Simulate an existing cluster before the version317 backfill. It has no
 	// ndv_rate column yet, and its saved options must not gain a rate.
@@ -220,6 +235,10 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 		vardef.TiDBAnalyzeSampledNDVThreshold,
 	))
+	MustExec(t, se, fmt.Sprintf(
+		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		vardef.TiDBEnableDistAutoAnalyze,
+	))
 	require.NoError(t, txn.Commit(ctx))
 	store.SetOption(StoreBootstrappedKey, nil)
 
@@ -233,6 +252,7 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
 	assertValue(vardef.Off, "0")
+	assertDistAutoAnalyze(vardef.Off)
 	res := MustExecToRecodeSet(t, se, "select ndv_rate from mysql.analyze_options where table_id = 1")
 	defer func() { require.NoError(t, res.Close()) }()
 	chk := res.NewChunk(nil)

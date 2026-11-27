@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl"
 	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
@@ -184,7 +185,8 @@ func (h *Handle) GetSystemDBIDCacheLenForTest() int {
 	return h.tableStats.systemDBIDCacheLen()
 }
 
-// NewHandle creates a Handle for update stats.
+// NewHandle creates a Handle for update stats. A non-nil newDispatcher creates the dispatcher of the
+// auto-analyze statements from the parts of the handle.
 func NewHandle(
 	ctx context.Context,
 	lease time.Duration,
@@ -193,6 +195,7 @@ func NewHandle(
 	ddlNotifier *notifier.DDLNotifier,
 	autoAnalyzeProcIDGetter func() uint64,
 	releaseAutoAnalyzeProcID func(uint64),
+	newDispatcher exec.NewDispatcherFunc,
 ) (*Handle, error) {
 	statsPool := util.NewPool(pool)
 	procIDs := util.NewGenerator(autoAnalyzeProcIDGetter, releaseAutoAnalyzeProcID)
@@ -205,7 +208,11 @@ func NewHandle(
 	}
 	tableStats := newTableStatsGetter(statsPool, statsCache)
 	readWriter := storage.NewReadWriter(statsPool, leaseHolder, tables, statsCache)
-	autoAnalyze := autoanalyze.NewAnalyzer(ctx, statsPool, procIDs, tables, statsCache, tableStats, tracker, ddlNotifier)
+	var dispatcher exec.Dispatcher
+	if newDispatcher != nil {
+		dispatcher = newDispatcher(statsCache, procIDs, tracker)
+	}
+	autoAnalyze := autoanalyze.NewAnalyzer(ctx, statsPool, procIDs, tables, statsCache, tableStats, tracker, ddlNotifier, dispatcher)
 	globalStats := globalstats.NewMerger(statsPool, tables, readWriter)
 	statsUsage := usage.NewTracker(statsPool, leaseHolder, locker, tableStats)
 	handle := &Handle{

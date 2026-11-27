@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -31,10 +31,9 @@ import (
 //
 //nolint:fieldalignment
 type worker struct {
-	pool           statsutil.SessionPool
-	procIDs        statsutil.AutoAnalyzeProcIDGenerator
-	sysProcTracker sysproctrack.Tracker
-	wg             util.WaitGroupWrapper
+	pool   statsutil.SessionPool
+	runner *exec.Runner
+	wg     util.WaitGroupWrapper
 
 	mu sync.Mutex
 	// mu is used to protect the following fields.
@@ -42,17 +41,16 @@ type worker struct {
 	maxConcurrency int
 }
 
-// NewWorker creates a new worker that runs the jobs in the sessions of pool.
+// NewWorker creates a new worker that runs the jobs in the sessions of pool, and runs their
+// statements through runner.
 func NewWorker(
 	pool statsutil.SessionPool,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
-	sysProcTracker sysproctrack.Tracker,
+	runner *exec.Runner,
 	maxConcurrency int,
 ) *worker {
 	w := &worker{
 		pool:           pool,
-		procIDs:        procIDs,
-		sysProcTracker: sysProcTracker,
+		runner:         runner,
 		runningJobs:    make(map[int64]struct{}),
 		maxConcurrency: maxConcurrency,
 	}
@@ -106,7 +104,7 @@ func (w *worker) processJob(job priorityqueue.AnalysisJob) {
 		delete(w.runningJobs, job.GetTableID())
 	}()
 
-	if err := job.Analyze(w.pool, w.procIDs, w.sysProcTracker); err != nil {
+	if err := job.Analyze(w.pool, w.runner); err != nil {
 		statslogutil.StatsErrVerboseSampleLogger().Error(
 			"Auto analyze job execution failed",
 			zap.Stringer("job", job),

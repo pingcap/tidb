@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "handle",
     srcs = [
+        "analyze_handle.go",
         "bootstrap.go",
         "handle.go",
         "table_stats.go",
@@ -23,6 +24,7 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze",
+        "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/statistics/handle/cache",
         "//pkg/statistics/handle/ddl",
         "//pkg/statistics/handle/globalstats",

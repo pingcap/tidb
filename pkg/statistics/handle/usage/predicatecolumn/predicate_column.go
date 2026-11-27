@@ -15,12 +15,10 @@
 package predicatecolumn
 
 import (
-	"context"
 	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -76,16 +74,16 @@ func LoadColumnStatsUsageForTable(sctx sessionctx.Context, loc *time.Location, t
 }
 
 // GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
-func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error) {
+func GetPredicateColumns(sctx sessionctx.Context, tblInfo *model.TableInfo) ([]int64, error) {
 	// Each time we retrieve the predicate columns, we also attempt to remove any column stats usage information whose column is dropped.
-	err := cleanupDroppedColumnStatsUsage(sctx, tableID)
+	err := cleanupDroppedColumnStatsUsage(sctx, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	rows, _, err := utilstats.ExecRows(
 		sctx,
 		"SELECT column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage WHERE table_id = %? AND last_used_at IS NOT NULL",
-		tableID,
+		tblInfo.ID,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -104,15 +102,9 @@ func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error
 }
 
 // cleanupDroppedColumnStatsUsage deletes the column stats usage information whose column is dropped.
-func cleanupDroppedColumnStatsUsage(sctx sessionctx.Context, tableID int64) error {
-	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(context.Background(), tableID)
-	if !ok {
-		// Usually, it should not happen.
-		// But if it happens, we can safely do nothing.
-		return nil
-	}
-	allColumns := table.Meta().Columns
+func cleanupDroppedColumnStatsUsage(sctx sessionctx.Context, tblInfo *model.TableInfo) error {
+	tableID := tblInfo.ID
+	allColumns := tblInfo.Columns
 	// Due to SQL limitations, column IDs must be converted to strings for proper escaping in the query :(
 	columnIDs := make([]string, 0, len(allColumns))
 	for _, col := range allColumns {

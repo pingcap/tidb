@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -32,13 +32,13 @@ import (
 type mockAnalysisJob struct {
 	tableID int64
 	weight  float64
-	analyze func(statsutil.SessionPool, statsutil.AutoAnalyzeProcIDGenerator, sysproctrack.Tracker) error
+	analyze func(statsutil.SessionPool, *exec.Runner) error
 }
 
 func (m *mockAnalysisJob) GetTableID() int64 { return m.tableID }
-func (m *mockAnalysisJob) Analyze(pool statsutil.SessionPool, procIDs statsutil.AutoAnalyzeProcIDGenerator, t sysproctrack.Tracker) error {
+func (m *mockAnalysisJob) Analyze(pool statsutil.SessionPool, runner *exec.Runner) error {
 	if m.analyze != nil {
-		return m.analyze(pool, procIDs, t)
+		return m.analyze(pool, runner)
 	}
 	time.Sleep(50 * time.Millisecond) // Simulate some work
 	return nil
@@ -78,21 +78,21 @@ func TestWorker(t *testing.T) {
 	sysProcTracker := dom.SysProcTracker()
 
 	t.Run("NewWorker", func(t *testing.T) {
-		w := refresher.NewWorker(handle.Pool(), handle.ProcIDs(), sysProcTracker, 5)
+		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker, nil), 5)
 		require.NotNil(t, w)
 		require.Equal(t, 5, w.GetMaxConcurrency())
 		w.Stop()
 	})
 
 	t.Run("UpdateConcurrency", func(t *testing.T) {
-		w := refresher.NewWorker(handle.Pool(), handle.ProcIDs(), sysProcTracker, 5)
+		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker, nil), 5)
 		w.UpdateConcurrency(10)
 		require.Equal(t, 10, w.GetMaxConcurrency())
 		w.Stop()
 	})
 
 	t.Run("SubmitJob", func(t *testing.T) {
-		w := refresher.NewWorker(handle.Pool(), handle.ProcIDs(), sysProcTracker, 2)
+		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker, nil), 2)
 		job1 := &mockAnalysisJob{tableID: 1}
 		job2 := &mockAnalysisJob{tableID: 2}
 		job3 := &mockAnalysisJob{tableID: 3}
@@ -107,14 +107,14 @@ func TestWorker(t *testing.T) {
 	})
 
 	t.Run("GetRunningJobs", func(t *testing.T) {
-		w := refresher.NewWorker(handle.Pool(), handle.ProcIDs(), sysProcTracker, 2)
+		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker, nil), 2)
 		jobStarted := make(chan struct{}, 2)
 
 		// Create a custom job that signals when it starts
 		customJob := func(id int64) *mockAnalysisJob {
 			return &mockAnalysisJob{
 				tableID: id,
-				analyze: func(statsutil.SessionPool, statsutil.AutoAnalyzeProcIDGenerator, sysproctrack.Tracker) error {
+				analyze: func(statsutil.SessionPool, *exec.Runner) error {
 					jobStarted <- struct{}{}
 					time.Sleep(50 * time.Millisecond) // Simulate some work
 					return nil
@@ -143,10 +143,10 @@ func TestWorker(t *testing.T) {
 	})
 
 	t.Run("PanicInJob", func(t *testing.T) {
-		w := refresher.NewWorker(handle.Pool(), handle.ProcIDs(), sysProcTracker, 1)
+		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker, nil), 1)
 		panicJob := &mockAnalysisJob{
 			tableID: 1,
-			analyze: func(statsutil.SessionPool, statsutil.AutoAnalyzeProcIDGenerator, sysproctrack.Tracker) error {
+			analyze: func(statsutil.SessionPool, *exec.Runner) error {
 				panic("simulated panic")
 			},
 		}
@@ -158,16 +158,16 @@ func TestWorker(t *testing.T) {
 	})
 
 	t.Run("PanicInMultipleJobs", func(t *testing.T) {
-		w := refresher.NewWorker(handle.Pool(), handle.ProcIDs(), sysProcTracker, 2)
+		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker, nil), 2)
 		panicJob1 := &mockAnalysisJob{
 			tableID: 1,
-			analyze: func(statsutil.SessionPool, statsutil.AutoAnalyzeProcIDGenerator, sysproctrack.Tracker) error {
+			analyze: func(statsutil.SessionPool, *exec.Runner) error {
 				panic("simulated panic 1")
 			},
 		}
 		panicJob2 := &mockAnalysisJob{
 			tableID: 2,
-			analyze: func(statsutil.SessionPool, statsutil.AutoAnalyzeProcIDGenerator, sysproctrack.Tracker) error {
+			analyze: func(statsutil.SessionPool, *exec.Runner) error {
 				panic("simulated panic 2")
 			},
 		}

@@ -36,6 +36,12 @@ func newPredicateColumnsGetter(pool utilstats.SessionPool) *predicateColumnsGett
 	return &predicateColumnsGetter{pool: pool}
 }
 
+// NewPredicateColumnsGetter creates a statstypes.PredicateColumnsGetter that reads in the sessions
+// of pool. It needs no stats cache.
+func NewPredicateColumnsGetter(pool utilstats.SessionPool) statstypes.PredicateColumnsGetter {
+	return newPredicateColumnsGetter(pool)
+}
+
 // Tracker tracks the table deltas and the usage of column and index stats, and dumps them to KV.
 type Tracker struct {
 	*predicateColumnsGetter
@@ -80,9 +86,9 @@ func (u *Tracker) LoadColumnStatsUsage(loc *time.Location) (colStatsMap map[mode
 }
 
 // GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
-func (g *predicateColumnsGetter) GetPredicateColumns(tableID int64) (columnIDs []int64, err error) {
+func (g *predicateColumnsGetter) GetPredicateColumns(tblInfo *model.TableInfo) (columnIDs []int64, err error) {
 	err = utilstats.CallWithSCtx(g.pool.SPool(), func(sctx sessionctx.Context) error {
-		columnIDs, err = predicatecolumn.GetPredicateColumns(sctx, tableID)
+		columnIDs, err = predicatecolumn.GetPredicateColumns(sctx, tblInfo)
 		return err
 	}, utilstats.FlagWrapTxn)
 	return

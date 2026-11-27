@@ -37,7 +37,7 @@ type ColStatsTimeInfo struct {
 // PredicateColumnsGetter gives the predicate columns of a table.
 type PredicateColumnsGetter interface {
 	// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
-	GetPredicateColumns(tableID int64) ([]int64, error)
+	GetPredicateColumns(tblInfo *model.TableInfo) ([]int64, error)
 }
 
 // PriorityQueueSnapshot is the snapshot of the stats priority queue.

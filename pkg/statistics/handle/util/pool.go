@@ -43,6 +43,20 @@ type Pool interface {
 	Close()
 }
 
+// NewSessionPool creates a SessionPool that gives the sessions of p.
+func NewSessionPool(p syssession.Pool) SessionPool {
+	return sessionPool{pool: p}
+}
+
+type sessionPool struct {
+	pool syssession.Pool
+}
+
+// SPool implements SessionPool.
+func (p sessionPool) SPool() syssession.Pool {
+	return p.pool
+}
+
 var _ Pool = (*pool)(nil)
 
 type pool struct {
