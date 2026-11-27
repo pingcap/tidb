@@ -1940,3 +1940,76 @@ fn analyze_leaves_a_partitioned_tables_logical_stats_unread_like_go() {
         ]
     );
 }
+
+/// Go `TestGeneratedColumns` (with 452929bd74f's rows): ANALYZE collects a
+/// JSON base column a generated column needs, a stored generated column and
+/// the indexes on generated columns, but not a virtual generated column, a
+/// JSON column `tidb_analyze_skip_column_types` excludes, or any generated
+/// column over a skipped column at any depth; a vector column an
+/// expression index needs is analyzed with that index.
+#[test]
+fn test_generated_columns() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE DATABASE IF NOT EXISTS test",
+        "USE test",
+        "CREATE TABLE test_gen_cols (
+            id INT PRIMARY KEY,
+            data JSON,
+            virtual_col VARCHAR(50) AS (JSON_UNQUOTE(JSON_EXTRACT(data, '$.name'))) VIRTUAL,
+            stored_col VARCHAR(50) AS (JSON_UNQUOTE(JSON_EXTRACT(data, '$.status'))) STORED,
+            json_but_not_used_by_generated_column JSON,
+            skipped_data JSON,
+            virtual_on_skipped INT AS (JSON_EXTRACT(skipped_data, '$.x')) VIRTUAL,
+            stored_on_skipped INT AS (JSON_EXTRACT(skipped_data, '$.x')) STORED,
+            virtual_on_virtual INT AS (virtual_on_skipped + 1) VIRTUAL,
+            virtual_on_stored INT AS (stored_on_skipped + 1) VIRTUAL,
+            stored_on_generated INT AS (virtual_on_virtual + virtual_on_stored) STORED,
+            vector_col VECTOR(3),
+            INDEX idx_virtual (virtual_col),
+            INDEX idx_stored (stored_col),
+            INDEX idx_vector_is_null ((vector_col IS NULL))
+        )",
+        "INSERT INTO test_gen_cols (id, data, json_but_not_used_by_generated_column, skipped_data, vector_col) VALUES
+            (1, '{\"name\": \"user1\", \"status\": \"active\"}', '{\"category\": \"admin\", \"level\": 1}', '{\"x\": 1}', '[1,2,3]'),
+            (2, '{\"name\": \"user2\", \"status\": \"inactive\"}', '{\"category\": \"user\", \"level\": 2}', '{\"x\": 2}', NULL),
+            (3, '{\"name\": \"user3\", \"status\": \"active\"}', '{\"category\": \"user\", \"level\": 1}', '{\"x\": 3}', '[4,5,6]')",
+        "ANALYZE TABLE test_gen_cols",
+    ] {
+        session.run(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+    let table_id = row_text(session.run(
+        "select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'test_gen_cols'",
+    ))[0][0]
+        .clone();
+    // Go `IsAnalyzed`: the histogram row carries a statistics version.
+    let analyzed = |session: &mut Session, is_index: u8| -> std::collections::BTreeSet<String> {
+        row_text(session.run(&format!(
+            "select hist_id from mysql.stats_histograms where table_id = {table_id} and is_index = {is_index} and stats_ver > 0"
+        )))
+        .into_iter()
+        .map(|row| row[0].clone())
+        .collect()
+    };
+    let columns = analyzed(&mut session, 0);
+    // Column IDs follow the definition order.
+    for (name, id, expected) in [
+        ("data", "2", true),
+        ("virtual_col", "3", false),
+        ("stored_col", "4", true),
+        ("json_but_not_used_by_generated_column", "5", false),
+        ("skipped_data", "6", false),
+        ("virtual_on_skipped", "7", false),
+        ("stored_on_skipped", "8", false),
+        ("virtual_on_virtual", "9", false),
+        ("virtual_on_stored", "10", false),
+        ("stored_on_generated", "11", false),
+        ("vector_col", "12", true),
+    ] {
+        assert_eq!(columns.contains(id), expected, "{name} (column {id}) analyzed: {columns:?}");
+    }
+    let indexes = analyzed(&mut session, 1);
+    for (name, id) in [("idx_virtual", "1"), ("idx_stored", "2"), ("idx_vector_is_null", "3")] {
+        assert!(indexes.contains(id), "{name} (index {id}) analyzed: {indexes:?}");
+    }
+}

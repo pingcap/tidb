@@ -1047,17 +1047,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     must_analyze.contains(&col.id),
                 )
             };
-            // Vector type is skipped by hardcoding.
-            if vector || (skip && !keep) {
+            // Vector columns are skipped whatever skipTypes says, since their
+            // statistics are useless for current TiDB; a column an index needs
+            // is kept.
+            if (skip || vector) && !keep {
                 skip_col.push(col_info);
                 continue;
             }
             result.push(col_info);
         }
-        let skip_col_names = skip_col
+        let mut skip_col_names = skip_col
             .iter()
             .map(|col| col.read().name.lowercase().to_owned())
             .collect::<BTreeSet<_>>();
+        // A generated column can only depend on generated columns defined
+        // before it, so adding each skipped one to the names also skips the
+        // generated columns that depend on it.
         let mut filtered_result = Vec::with_capacity(result.len());
         for col_info in result {
             let should_skip = {
@@ -1076,6 +1081,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
             };
             if should_skip {
+                skip_col_names.insert(col_info.read().name.lowercase().to_owned());
                 skip_col.push(col_info);
             } else {
                 filtered_result.push(col_info);
