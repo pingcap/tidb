@@ -164,3 +164,82 @@ Projection	6.40	root		agg_predicate_pushdown.t.id, agg_predicate_pushdown.t.tran
       └─TableReader(Probe)	10.00	root		data:Selection
         └─Selection	10.00	cop[tikv]		eq(agg_predicate_pushdown.t.tran_id, 1540776)
           └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t1, t2;
+create table t1(c1 int, c2 int);
+create table t2(id int primary key, c1 int, c2 int, key idx(c1, c2));
+insert into t1 values (1, 5);
+insert into t2 values (1, 1, null), (2, 1, 20);
+set @@sql_mode='';
+explain format='plan_tree' select t1.c1, a.cnt from t1 join (select c1, c2, count(*) cnt from t2 group by c1) a on t1.c1 = a.c1 where a.c2 is not null;
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(agg_predicate_pushdown.t1.c1, agg_predicate_pushdown.t2.c1)]
+├─Selection(Build)	root		not(isnull(agg_predicate_pushdown.t2.c2))
+│ └─HashAgg	root		group by:agg_predicate_pushdown.t2.c1, funcs:count(Column)->Column, funcs:firstrow(agg_predicate_pushdown.t2.c1)->agg_predicate_pushdown.t2.c1, funcs:firstrow(Column)->agg_predicate_pushdown.t2.c2
+│   └─IndexReader	root		index:HashAgg
+│     └─HashAgg	cop[tikv]		group by:agg_predicate_pushdown.t2.c1, funcs:count(1)->Column, funcs:firstrow(agg_predicate_pushdown.t2.c2)->Column
+│       └─IndexFullScan	cop[tikv]	table:t2, index:idx(c1, c2)	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(agg_predicate_pushdown.t1.c1))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select t1.c1, a.cnt from t1 join (select c1, c2, count(*) cnt from t2 group by c1) a on t1.c1 = a.c1 where a.c2 is not null;
+c1	cnt
+explain format='plan_tree' select t1.c1, a.cnt from t1 join (select c1, c2, count(*) cnt from t2 group by c1) a on t1.c1 = a.c1 and a.c2 > t1.c2;
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(agg_predicate_pushdown.t1.c1, agg_predicate_pushdown.t2.c1)], other cond:gt(agg_predicate_pushdown.t2.c2, agg_predicate_pushdown.t1.c2)
+├─Selection(Build)	root		not(isnull(agg_predicate_pushdown.t2.c2))
+│ └─HashAgg	root		group by:agg_predicate_pushdown.t2.c1, funcs:count(Column)->Column, funcs:firstrow(agg_predicate_pushdown.t2.c1)->agg_predicate_pushdown.t2.c1, funcs:firstrow(Column)->agg_predicate_pushdown.t2.c2
+│   └─IndexReader	root		index:HashAgg
+│     └─HashAgg	cop[tikv]		group by:agg_predicate_pushdown.t2.c1, funcs:count(1)->Column, funcs:firstrow(agg_predicate_pushdown.t2.c2)->Column
+│       └─IndexFullScan	cop[tikv]	table:t2, index:idx(c1, c2)	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(agg_predicate_pushdown.t1.c1)), not(isnull(agg_predicate_pushdown.t1.c2))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select t1.c1, a.cnt from t1 join (select c1, c2, count(*) cnt from t2 group by c1) a on t1.c1 = a.c1 and a.c2 > t1.c2;
+c1	cnt
+explain format='plan_tree' select c1, c2 from (select c1, c2 from t2 group by c1) a where a.c2 is not null;
+id	task	access object	operator info
+HashAgg	root		group by:agg_predicate_pushdown.t2.c1, funcs:firstrow(agg_predicate_pushdown.t2.c1)->agg_predicate_pushdown.t2.c1, funcs:firstrow(Column)->agg_predicate_pushdown.t2.c2
+└─IndexReader	root		index:HashAgg
+  └─HashAgg	cop[tikv]		group by:agg_predicate_pushdown.t2.c1, funcs:firstrow(agg_predicate_pushdown.t2.c2)->Column
+    └─Selection	cop[tikv]		not(isnull(agg_predicate_pushdown.t2.c2))
+      └─IndexFullScan	cop[tikv]	table:t2, index:idx(c1, c2)	keep order:false, stats:pseudo
+select c1, c2 from (select c1, c2 from t2 group by c1) a where a.c2 is not null;
+c1	c2
+1	20
+explain format='plan_tree' select id, c2, cnt from (select id, c2, count(*) cnt from t2 group by id) a where a.c2 is not null;
+id	task	access object	operator info
+Projection	root		agg_predicate_pushdown.t2.id, agg_predicate_pushdown.t2.c2, 1->Column
+└─IndexReader	root		index:Selection
+  └─Selection	cop[tikv]		not(isnull(agg_predicate_pushdown.t2.c2))
+    └─IndexFullScan	cop[tikv]	table:t2, index:idx(c1, c2)	keep order:false, stats:pseudo
+select id, c2, cnt from (select id, c2, count(*) cnt from t2 group by id) a where a.c2 is not null;
+id	c2	cnt
+2	20	1
+explain format='plan_tree' select d, cnt from (select c1 + 1 d, count(*) cnt from t2 group by c1 + 1) a where a.d > 1;
+id	task	access object	operator info
+Projection	root		plus(agg_predicate_pushdown.t2.c1, 1)->Column, Column
+└─HashAgg	root		group by:Column, funcs:count(Column)->Column, funcs:firstrow(Column)->agg_predicate_pushdown.t2.c1
+  └─IndexReader	root		index:HashAgg
+    └─HashAgg	cop[tikv]		group by:plus(agg_predicate_pushdown.t2.c1, 1), funcs:count(1)->Column, funcs:firstrow(agg_predicate_pushdown.t2.c1)->Column
+      └─Selection	cop[tikv]		gt(plus(agg_predicate_pushdown.t2.c1, 1), 1)
+        └─IndexFullScan	cop[tikv]	table:t2, index:idx(c1, c2)	keep order:false, stats:pseudo
+select d, cnt from (select c1 + 1 d, count(*) cnt from t2 group by c1 + 1) a where a.d > 1;
+d	cnt
+2	2
+set @@sql_mode=default;
+drop table t1, t2;
+drop table if exists t3, t4;
+create table t3(id int primary key, c1 int, c2 int);
+create table t4(c1 int, v int);
+explain format='plan_tree' select a.id, a.cnt from (select t3.id, t3.c2, count(*) cnt from t3 left join t4 on t3.c1 = t4.c1 group by t3.id) a where rand() < a.c2;
+id	task	access object	operator info
+Projection	root		agg_predicate_pushdown.t3.id, Column
+└─Selection	root		lt(rand(), cast(agg_predicate_pushdown.t3.c2, double BINARY))
+  └─HashAgg	root		group by:agg_predicate_pushdown.t3.id, funcs:count(1)->Column, funcs:firstrow(agg_predicate_pushdown.t3.id)->agg_predicate_pushdown.t3.id, funcs:firstrow(agg_predicate_pushdown.t3.c2)->agg_predicate_pushdown.t3.c2
+    └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(agg_predicate_pushdown.t3.c1, agg_predicate_pushdown.t4.c1)]
+      ├─TableReader(Build)	root		data:Selection
+      │ └─Selection	cop[tikv]		not(isnull(agg_predicate_pushdown.t4.c1))
+      │   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+      └─TableReader(Probe)	root		data:TableFullScan
+        └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+drop table t3, t4;
