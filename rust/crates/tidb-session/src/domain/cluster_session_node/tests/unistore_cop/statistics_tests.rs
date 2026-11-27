@@ -2977,3 +2977,129 @@ fn the_summary_plans_carry_the_statements_runtime_stats_like_go() {
     );
     assert_eq!(encoded[3][5], "tikv_task:{time:D, loops:0}");
 }
+
+/// Go `TestInsertColStats2KVDoesNotDeadlockWithAnalyzeSave` (f01fb0ab6d4):
+/// the add-column statistics write locks `mysql.stats_meta` before its
+/// histogram row, the order ANALYZE's save takes, so a concurrent save
+/// waits for it instead of deadlocking.
+#[test]
+fn insert_col_stats_2_kv_does_not_deadlock_with_analyze_save() {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(209)).unwrap();
+    rows(&mut tk, "create table test.t (a int)");
+    rows(&mut tk, "insert into test.t values (1), (2)");
+    rows(&mut tk, "analyze table test.t");
+    let table_id = table_id_of(&mut tk, "t");
+    assert_eq!(
+        displayed(rows(&mut tk, &format!("select count from mysql.stats_meta where table_id = {table_id}"))),
+        [["2"]]
+    );
+
+    const COL_ID: i64 = 100;
+    let mut field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar);
+    field_type.set_flen(200);
+    let col = tidb_model::ColumnInfo {
+        id: COL_ID,
+        name: tidb_ast::CiString::new("filler1"),
+        field_type,
+        state: tidb_model::SchemaState::PUBLIC,
+        ..tidb_model::ColumnInfo::default()
+    };
+
+    let (entered_tx, entered) = mpsc::channel::<()>();
+    let (release_tx, release) = mpsc::channel::<()>();
+    let release = std::sync::Mutex::new(release);
+    let entered_tx = std::sync::Mutex::new(entered_tx);
+    let _pause = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/statistics/handle/storage/pauseBeforeInsertColStatsMetaUpdate",
+        move |_| {
+            let _ = entered_tx.lock().unwrap().send(());
+            let _ = release.lock().unwrap().recv();
+        },
+    );
+
+    let pool = stack.factory.advanced_sys_session_pool();
+    let (col_stats_tx, col_stats) = mpsc::channel();
+    let col_stats_thread = {
+        let pool = Arc::clone(&pool);
+        std::thread::spawn(move || {
+            let result = tidb_stats_handle_util::call_with_sctx(
+                pool.as_ref(),
+                |sctx| {
+                    tidb_stats_handle_storage::save::insert_col_stats_2_kv(sctx, "t", table_id, &[col])
+                },
+                &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+            );
+            let _ = col_stats_tx.send(result.map_err(|error| error.to_string()));
+        })
+    };
+    if entered.recv_timeout(Duration::from_secs(20)).is_err() {
+        panic!(
+            "InsertColStats2KV did not reach the stats_meta update: {:?}",
+            col_stats.try_recv()
+        );
+    }
+
+    let mut tk_a = stack.factory.open_session(session_context(210)).unwrap();
+    rows(&mut tk_a, "set innodb_lock_wait_timeout = 15");
+    let (analyze_tx, analyze_done) = mpsc::channel();
+    let analyze_thread = std::thread::spawn(move || {
+        // Go `runAnalyzeStatsSave`: SaveAnalyzeResultToStorage's lock order.
+        let mut run = || -> Result<(), String> {
+            let exec = |session: &mut Session, sql: &str| session.run(sql).map(drop).map_err(|error| format!("{sql}: {error:?}"));
+            exec(&mut tk_a, "begin pessimistic")?;
+            let body = |session: &mut Session| -> Result<(), String> {
+                exec(
+                    session,
+                    &format!("select count from mysql.stats_meta where table_id in ({}, {table_id}) for update", -table_id),
+                )?;
+                exec(
+                    session,
+                    &format!(
+                        "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count) values ({table_id}, 0, {COL_ID}, 1, 1, 0)"
+                    ),
+                )
+            };
+            if let Err(error) = body(&mut tk_a) {
+                let _ = tk_a.run("rollback");
+                return Err(error);
+            }
+            exec(&mut tk_a, "commit")
+        };
+        let _ = analyze_tx.send(run());
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let waiting = rows(&mut tk, "select state from information_schema.tidb_trx where state = 'LockWaiting'");
+        if !waiting.is_empty() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the analyze save never waited for the stats_meta lock");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    release_tx.send(()).unwrap();
+
+    let analyze = analyze_done
+        .recv_timeout(Duration::from_secs(20))
+        .expect("analyze stats save did not finish");
+    assert_eq!(analyze, Ok(()));
+    let col_stats_result = col_stats
+        .recv_timeout(Duration::from_secs(20))
+        .expect("InsertColStats2KV did not finish");
+    assert_eq!(col_stats_result, Ok(()));
+    analyze_thread.join().unwrap();
+    col_stats_thread.join().unwrap();
+
+    // The analyze save runs after the add-column stats transaction commits,
+    // so its histogram replace is the row that remains.
+    assert_eq!(
+        displayed(rows(
+            &mut tk,
+            &format!("select distinct_count, null_count from mysql.stats_histograms where table_id = {table_id} and is_index = 0 and hist_id = {COL_ID}"),
+        )),
+        [["1", "0"]]
+    );
+}

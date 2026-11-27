@@ -387,10 +387,16 @@ pub fn insert_col_stats_2_kv<C: StatsSessionContext + ?Sized>(
     col_infos: &[ColumnInfo],
 ) -> Result<(), SqlExecError> {
     let start_ts = get_start_ts(sctx)?;
-    // The table's count fixes the bucket's count and repeats.
+    // Lock mysql.stats_meta before mysql.stats_histograms /
+    // mysql.stats_buckets, the order SaveAnalyzeResultToStorage takes.
+    // Inserting the histogram first deadlocks with ANALYZE: this transaction
+    // holds the new histogram row and waits for stats_meta, while ANALYZE
+    // holds stats_meta and waits for the histogram. (On clusters bootstrapped
+    // before v8.5.7 a single-table-ID point get can still deadlock with the
+    // analyze batch point get, as SaveAnalyzeResultToStorage explains.)
     let (rows, _) = exec_rows(
         sctx,
-        "select count from mysql.stats_meta where table_id = %?",
+        "select count from mysql.stats_meta where table_id = %? for update",
         &[SqlArg::Signed(physical_id)],
     )?;
     // No row: this table has no statistics.
@@ -469,6 +475,10 @@ pub fn insert_col_stats_2_kv<C: StatsSessionContext + ?Sized>(
     if !has_stats_update {
         return Ok(());
     }
+    tidb_failpoint::inject_call(
+        "github.com/pingcap/tidb/pkg/statistics/handle/storage/pauseBeforeInsertColStatsMetaUpdate",
+        &mut (),
+    );
     exec(
         sctx,
         "update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
