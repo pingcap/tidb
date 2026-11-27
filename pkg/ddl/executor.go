@@ -3919,11 +3919,6 @@ func isCharsetAllowingDirectCollationChange(origCharset, toCharset string) bool 
 		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8MB4)
 }
 
-func canModifyCharsetAndCollateWithoutReorg(origCharset, origCollate, toCharset, toCollate string) bool {
-	return isCharsetAllowingDirectCollationChange(origCharset, toCharset) ||
-		(toCharset == origCharset && toCollate == origCollate)
-}
-
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
 // needRewriteCollationData is used when trying to modify the collation of a column, it is true when the column is with
 // index because index of a string column is collation-aware.

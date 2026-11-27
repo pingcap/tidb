@@ -1931,7 +1931,7 @@ type ModifyColumnArgs struct {
 	OldColumnID      int64               `json:"old_column_id,omitempty"`
 	OldColumnName    ast.CIStr           `json:"old_column_name,omitempty"`
 	Position         *ast.ColumnPosition `json:"position,omitempty"`
-	ModifyColumnType byte                `json:"modify_column_type,omitempty"`
+	ModifyColumnType ModifyColumnType    `json:"modify_column_type,omitempty"`
 	NewShardBits     uint64              `json:"new_shard_bits,omitempty"`
 	// ChangingColumn is the temporary column derived from OldColumn
 	ChangingColumn *ColumnInfo `json:"changing_column,omitempty"`
