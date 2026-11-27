@@ -3411,15 +3411,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     }
 
     pub fn build_data_source(&mut self, table_ref: &TableRef) -> Result<LogicalPlan, PlanError> {
-        if table_ref
-            .sample
-            .as_ref()
-            .is_some_and(|sample| sample.method != Some(tidb_ast::SampleMethod::Region))
-        {
-            return Err(PlanError::from(
-                tidb_expr::expression_errors::ERR_INVALID_TABLE_SAMPLE
-                    .gen_with_stack_by_args(&["Only supports REGIONS sampling method".into()]),
-            ));
+        // Go `preprocessor.Enter`'s TableSource arm.
+        if let Some(sample) = &table_ref.sample {
+            let refusal = match sample.method {
+                Some(tidb_ast::SampleMethod::Region) => (sample.expr.is_some() || sample.repeatable.is_some())
+                    .then_some("REGIONS sampling does not support sample size or REPEATABLE"),
+                _ => Some("Only supports REGIONS sampling method"),
+            };
+            if let Some(message) = refusal {
+                return Err(PlanError::from(
+                    tidb_expr::expression_errors::ERR_INVALID_TABLE_SAMPLE
+                        .gen_with_stack_by_args(&[message.into()]),
+                ));
+            }
         }
         // `:4932` "Try CTE." An UNQUALIFIED name may name a CTE in scope, and
         // a CTE shadows a real table of the same name.

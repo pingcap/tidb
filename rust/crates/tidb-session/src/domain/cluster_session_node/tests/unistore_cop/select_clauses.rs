@@ -252,6 +252,25 @@ fn table_sample_regions_uses_the_ordinary_physical_executor_path() {
         let refused = error(&mut tk, sql);
         assert_eq!((refused.code, refused.message.as_str()), (8128, "Invalid TABLESAMPLE: Only supports REGIONS sampling method"), "{sql}");
     }
+    // Go `TestValidator`'s REGIONS rows (8b89a749233): REGIONS takes no
+    // sample size and no REPEATABLE seed, as a statement or when prepared.
+    for sql in [
+        "SELECT a FROM smp TABLESAMPLE REGIONS(0 ROWS)",
+        "SELECT a FROM smp TABLESAMPLE REGIONS(0 PERCENT)",
+        "SELECT a FROM smp TABLESAMPLE REGIONS(100 PERCENT)",
+        "SELECT a FROM smp TABLESAMPLE REGIONS(1)",
+        "SELECT a FROM smp TABLESAMPLE REGIONS() REPEATABLE (0)",
+        "SELECT a FROM smp TABLESAMPLE REGIONS(1 ROWS) REPEATABLE (1)",
+        "PREPARE sample_stmt FROM 'SELECT a FROM smp TABLESAMPLE REGIONS(? ROWS)'",
+        "PREPARE sample_stmt FROM 'SELECT a FROM smp TABLESAMPLE REGIONS() REPEATABLE (?)'",
+    ] {
+        let refused = error(&mut tk, sql);
+        assert_eq!(
+            (refused.code, refused.message.as_str()),
+            (8128, "Invalid TABLESAMPLE: REGIONS sampling does not support sample size or REPEATABLE"),
+            "{sql}"
+        );
+    }
     assert_eq!(displayed(rows(&mut tk, "SELECT a FROM smp")), [["1"], ["2"], ["3"]]);
 }
 
