@@ -109,3 +109,4 @@ cd tests/globalkilltest
 make
 go test -check.f TestMultipleTiDB -args --pd=<pd client path>
 ```
+
