@@ -1302,7 +1302,56 @@ func keyWithTablePrefix(tableID int64, key string) []byte {
 	return codec.EncodeBytes([]byte{}, rawKey)
 }
 
+type terminalRegionSplitClient struct {
+	*FakeSplitClient
+	t         *testing.T
+	scanCalls int
+}
+
+func (c *terminalRegionSplitClient) ScanRegions(context.Context, []byte, []byte, int, ...opt.GetRegionOption) ([]*RegionInfo, error) {
+	c.scanCalls++
+	// All regions fit in the first page. Fail immediately if traversal loops or rescans.
+	require.Equal(c.t, 1, c.scanCalls)
+	return c.regions, nil
+}
+
 func TestSplitPoint(t *testing.T) {
+	for _, precedingRegion := range []bool{false, true} {
+		t.Run(fmt.Sprintf("terminal-region/preceding=%t", precedingRegion), func(t *testing.T) {
+			client := &terminalRegionSplitClient{FakeSplitClient: NewFakeSplitClient(), t: t}
+			var terminalStart []byte
+			if precedingRegion {
+				terminalStart = keyWithTablePrefix(100, "f")
+				client.AppendRegion(nil, terminalStart)
+			}
+			client.AppendRegion(terminalStart, nil)
+			rules := &restoreutils.RewriteRules{Data: []*import_sstpb.RewriteRule{{
+				OldKeyPrefix: tablecodec.EncodeTablePrefix(50),
+				NewKeyPrefix: tablecodec.EncodeTablePrefix(100),
+			}}}
+			helper := NewSplitHelper()
+			var expected []Valued
+			for i, keys := range [][2]string{{"b", "c"}, {"g", "i"}, {"j", "k"}} {
+				value := Value{Size: uint64((i + 1) * 100), Number: int64((i + 1) * 100)}
+				helper.Merge(NewValued(keyWithTablePrefix(50, keys[0]), keyWithTablePrefix(50, keys[1]), value))
+				expected = append(expected, NewValued(keyWithTablePrefix(100, keys[0]), keyWithTablePrefix(100, keys[1]), value))
+			}
+			iter := NewSplitHelperIterator([]*RewriteSplitter{{tableID: 100, rule: rules, splitter: helper}})
+			var actual []Valued
+			var splitRegions []*RegionInfo
+			err := SplitPoint(context.Background(), iter, client, func(_ context.Context, size uint64, number int64, region *RegionInfo, values []Valued) error {
+				require.Zero(t, size)
+				require.Zero(t, number)
+				splitRegions = append(splitRegions, region)
+				actual = append(actual, values...)
+				return nil
+			})
+			require.NoError(t, err)
+			require.Equal(t, expected, actual)
+			require.Equal(t, client.regions, splitRegions)
+			require.Equal(t, 1, client.scanCalls)
+		})
+	}
 	ctx := context.Background()
 	var oldTableID int64 = 50
 	var tableID int64 = 100
