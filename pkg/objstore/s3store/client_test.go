@@ -28,6 +28,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
@@ -37,6 +39,7 @@ import (
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestClientEncryptionContextRequests(t *testing.T) {
@@ -789,26 +792,119 @@ func TestMultipartWriterAliasRouting(t *testing.T) {
 	require.Equal(t, map[string]string{"1": "first part", "2": "second part"}, parts)
 }
 
-func TestS3ClientLogMode(t *testing.T) {
-	infoLogger := zap.New(zapcore.NewCore(
-		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
-		zapcore.AddSync(io.Discard),
-		zapcore.InfoLevel,
-	))
-	infoMode := s3ClientLogMode(infoLogger)
-	require.True(t, infoMode.IsRetries())
-	require.True(t, infoMode.IsDeprecatedUsage())
-	require.False(t, infoMode.IsRequest())
-	require.False(t, infoMode.IsResponse())
+func TestDynamicRequestResponseLogging(t *testing.T) {
+	require.True(t, s3BaseClientLogMode.IsRetries())
+	require.True(t, s3BaseClientLogMode.IsDeprecatedUsage())
+	require.False(t, s3BaseClientLogMode.IsRequest())
+	require.False(t, s3BaseClientLogMode.IsResponse())
 
-	debugLogger := zap.New(zapcore.NewCore(
-		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
-		zapcore.AddSync(io.Discard),
-		zapcore.DebugLevel,
-	))
-	debugMode := s3ClientLogMode(debugLogger)
-	require.True(t, debugMode.IsRetries())
-	require.True(t, debugMode.IsDeprecatedUsage())
-	require.True(t, debugMode.IsRequest())
-	require.True(t, debugMode.IsResponse())
+	type observedFlags struct {
+		logRequest  bool
+		logResponse bool
+	}
+
+	newTestClient := func(initLevel zapcore.Level) (*s3.Client, zap.AtomicLevel, *observer.ObservedLogs, *observedFlags) {
+		atomicLevel := zap.NewAtomicLevelAt(initLevel)
+		core, logs := observer.New(atomicLevel)
+		logger := zap.New(core)
+		var lastFlags observedFlags
+
+		cfg := aws.Config{
+			Region:        "us-east-1",
+			Credentials:   aws.AnonymousCredentials{},
+			Logger:        newLogger(logger),
+			ClientLogMode: s3BaseClientLogMode,
+			APIOptions: []func(*middleware.Stack) error{
+				dynamicRequestResponseLogging(logger),
+			},
+			HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Etag": []string{`"etag"`}},
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    r,
+				}, nil
+			})},
+		}
+		client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+			o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+				m, ok := stack.Deserialize.Get("RequestResponseLogger")
+				require.True(t, ok)
+				rr, ok := m.(*smithyhttp.RequestResponseLogger)
+				require.True(t, ok)
+				lastFlags = observedFlags{
+					logRequest:  rr.LogRequest,
+					logResponse: rr.LogResponse,
+				}
+				return nil
+			})
+		})
+		return client, atomicLevel, logs, &lastFlags
+	}
+
+	uploadPart := func(t *testing.T, client *s3.Client) {
+		t.Helper()
+		_, err := client.UploadPart(context.Background(), &s3.UploadPartInput{
+			Bucket:     aws.String("bucket"),
+			Key:        aws.String("prefix/object"),
+			UploadId:   aws.String("upload-id"),
+			PartNumber: aws.Int32(1),
+			Body:       bytes.NewReader([]byte("part-payload")),
+		})
+		require.NoError(t, err)
+	}
+
+	hasReqRespLogs := func(entries []observer.LoggedEntry) (hasReq, hasResp bool) {
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Message, "Request\n") {
+				hasReq = true
+			}
+			if strings.HasPrefix(entry.Message, "Response\n") {
+				hasResp = true
+			}
+		}
+		return hasReq, hasResp
+	}
+
+	t.Run("InfoToDebugToInfo", func(t *testing.T) {
+		client, atomicLevel, logs, lastFlags := newTestClient(zapcore.InfoLevel)
+
+		uploadPart(t, client)
+		require.Equal(t, observedFlags{logRequest: false, logResponse: false}, *lastFlags)
+		hasReq, hasResp := hasReqRespLogs(logs.TakeAll())
+		require.False(t, hasReq)
+		require.False(t, hasResp)
+
+		atomicLevel.SetLevel(zapcore.DebugLevel)
+		uploadPart(t, client)
+		require.Equal(t, observedFlags{logRequest: true, logResponse: true}, *lastFlags)
+		hasReq, hasResp = hasReqRespLogs(logs.TakeAll())
+		require.True(t, hasReq)
+		require.True(t, hasResp)
+
+		atomicLevel.SetLevel(zapcore.InfoLevel)
+		uploadPart(t, client)
+		require.Equal(t, observedFlags{logRequest: false, logResponse: false}, *lastFlags)
+		hasReq, hasResp = hasReqRespLogs(logs.TakeAll())
+		require.False(t, hasReq)
+		require.False(t, hasResp)
+	})
+
+	t.Run("DebugToInfo", func(t *testing.T) {
+		client, atomicLevel, logs, lastFlags := newTestClient(zapcore.DebugLevel)
+
+		uploadPart(t, client)
+		require.Equal(t, observedFlags{logRequest: true, logResponse: true}, *lastFlags)
+		hasReq, hasResp := hasReqRespLogs(logs.TakeAll())
+		require.True(t, hasReq)
+		require.True(t, hasResp)
+
+		atomicLevel.SetLevel(zapcore.InfoLevel)
+		uploadPart(t, client)
+		require.Equal(t, observedFlags{logRequest: false, logResponse: false}, *lastFlags)
+		hasReq, hasResp = hasReqRespLogs(logs.TakeAll())
+		require.False(t, hasReq)
+		require.False(t, hasResp)
+	})
 }
