@@ -124,6 +124,9 @@ func execDDL(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 	case *ast.CreateIndexStmt:
 		sctx := mock.NewContext()
 		err = tracker.CreateIndex(sctx, stmt)
+	case *ast.DropIndexStmt:
+		sctx := mock.NewContext()
+		err = tracker.DropIndex(sctx, stmt)
 	default:
 		require.Failf(t, "unsupported DDL", "%T", stmt)
 	}
@@ -385,6 +388,84 @@ func TestCreateTableWithIndex(t *testing.T) {
 		"  KEY `idx_1` ((cast(`col_1` as char(64) array)))\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	checkShowCreateTable(t, tblInfo, expected)
+}
+
+func TestCreateIgnoredIndexTypeWithNilIndexOption(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int, b text)")
+
+	// Non-btree indexes are ignored, so DM may construct statements internally
+	// without an IndexOption without panicking.
+	stmt := &ast.CreateIndexStmt{
+		KeyType:   ast.IndexKeyTypeColumnar,
+		IndexName: "ft",
+		Table:     &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t")},
+		IndexPartSpecifications: []*ast.IndexPartSpecification{
+			{Column: &ast.ColumnName{Name: ast.NewCIStr("b")}},
+		},
+	}
+	require.NoError(t, tracker.CreateIndex(mock.NewContext(), stmt))
+
+	tblInfo := mustTableByName(t, tracker, "test", "t")
+	require.Empty(t, tblInfo.Indices)
+}
+
+func TestSchemaTrackerIgnoresNonBTreeIndexes(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+
+	// The tracker only maintains btree indexes. FULLTEXT indexes are ignored
+	// instead of being approximated as btree indexes, which would reject TEXT
+	// columns without a prefix length.
+	execCreate(t, tracker, "create table test.t (a int, b text, fulltext key ft_b (b), columnar index ci_b (b) using inverted)")
+	tblInfo := mustTableByName(t, tracker, "test", "t")
+	require.Empty(t, tblInfo.Indices)
+
+	execCreate(t, tracker, "create table test.t_anon (a int, b text, fulltext (b))")
+	tblInfo = mustTableByName(t, tracker, "test", "t_anon")
+	require.Empty(t, tblInfo.Indices)
+
+	execDDL(t, tracker, "create fulltext index ft_b2 on test.t (b)")
+	execAlter(t, tracker, "alter table test.t add fulltext key ft_b3 (b)")
+	execDDL(t, tracker, "create index ci_b2 on test.t (b) using inverted")
+	tblInfo = mustTableByName(t, tracker, "test", "t")
+	require.Empty(t, tblInfo.Indices)
+
+	// Dropping, renaming or changing the visibility of an ignored index is a
+	// no-op.
+	execDDL(t, tracker, "drop index ft_b on test.t")
+	execAlter(t, tracker, "alter table test.t rename index ft_b3 to ft_b4")
+	execAlter(t, tracker, "alter table test.t alter index ft_b visible")
+	tblInfo = mustTableByName(t, tracker, "test", "t")
+	require.Empty(t, tblInfo.Indices)
+
+	// Visibility changes must still be applied to tracked btree indexes.
+	execCreate(t, tracker, "create table test.t_btree (a int, key idx_a (a))")
+	execAlter(t, tracker, "alter table test.t_btree alter index idx_a invisible")
+	tblInfo = mustTableByName(t, tracker, "test", "t_btree")
+	require.Len(t, tblInfo.Indices, 1)
+	require.True(t, tblInfo.Indices[0].Invisible)
+	execAlter(t, tracker, "alter table test.t_btree alter index idx_a visible")
+	tblInfo = mustTableByName(t, tracker, "test", "t_btree")
+	require.False(t, tblInfo.Indices[0].Invisible)
+
+	// Tables restored from TableInfo use the same filter, including index types
+	// that only exist in the AST (e.g. hypothetical indexes).
+	info := &model.TableInfo{
+		Name:    ast.NewCIStr("t_info"),
+		Columns: []*model.ColumnInfo{{Name: ast.NewCIStr("a"), ID: 1, State: model.StatePublic}},
+		Indices: []*model.IndexInfo{
+			{Name: ast.NewCIStr("idx_btree"), Tp: ast.IndexTypeBtree, State: model.StatePublic},
+			{Name: ast.NewCIStr("idx_ft"), Tp: ast.IndexTypeFulltext, State: model.StatePublic, FullTextInfo: &model.FullTextIndexInfo{}},
+			{Name: ast.NewCIStr("idx_hypo"), Tp: ast.IndexTypeHypo, State: model.StatePublic},
+		},
+	}
+	require.NoError(t, tracker.CreateTableWithInfo(mock.NewContext(), ast.NewCIStr("test"), info, nil))
+	tblInfo = mustTableByName(t, tracker, "test", "t_info")
+	require.Len(t, tblInfo.Indices, 1)
+	require.Equal(t, "idx_btree", tblInfo.Indices[0].Name.L)
+	require.Len(t, info.Indices, 3, "the original table info must not be mutated")
 }
 
 func TestIssue5092(t *testing.T) {

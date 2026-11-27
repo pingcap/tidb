@@ -149,7 +149,9 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName ast.C
 	}
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := ConstructResultOfShowCreateTable(ctx, dbName, tableInfo.Meta(), autoid.Allocators{}, result)
+	// The tracker only maintains btree indexes, so ignore the other index
+	// types created by the real executor before comparing.
+	err := ConstructResultOfShowCreateTable(ctx, dbName, withoutUnsupportedIndexes(tableInfo.Meta()), autoid.Allocators{}, result)
 	if err != nil {
 		panic(err)
 	}

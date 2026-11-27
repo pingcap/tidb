@@ -1100,6 +1100,51 @@ func getDefaultCollate(charsetName string) string {
 	return ch.DefaultCollation
 }
 
+func formatFullTextIndexField(field ast.FullTextIndexFieldInfo, sqlMode mysql.SQLMode) string {
+	parserName := field.IndexFieldOption.AnalyzerType.SQLName()
+	switch field.IndexFieldOption.AnalyzerType {
+	case ast.FullTextParserTypeNgramV1:
+		minGram := ast.DefaultFullTextNgramMinGram
+		maxGram := ast.DefaultFullTextNgramMaxGram
+		granularity := ast.DefaultFullTextNgramGranularity
+		lowerCase := ast.DefaultFullTextNgramLowerCase
+		if field.IndexFieldOption.Ngram != nil {
+			minGram = field.IndexFieldOption.Ngram.MinGram
+			maxGram = field.IndexFieldOption.Ngram.MaxGram
+			granularity = field.IndexFieldOption.Ngram.Granularity
+			lowerCase = field.IndexFieldOption.Ngram.LowerCase
+		}
+		result := fmt.Sprintf(
+			"%s(MIN_GRAM = %d, MAX_GRAM = %d, GRANULARITY = '%s'",
+			parserName,
+			minGram,
+			maxGram,
+			strings.ToLower(string(granularity)),
+		)
+		if !lowerCase {
+			result += ", LOWER_CASE = FALSE"
+		}
+		return result + ")"
+	case ast.FullTextParserTypePathHierarchyV1:
+		delimiter := ast.DefaultFullTextPathHierarchyDelimiter
+		if field.IndexFieldOption.PathHierarchy != nil {
+			delimiter = field.IndexFieldOption.PathHierarchy.Delimiter
+		}
+		return fmt.Sprintf("%s(DELIMITER = '%s')", parserName, formatFullTextDelimiter(delimiter, sqlMode))
+	default:
+		return parserName
+	}
+}
+
+// formatFullTextDelimiter escapes a PATH_HIERARCHY delimiter according to the
+// session SQL mode so that the SHOW CREATE output can be replayed.
+func formatFullTextDelimiter(delimiter string, sqlMode mysql.SQLMode) string {
+	if sqlMode.HasNoBackslashEscapesMode() {
+		return strings.ReplaceAll(delimiter, "'", "''")
+	}
+	return format.OutputFormat(delimiter)
+}
+
 // ConstructResultOfShowCreateTable renders SHOW CREATE TABLE in the named database,
 // including schema qualifiers for foreign keys referencing another database.
 func ConstructResultOfShowCreateTable(ctx sessionctx.Context, dbName ast.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
@@ -1278,6 +1323,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, dbName ast.CIStr, 
 			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
 
+		fullTextColumnSyntax := idxInfo.FullTextInfo != nil && idxInfo.FullTextInfo.ParserType == "" && len(idxInfo.FullTextInfo.IndexFields) > 0
 		cols := make([]string, 0, len(idxInfo.Columns))
 		var colInfo string
 		for _, c := range idxInfo.Columns {
@@ -1288,6 +1334,15 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, dbName ast.CIStr, 
 				if c.Length != types.UnspecifiedLength {
 					colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
 				}
+			}
+			if fullTextColumnSyntax {
+				columnID := tableInfo.Columns[c.Offset].ID
+				indexFields := idxInfo.FullTextInfo.IndexFieldsForColumn(columnID)
+				parserSpecs := make([]string, 0, len(indexFields))
+				for _, indexField := range indexFields {
+					parserSpecs = append(parserSpecs, formatFullTextIndexField(indexField, sqlMode))
+				}
+				colInfo = fmt.Sprintf("%s WITH (%s)", colInfo, strings.Join(parserSpecs, ", "))
 			}
 			cols = append(cols, colInfo)
 		}
@@ -1301,8 +1356,15 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, dbName ast.CIStr, 
 		if idxInfo.InvertedInfo != nil {
 			fmt.Fprintf(buf, " USING INVERTED")
 		}
-		if idxInfo.FullTextInfo != nil {
-			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
+		if idxInfo.FullTextInfo != nil && !fullTextColumnSyntax {
+			var columnID int64
+			if len(idxInfo.Columns) > 0 {
+				columnID = tableInfo.Columns[idxInfo.Columns[0].Offset].ID
+			}
+			indexField, ok := idxInfo.FullTextInfo.PrimaryIndexFieldForColumn(columnID)
+			if ok {
+				fmt.Fprintf(buf, " WITH PARSER %s", formatFullTextIndexField(*indexField, sqlMode))
+			}
 		}
 		if idxInfo.ConditionExprString != "" {
 			fmt.Fprintf(buf, " WHERE %s", idxInfo.ConditionExprString)
