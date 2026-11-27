@@ -409,6 +409,7 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chun
 		if b.tp.GetType() == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
 			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
+			times[i].SetType(mysql.TypeDate)
 		}
 	}
 	return nil
