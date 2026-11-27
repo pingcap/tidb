@@ -26,8 +26,7 @@
 
 
 use tidb_ast::{ColumnOrUserVar, LoadDataOnDuplicate, LoadDataStmt};
-use tidb_datatype::{Datum, FieldTypeCode};
-use tidb_charset::Collation;
+use tidb_datatype::Datum;
 
 use crate::{SessionExtendedInfoSchema, DriverError, TableEntry};
 use tidb_lightning_mydump::{CharsetConvertor, CsvConfig, CsvError, CsvParser};
@@ -483,6 +482,11 @@ pub fn run_load_data(
         chunk
     };
     let user_vars = ctx.user_vars().cloned();
+    // Go `InsertValues.getColDefaultValue` over the table's columns: a
+    // non-expression default is computed once and reused for later rows.
+    let default_meta: Vec<crate::driver::ColumnDefaultMeta> =
+        columns.iter().map(crate::driver::kv_column_metadata).collect();
+    let mut default_cache: Vec<Option<Datum>> = vec![None; columns.len()];
     let field_count = prepared.field_mappings.len();
     let restrictive = prepared.restrictive;
     let mut row_count: usize = 0;
@@ -534,22 +538,32 @@ pub fn run_load_data(
                 FieldMapping::Column { offset } => {
                     let column = &columns[*offset];
                     match value {
-                        // A missing NOT NULL time column is the current time.
-                        None if matches!(
-                            column.read().field_type.code(),
-                            FieldTypeCode::Date
-                                | FieldTypeCode::Datetime
-                                | FieldTypeCode::Timestamp
-                        ) && column
-                            .read().field_type
-                            .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) =>
-                        {
-                            row.push(Datum::new_collation_string_datum(
-                                chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-                                Collation::Utf8Mb4Bin,
-                            ));
+                        // Missing fields use schema defaults; explicit NULL
+                        // and empty fields do not.
+                        None if column.generated.is_some() => row.push(Datum::Null),
+                        None => {
+                            let value = match &default_cache[*offset] {
+                                Some(value) => value.clone(),
+                                None => {
+                                    let value = crate::driver::materialize_column_default(
+                                        &default_meta[*offset],
+                                        crate::driver::DefaultUse::Insert,
+                                        ctx,
+                                        eval_chunk.get_row(0),
+                                    )?;
+                                    let is_expr = matches!(
+                                        &default_meta[*offset].default_value,
+                                        Some(tidb_table::column_default::ColumnDefault::Computed(computed))
+                                            if computed.is_expr()
+                                    );
+                                    if !is_expr {
+                                        default_cache[*offset] = Some(value.clone());
+                                    }
+                                    value
+                                }
+                            };
+                            row.push(value);
                         }
-                        None => row.push(Datum::Null),
                         // A generated column's value is never the file's.
                         Some(_) if column.generated.is_some() => row.push(Datum::Null),
                         Some(value) => row.push(value.clone()),

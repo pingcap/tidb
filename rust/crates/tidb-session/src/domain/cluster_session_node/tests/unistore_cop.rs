@@ -7143,3 +7143,61 @@ fn statement_context_answers_executor_session_vars() {
     );
 }
 
+
+/// Go `TestLoadDataMissingDefaults` (9919555d3a5): a field missing from a
+/// LOAD DATA row takes its column's default (a constant, an expression
+/// evaluated per row, CURRENT_TIMESTAMP, or a NOT NULL column's zero value),
+/// while an explicit NULL or empty field stays what it is.
+#[test]
+fn test_load_data_missing_defaults() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1937)).unwrap();
+    let text = |session: &mut Session, sql: &str| displayed(rows(session, sql));
+    let load = |session: &mut Session, data: &[u8], columns: &str| {
+        let sql = format!("load data local infile '/tmp/missing_defaults.csv' into table missing_defaults {columns}");
+        let stmt = session.parse_at_statement_boundary(&sql).unwrap();
+        assert!(session.node_conn().execute_stmt(&sql, &stmt).unwrap().is_none(), "{sql}");
+        assert!(session.local_infile_request().is_some(), "{sql} asks for the client's file");
+        session.node_conn().finish_local_infile(data).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    };
+    for sql in [
+        "CREATE DATABASE IF NOT EXISTS test",
+        "USE test",
+        "set time_zone='+00:00'",
+        "create table missing_defaults (id int primary key, a int not null default 100, \
+         b varchar(20) not null default 'fallback', d date not null default '2000-01-01', \
+         ts timestamp not null default '2000-01-01 01:02:03', n int, nullable_default int default 7, \
+         expr_default varchar(36) default (uuid()), generated_value int as (a+1), \
+         current_ts timestamp not null default current_timestamp)",
+    ] {
+        rows(&mut session, sql);
+    }
+    load(&mut session, b"1\n2\n", "");
+    assert_eq!(
+        text(&mut session, "select id,a,b,d,ts,n,nullable_default,length(expr_default),generated_value from missing_defaults order by id"),
+        [
+            ["1", "100", "fallback", "2000-01-01", "2000-01-01 01:02:03", "NULL", "7", "36", "101"],
+            ["2", "100", "fallback", "2000-01-01", "2000-01-01 01:02:03", "NULL", "7", "36", "101"],
+        ]
+    );
+    assert_eq!(text(&mut session, "select count(distinct expr_default) from missing_defaults"), [["2"]]);
+    assert_eq!(
+        text(&mut session, "select count(*) from missing_defaults where current_ts between current_timestamp - interval 1 minute and current_timestamp"),
+        [["2"]]
+    );
+    // A mapped missing field gets its own default, independently of
+    // physical column order.
+    rows(&mut session, "set @missing=123");
+    load(&mut session, b"3\n", "(id,@missing,b,a) set n=ifnull(@missing,9)");
+    assert_eq!(
+        text(&mut session, "select a,b,n,generated_value from missing_defaults where id=3"),
+        [["100", "fallback", "9", "101"]]
+    );
+    // Explicit NULL and empty input remain different from an absent field.
+    load(&mut session, b"4\t\\N\t\n", "(id,nullable_default,b)");
+    assert_eq!(text(&mut session, "select nullable_default,b='' from missing_defaults where id=4"), [["NULL", "1"]]);
+    rows(&mut session, "drop table missing_defaults");
+    rows(&mut session, "create table missing_defaults (id int primary key, a int not null, b varchar(10) not null, d date not null, seq int auto_increment unique)");
+    load(&mut session, b"1\n", "");
+    assert_eq!(text(&mut session, "select id,a,b='',d,seq from missing_defaults"), [["1", "0", "1", "0000-00-00", "1"]]);
+}
