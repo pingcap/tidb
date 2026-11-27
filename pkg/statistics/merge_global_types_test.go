@@ -188,6 +188,13 @@ func typeCases() []typeCase {
 		typeCase{"duration", ftOf(mysql.TypeDuration),
 			types.NewDurationDatum(types.Duration{Duration: time.Hour}),
 			types.NewDurationDatum(types.Duration{Duration: 5 * time.Hour})},
+		// JSON stats are opt-in (JSON is in the default
+		// tidb_analyze_skip_column_types). The key carries the binary
+		// form, numbers little-endian, so 256 encodes before 1 while it
+		// compares after it.
+		typeCase{"json", ftOf(mysql.TypeJSON),
+			types.NewJSONDatum(types.CreateBinaryJSON(int64(1))),
+			types.NewJSONDatum(types.CreateBinaryJSON(int64(256)))},
 	)
 }
 
@@ -369,6 +376,45 @@ func TestMergeAggregatesBothValuesAcrossTypes(t *testing.T) {
 	}
 }
 
+// TestMergeJSONNonTransitiveOrder: JSON comparison is not transitive,
+// an integer and a float within 1e-8 compare equal while two floats
+// compare exactly, so [0,1] < [-5e-9,2] < [5e-9,0] < [0,1]. A value in
+// several partitions' TopN must still take one global TopN slot.
+func TestMergeJSONNonTransitiveOrder(t *testing.T) {
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	killer := sqlkiller.SQLKiller{}
+	ft := ftOf(mysql.TypeJSON)
+	enc := func(s string) []byte {
+		bj, err := types.ParseBinaryJSONFromString(s)
+		require.NoError(t, err)
+		e, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewJSONDatum(bj))
+		require.NoError(t, err)
+		return e
+	}
+	a, b, c := enc("[0,1]"), enc("[-5e-9,2]"), enc("[5e-9,0]")
+	// One TopN entry per partition, in the order a, b, c, a: every
+	// adjacent pair is already in order, so a sort can leave the two a
+	// entries apart.
+	keys := [][]byte{a, b, c, a}
+	topNs := make([]*statistics.TopN, 0, len(keys))
+	hists := make([]*statistics.Histogram, 0, len(keys))
+	for _, key := range keys {
+		topN := statistics.NewTopN(1)
+		topN.AppendTopN(key, 10)
+		topNs = append(topNs, topN)
+		hists = append(hists, statistics.NewHistogram(1, 0, 0, 0, ft, chunk.InitialCapacity, 0))
+	}
+	gTopN, _, err := statistics.MergePartTopNAndHistToGlobal(sc, &killer, topNs, hists, 4, 2, false)
+	require.NoError(t, err)
+	require.NotNil(t, gTopN)
+	byKey := map[string]uint64{}
+	for _, m := range gTopN.TopN {
+		byKey[string(m.Encoded)] += m.Count
+	}
+	require.Lenf(t, gTopN.TopN, len(byKey), "no value may occupy two TopN slots; got %v", gTopN.TopN)
+	require.Equal(t, uint64(20), byKey[string(a)])
+}
+
 // TestTopNOrderingMatchesDatumOrder pins the type list inside
 // sortTopNEntries against what the encodings actually do.
 //
@@ -382,7 +428,7 @@ func TestTopNOrderingMatchesDatumOrder(t *testing.T) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	// The types sortTopNEntries orders by decoded value.
 	orderedByDatum := map[byte]bool{
-		mysql.TypeEnum: true, mysql.TypeSet: true, mysql.TypeBit: true,
+		mysql.TypeEnum: true, mysql.TypeSet: true, mysql.TypeBit: true, mysql.TypeJSON: true,
 	}
 	diverges := map[byte]string{} // type -> the case that showed it
 
@@ -441,15 +487,14 @@ func TestTypeMatrixCoversAllColumnTypes(t *testing.T) {
 		covered[tc.ft.GetType()] = true
 	}
 	// Types a histogram never carries. Checked by hand when written:
-	// ANALYZE produces no stats_histograms row for a JSON or a vector
-	// column, and a geometry column cannot be created at all. This is a
-	// snapshot, so an entry here is a claim to re-check if that type
-	// ever gains support.
+	// ANALYZE produces no stats_histograms row for a vector column, and
+	// a geometry column cannot be created at all. This is a snapshot, so
+	// an entry here is a claim to re-check if that type ever gains
+	// support.
 	outOfScope := map[byte]string{
 		mysql.TypeUnspecified:       "not a storable column type",
 		mysql.TypeNull:              "the NULL literal's type, it has no values",
 		mysql.TypeGeometry:          "not supported by TiDB",
-		mysql.TypeJSON:              "ANALYZE collects no statistics for JSON columns",
 		mysql.TypeTiDBVectorFloat32: "vector columns carry no histogram",
 	}
 	for tp := range 256 {
