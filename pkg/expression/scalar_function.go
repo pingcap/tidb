@@ -712,8 +712,7 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 		// Cast is a special case. The RetType should also be considered as an argument.
 		// Please see `newFunctionImpl()` for detail.
 		if sf.FuncName.L == ast.Cast {
-			evalTp := sf.RetType.EvalType()
-			sf.canonicalhashcode = append(sf.canonicalhashcode, byte(evalTp))
+			sf.canonicalhashcode = appendCastRetTypeHashCode(sf.canonicalhashcode, sf.RetType)
 		}
 	}
 }
@@ -774,8 +773,7 @@ func ReHashCode(sf *ScalarFunction) {
 	// Cast is a special case. The RetType should also be considered as an argument.
 	// Please see `newFunctionImpl()` for detail.
 	if sf.FuncName.L == ast.Cast {
-		evalTp := sf.RetType.EvalType()
-		sf.hashcode = append(sf.hashcode, byte(evalTp))
+		sf.hashcode = appendCastRetTypeHashCode(sf.hashcode, sf.RetType)
 	}
 	if sf.FuncName.L == ast.Grouping {
 		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(sf.Function.(*BuiltinGroupingImplSig).GetGroupingMode()))
@@ -794,6 +792,15 @@ func ReHashCode(sf *ScalarFunction) {
 			}
 		}
 	}
+}
+
+func appendCastRetTypeHashCode(b []byte, tp *types.FieldType) []byte {
+	b = append(b, byte(tp.EvalType()), tp.GetType())
+	b = codec.EncodeInt(b, int64(tp.GetFlen()))
+	b = codec.EncodeInt(b, int64(tp.GetDecimal()))
+	b = codec.EncodeUint(b, uint64(tp.GetFlag()&mysql.UnsignedFlag))
+	b = codec.EncodeCompactBytes(b, hack.Slice(tp.GetCharset()))
+	return codec.EncodeCompactBytes(b, hack.Slice(tp.GetCollate()))
 }
 
 // ResolveIndices implements Expression interface.

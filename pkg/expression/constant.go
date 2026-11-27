@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -615,6 +616,9 @@ func (c *Constant) getHashCode(canonical bool) []byte {
 	intest.Assert(c.DeferredExpr == nil && c.ParamMarker == nil)
 	c.hashcode = append(c.hashcode, constantFlag)
 	c.hashcode = codec.HashCode(c.hashcode, c.Value)
+	if c.RetType != nil && c.RetType.EvalType() == types.ETString && c.Coercibility() == CoercibilityExplicit {
+		c.hashcode = codec.EncodeCompactBytes(c.hashcode, hack.Slice(c.RetType.GetCollate()))
+	}
 	return c.hashcode
 }
 
