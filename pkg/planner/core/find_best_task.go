@@ -1163,10 +1163,9 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	}
 
 	// Match SortItems physical property.
-	all, _ := prop.AllSameOrder()
-	// When the prop is empty or `all` is false, `matchProperty` is better to be `PropNotMatched` because
-	// it needs not to keep order for index scan.
-	if prop.IsSortItemEmpty() || !all {
+	// Mixed-direction sort items are handled by the per-item loop below, which
+	// decides whether a forward or a reverse scan satisfies them.
+	if prop.IsSortItemEmpty() {
 		return property.PropNotMatched, nil
 	}
 
@@ -1237,6 +1236,12 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	matchedCols := make([]*expression.Column, 0, len(prop.SortItems))
 	groupByColIdxs := make([]int, 0)
 	colIdx := 0
+	// A matched (sortItem, idxCol) pair needs a reverse scan iff
+	// sortItem.Desc != idxCol.Desc. All pairs must agree, otherwise no single
+	// scan direction satisfies the property. This lets INDEX(a, b DESC) serve
+	// ORDER BY a, b DESC with a forward scan.
+	var matchedScanDesc bool
+	matchedScanDescSet := false
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	for _, sortItem := range prop.SortItems {
 		found := false
@@ -1253,6 +1258,18 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 				(sortItem.Col.EqualColumn(idxCol) ||
 					mysql.HasNotNullFlag(sortItem.Col.RetType.GetFlag()) == mysql.HasNotNullFlag(idxCol.RetType.GetFlag()) &&
 						sortItem.Col.EqualByExprAndID(evalCtx, idxCol)) {
+				// Columns past len(path.Index.Columns) are the appended
+				// clustered-PK suffix, which DDL guarantees to be ascending.
+				thisIdxDesc := false
+				if path.Index != nil && colIdx < len(path.Index.Columns) {
+					thisIdxDesc = path.Index.Columns[colIdx].Desc
+				}
+				thisScanDesc := sortItem.Desc != thisIdxDesc
+				if matchedScanDescSet && thisScanDesc != matchedScanDesc {
+					return property.PropNotMatched, nil
+				}
+				matchedScanDesc = thisScanDesc
+				matchedScanDescSet = true
 				found = true
 				matchedCols = append(matchedCols, idxCols[colIdx])
 				colIdx++
@@ -1315,9 +1332,11 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		if len(groups) > 0 {
 			path.GroupedRanges = groups
 			path.GroupByColIdxs = groupByColIdxs
+			path.MatchedScanDesc = matchedScanDesc
 			return property.PropMatchedNeedMergeSort, matchedCols
 		}
 	}
+	path.MatchedScanDesc = matchedScanDesc
 	return property.PropMatched, matchedCols
 }
 
@@ -3485,7 +3504,8 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		}
 		if !prop.IsSortItemEmpty() {
 			batchPointGetPlan.KeepOrder = true
-			batchPointGetPlan.Desc = prop.SortItems[0].Desc
+			// MatchedScanDesc already accounts for descending index columns.
+			batchPointGetPlan.Desc = candidate.path.MatchedScanDesc
 		}
 		if candidate.path.IsSingleScan {
 			batchPointGetPlan.SetAccessCols(candidate.path.IdxCols)

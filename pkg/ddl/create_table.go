@@ -906,6 +906,11 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
 func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+	// Fix the tidb_enable_descending_index decision at submission time; see
+	// ApplyDescGateToIndexParts.
+	for _, c := range s.Constraints {
+		ApplyDescGateToIndexParts(c.Keys)
+	}
 	colDefs := s.Cols
 	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(0, s.Options, ctx.GetDefaultCollationForUTF8MB4())
 	if err != nil {
@@ -1470,6 +1475,14 @@ func BuildTableInfo(
 			isSingleIntPK := isSingleIntPKFromTableInfo(constr, tbInfo)
 
 			if ShouldBuildClusteredIndex(ctx.GetClusteredIndexDefMode(), constr.Option, isSingleIntPK) {
+				// A single-int clustered PK becomes the row handle without
+				// going through BuildIndexInfo, so DESC is rejected here too.
+				for _, key := range constr.Keys {
+					if key.Desc {
+						return nil, errors.Errorf(
+							"DESC is not supported on the columns of a clustered PRIMARY KEY; either drop the DESC keyword or declare the primary key as NONCLUSTERED")
+					}
+				}
 				if isSingleIntPK {
 					tbInfo.PKIsHandle = true
 				} else {

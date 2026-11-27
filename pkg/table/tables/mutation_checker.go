@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -282,6 +283,17 @@ func checkIndexKeys(
 		loc := tc.Location()
 		for i, v := range decodedIndexValues {
 			fieldType := t.Columns[indexInfo.Columns[i].Offset].FieldType.ArrayType()
+			// DecodeIndexKV may return a DESC column's bytes either from the
+			// key (complemented) or from the restored value (not complemented),
+			// so detect the complemented flag byte instead of trusting
+			// IndexColumn.Desc alone.
+			if indexInfo.Columns[i].Desc && len(v) > 0 && codec.IsDescFlag(v[0]) {
+				cp := make([]byte, len(v))
+				for j := range v {
+					cp[j] = v[j] ^ 0xFF
+				}
+				v = cp
+			}
 			datum, err := tablecodec.DecodeColumnValue(v, fieldType, loc)
 			if err != nil {
 				return errors.Trace(err)
@@ -365,7 +377,9 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 					}
 				}
 			} else {
-				_, m.indexID, _, err = tablecodec.DecodeIndexKey(m.key)
+				// Only the index ID is needed; DecodeIndexKey would also parse
+				// the column values and fail on complemented DESC bytes.
+				_, m.indexID, _, err = tablecodec.DecodeKeyHead(m.key)
 				if err != nil {
 					err = errors.Trace(err)
 				}

@@ -4653,7 +4653,8 @@ func (builder *dataReaderBuilder) buildPartitionedTableReaderKVRangesForIndexJoi
 		}
 		if canLocateByKey {
 			for pid, contents := range contentsByPID {
-				tmp, err := buildKvRangesForIndexJoin(dctx, rctx, pid, -1, contents, indexRanges, keyOff2IdxOff, cwc, kvRangeMemTracker, interruptSignal)
+				// Clustered PK columns are always ascending.
+				tmp, err := buildKvRangesForIndexJoin(dctx, rctx, pid, -1, nil, contents, indexRanges, keyOff2IdxOff, cwc, kvRangeMemTracker, interruptSignal)
 				if err != nil {
 					return nil, err
 				}
@@ -4661,7 +4662,7 @@ func (builder *dataReaderBuilder) buildPartitionedTableReaderKVRangesForIndexJoi
 			}
 		} else {
 			for _, p := range usedPartitionList {
-				tmp, err := buildKvRangesForIndexJoin(dctx, rctx, p.GetPhysicalID(), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, kvRangeMemTracker, interruptSignal)
+				tmp, err := buildKvRangesForIndexJoin(dctx, rctx, p.GetPhysicalID(), -1, nil, lookUpContents, indexRanges, keyOff2IdxOff, cwc, kvRangeMemTracker, interruptSignal)
 				if err != nil {
 					return nil, err
 				}
@@ -5630,7 +5631,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		if v.IsCommonHandle {
-			kvRanges, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+			kvRanges, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), -1, nil, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 			if err != nil {
 				return nil, err
 			}
@@ -5804,7 +5805,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	}
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		kvRanges, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memoryTracker, interruptSignal)
+		kvRanges, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, e.physicalTableID, e.index.ID, indexColDescFlags(e.index), lookUpContents, indexRanges, keyOff2IdxOff, cwc, memoryTracker, interruptSignal)
 		if err != nil {
 			return nil, err
 		}
@@ -5861,7 +5862,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		kvRange, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+		kvRange, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), e.index.ID, indexColDescFlags(e.index), lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
 		}
@@ -5994,7 +5995,8 @@ func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*jo
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
-func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.RangerContext, tableID, indexID int64, lookUpContents []*join.IndexJoinLookUpContent,
+// desc holds the index's per-column descending flags; nil for ascending-only indexes.
+func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.RangerContext, tableID, indexID int64, desc []bool, lookUpContents []*join.IndexJoinLookUpContent,
 	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value,
 ) (_ []kv.KeyRange, err error) {
 	kvRanges := make([]kv.KeyRange, 0, len(ranges)*len(lookUpContents))
@@ -6017,7 +6019,7 @@ func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.
 			if indexID == -1 {
 				tmpKvRanges, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{tableID}, ranges)
 			} else {
-				tmpKvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, tableID, indexID, ranges, memTracker, interruptSignal)
+				tmpKvRanges, err = distsql.IndexRangesToKVRangesWithDescAndInterruptSignal(dctx, tableID, indexID, desc, ranges, memTracker, interruptSignal)
 			}
 			if err != nil {
 				return nil, err
@@ -6065,8 +6067,21 @@ func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.
 		tmpKeyRanges, err := distsql.CommonHandleRangesToKVRanges(dctx, []int64{tableID}, tmpDatumRanges)
 		return tmpKeyRanges.FirstPartitionRange(), err
 	}
-	tmpKeyRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, tableID, indexID, tmpDatumRanges, memTracker, interruptSignal)
+	tmpKeyRanges, err := distsql.IndexRangesToKVRangesWithDescAndInterruptSignal(dctx, tableID, indexID, desc, tmpDatumRanges, memTracker, interruptSignal)
 	return tmpKeyRanges.FirstPartitionRange(), err
+}
+
+// indexColDescFlags returns the per-column descending flags of idxInfo, or nil
+// when no column is descending so encoders stay on the ascending fast path.
+func indexColDescFlags(idxInfo *model.IndexInfo) []bool {
+	if idxInfo == nil || !idxInfo.HasDescColumn() {
+		return nil
+	}
+	desc := make([]bool, len(idxInfo.Columns))
+	for i, c := range idxInfo.Columns {
+		desc[i] = c.Desc
+	}
+	return desc
 }
 
 func (b *executorBuilder) buildWindow(v *physicalop.PhysicalWindow) exec.Executor {

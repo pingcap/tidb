@@ -1349,6 +1349,23 @@ func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.Tabl
 	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
 }
 
+// checkAllIndicesServable returns an error if tableInfo has a writable index
+// whose metadata version this TiDB binary does not understand. DML builders
+// call it to fail fast before the mutation path would mis-maintain the index.
+// "Writable" mirrors tables.IsIndexWritable: every state except DeleteOnly
+// and DeleteReorganization, since mid-DDL WriteOnly indexes are maintained too.
+func checkAllIndicesServable(tableInfo *model.TableInfo) error {
+	for _, idx := range tableInfo.Indices {
+		if idx.State == model.StateDeleteOnly || idx.State == model.StateDeleteReorganization {
+			continue
+		}
+		if !idx.IsServable() {
+			return idx.UnservableErr(tableInfo.Name.O)
+		}
+	}
+	return nil
+}
+
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
@@ -1423,6 +1440,13 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				if latestIndex, ok := latestIndexes[index.ID]; !ok || latestIndex.State != model.StatePublic {
 					continue
 				}
+			}
+			// Refuse to plan against an index with a newer metadata version
+			// than this binary understands. This runs after the latest-index
+			// reconciliation above so a dropped or non-public snapshot index
+			// is skipped first.
+			if !index.IsServable() {
+				return nil, index.UnservableErr(tblName.O)
 			}
 			if index.InvertedInfo != nil {
 				invertedIndexes[index.Name.L] = struct{}{}
@@ -2605,6 +2629,19 @@ func getModifiedIndexesInfoForAnalyze(
 	return idxsInfo, independentIdxsInfo, specialGlobalIdxsInfo
 }
 
+// skipDescIndexAnalyzeTask reports whether idx must be left out of the
+// index-analyze pushdown, appending a warning if so. TiKV builds histogram
+// bounds from raw index keys and cannot order complemented DESC bytes; such
+// indexes get their stats from row-value sampling instead.
+func (b *PlanBuilder) skipDescIndexAnalyzeTask(idx *model.IndexInfo) bool {
+	if !idx.HasDescColumn() {
+		return false
+	}
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+		"analyzing an index with descending columns is not supported, skip %s", idx.Name.L))
+	return true
+}
+
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
 func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *resolve.TableNameW, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo, skipCol []*model.ColumnInfo) {
 	// For auto-analyze, it uses @@global.tidb_analyze_skip_column_types to obtain the skipTypes list.
@@ -2820,6 +2857,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			}
 			analyzePlan.ColTasks = append(analyzePlan.ColTasks, newTask)
 			for _, indexInfo := range independentIndexes {
+				if b.skipDescIndexAnalyzeTask(indexInfo) {
+					continue
+				}
 				newIdxTask := AnalyzeIndexTask{
 					IndexInfo:   indexInfo,
 					TblInfo:     tbl.TableInfo,
@@ -2835,6 +2875,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			// When `needAnalyzeCols == true`, non-global indexes already covered by previous loop,
 			// deal with global index here.
 			for _, indexInfo := range specialGlobalIndexes {
+				if b.skipDescIndexAnalyzeTask(indexInfo) {
+					continue
+				}
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
 			}
 		} else {
@@ -2842,6 +2885,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			for _, idxName := range as.IndexNames {
 				idx := tbl.TableInfo.FindIndexByName(idxName.L)
 				if idx == nil || !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
+					continue
+				}
+				if b.skipDescIndexAnalyzeTask(idx) {
 					continue
 				}
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(idx, as, tbl.TableInfo, nil, nil, version)...)
@@ -4342,6 +4388,14 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 		return nil, err
 	}
+	// Refuse INSERT/REPLACE if any of the table's indexes uses a metadata
+	// version newer than this TiDB binary understands — maintaining such an
+	// index would risk wrong rows or mismatched encoding (pingcap/tidb#2519).
+	// SELECT/UPDATE/DELETE plans are guarded by getPossibleAccessPaths, but
+	// INSERT VALUES never enumerates access paths, so check explicitly here.
+	if err := checkAllIndicesServable(tableInfo); err != nil {
+		return nil, err
+	}
 	op := "INSERT"
 	if insert.IsReplace {
 		op = "REPLACE"
@@ -4760,6 +4814,14 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		options = append(options, &loadDataOpt)
 	}
 	tnW := b.resolveCtx.GetTableName(ld.Table)
+	// Same servability fence as INSERT (pingcap/tidb#2519): LOAD DATA writes
+	// every secondary index of the target table, so an unservable index
+	// would be silently mis-maintained without this guard.
+	if tnW != nil && tnW.TableInfo != nil {
+		if err := checkAllIndicesServable(tnW.TableInfo); err != nil {
+			return nil, err
+		}
+	}
 	if err := CheckMViewUpdatable(b.ctx.GetSessionVars(), tnW.TableInfo, tnW.TableInfo.Name.O, "LOAD"); err != nil {
 		return nil, err
 	}
@@ -5070,6 +5132,15 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		}
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.FastGenByArgs(db, tableInfo.Name.O)
+	}
+	// Same servability fence as INSERT (pingcap/tidb#2519): IMPORT INTO
+	// writes every secondary index of the target table. Run it against
+	// the same latest-schema snapshot the rest of buildImportInto uses
+	// — `tnW.TableInfo` can be stale here, so checking it would let an
+	// older TiDB miss a writable newer-format index that exists only in
+	// the latest schema.
+	if err := checkAllIndicesServable(tableInPlan.Meta()); err != nil {
+		return nil, err
 	}
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), ast.NewCIStr(""), tableInfo)
 	if err != nil {

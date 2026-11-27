@@ -1081,6 +1081,11 @@ const (
 	// TODO(crazycs520): remove this after foreign key GA.
 	TiDBEnableForeignKey = "tidb_enable_foreign_key"
 
+	// TiDBEnableDescendingIndex controls whether CREATE INDEX ... (col DESC) is
+	// honored. When off (the default), DESC is silently ignored as in MySQL 5.7;
+	// when on, the order is persisted and used for key encoding.
+	TiDBEnableDescendingIndex = "tidb_enable_descending_index"
+
 	// TiDBForeignKeyCheckInSharedLock indicates whether to use shared lock for foreign key check.
 	TiDBForeignKeyCheckInSharedLock = "tidb_foreign_key_check_in_shared_lock"
 
@@ -1736,6 +1741,7 @@ const (
 	DefTiDBEnableCollectExecutionInfo       = true
 	DefTiDBAllowAutoRandExplicitInsert      = false
 	DefTiDBEnableClusteredIndex             = ClusteredIndexDefModeOn
+	DefTiDBEnableDescendingIndex            = false
 	DefTiDBRedactLog                        = On
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
@@ -2097,8 +2103,11 @@ var (
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
-	EnableForeignKey    = atomic.NewBool(true)
-	EnableRCReadCheckTS = atomic.NewBool(false)
+	EnableForeignKey = atomic.NewBool(true)
+	// EnableDescendingIndex gates persisting the DESC flag on index columns at
+	// CREATE INDEX / CREATE TABLE time. See TiDBEnableDescendingIndex.
+	EnableDescendingIndex = atomic.NewBool(DefTiDBEnableDescendingIndex)
+	EnableRCReadCheckTS   = atomic.NewBool(false)
 	// EnableRowLevelChecksum indicates whether to append checksum to row values.
 	EnableRowLevelChecksum         = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
 	LowResolutionTSOUpdateInterval = atomic.NewUint32(DefTiDBLowResolutionTSOUpdateInterval)

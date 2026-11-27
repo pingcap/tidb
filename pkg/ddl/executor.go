@@ -29,14 +29,17 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/bdr"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
@@ -81,9 +84,18 @@ import (
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
+
+// MinTiKVVersionForDescIndex is the lowest TiKV version whose coprocessor
+// decodes DESC-encoded index keys. CREATE INDEX refuses to persist a DESC
+// column unless every TiKV store is at least this version.
+//
+// TODO(release): bump in lockstep with the TiKV release that ships the
+// DESC-aware decoder (tikv/tikv#19558).
+const MinTiKVVersionForDescIndex = "9.0.0"
 
 const (
 	expressionIndexPrefix = "_V$"
@@ -1241,6 +1253,18 @@ func (e *executor) createTableWithInfoJob(
 			return nil, err
 		default:
 			return nil, err
+		}
+	}
+
+	// Gate here so CreateTableWithInfo and BatchCreateTableWithInfo are
+	// covered too. Runs after the OnExistIgnore short-circuit so a no-op
+	// CREATE TABLE IF NOT EXISTS makes no PD round-trip.
+	for _, idx := range tbInfo.Indices {
+		if idx.HasDescColumn() {
+			if err = checkTiKVSupportsDescIndex(ctx); err != nil {
+				return nil, errors.Trace(err)
+			}
+			break
 		}
 	}
 
@@ -5643,6 +5667,8 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		return infoschema.ErrMultiplePriKey
 	}
 
+	ApplyDescGateToIndexParts(indexPartSpecifications)
+
 	// Primary keys cannot include expression index parts. A primary key requires the generated column to be stored,
 	// but expression index parts are implemented as virtual generated columns, not stored generated columns.
 	for _, idxPart := range indexPartSpecifications {
@@ -5661,6 +5687,11 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if hasDescIndexColumn(indexColumns) {
+		if err := checkTiKVSupportsDescIndex(ctx); err != nil {
+			return err
+		}
 	}
 	if _, err = CheckPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
 		return err
@@ -5799,6 +5830,11 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		return errors.Trace(err)
 	}
 
+	// With the gate off this clears Desc, keeping the historical "DESC is
+	// silently dropped" behaviour for columnar indexes; with it on,
+	// buildIndexColumns rejects columnar DESC explicitly.
+	ApplyDescGateToIndexParts(indexPartSpecifications)
+
 	var columnarIndexType model.ColumnarIndexType
 	switch indexOption.Tp {
 	case ast.IndexTypeInverted:
@@ -5915,6 +5951,92 @@ func (e *executor) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt
 		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
 }
 
+// hasDescIndexColumn reports whether any built IndexColumn carries Desc=true.
+func hasDescIndexColumn(cols []*model.IndexColumn) bool {
+	for _, c := range cols {
+		if c.Desc {
+			return true
+		}
+	}
+	return false
+}
+
+// checkTiKVSupportsDescIndex returns an error if any TiKV store runs a
+// version below MinTiKVVersionForDescIndex. Backends that do not implement
+// tikv.Storage skip the check: their unistore coprocessor already decodes
+// DESC keys. MockStore-backed tests do reach the PD lookup but report empty
+// store versions, which is tolerated only in intest builds.
+func checkTiKVSupportsDescIndex(ctx sessionctx.Context) error {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil
+	}
+	pdCli := tikvStore.GetRegionCache().PDClient()
+	if pdCli == nil {
+		return nil
+	}
+	// Bound the PD round-trip so an unreachable PD cannot hang DDL.
+	pdCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stores, err := pdCli.GetAllStores(pdCtx)
+	if err != nil {
+		return errors.Annotate(err, "checking TiKV cluster version for descending index")
+	}
+	return checkStoresMeetDescIndexMinVersion(stores, MinTiKVVersionForDescIndex, intest.InTest)
+}
+
+// checkStoresMeetDescIndexMinVersion is the PD-free core of
+// checkTiKVSupportsDescIndex. tolerateMissingVersion accepts stores with an
+// empty version string (mock fixtures); unparsable versions always fail.
+func checkStoresMeetDescIndexMinVersion(stores []*metapb.Store, minVersion string, tolerateMissingVersion bool) error {
+	required, err := semver.NewVersion(minVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, s := range stores {
+		if s.GetState() == metapb.StoreState_Tombstone {
+			continue
+		}
+		if storeIsTiFlash(s) {
+			continue
+		}
+		if s.Version == "" {
+			if tolerateMissingVersion {
+				continue
+			}
+			return errors.Errorf(
+				"cannot create descending-order index: TiKV store %d at %s has not reported a version yet; retry after the cluster has reported its store versions",
+				s.Id, s.Address)
+		}
+		actual, parseErr := semver.NewVersion(strings.TrimPrefix(s.Version, "v"))
+		if parseErr != nil {
+			return errors.Annotatef(parseErr,
+				"cannot create descending-order index: TiKV store %d at %s reports an unparsable version %q",
+				s.Id, s.Address, s.Version)
+		}
+		// Compare Major.Minor.Patch only: strict semver orders 9.0.0-beta.2
+		// below 9.0.0, but a pre-release cut from the feature's branch does
+		// carry the decoder.
+		base := *actual
+		base.PreRelease = ""
+		if base.LessThan(*required) {
+			return errors.Errorf(
+				"cannot create descending-order index: TiKV store %d at %s reports version %s, which is below the minimum %s required by this feature; upgrade TiKV before retrying",
+				s.Id, s.Address, s.Version, minVersion)
+		}
+	}
+	return nil
+}
+
+func storeIsTiFlash(store *metapb.Store) bool {
+	for _, label := range store.Labels {
+		if label.Key == placement.EngineLabelKey && label.Value == placement.EngineLabelTiFlash {
+			return true
+		}
+	}
+	return false
+}
+
 // addHypoIndexIntoCtx adds this index as a hypo-index into this ctx.
 func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName ast.CIStr, indexInfo *model.IndexInfo, hiddenCols []*model.ColumnInfo) error {
 	sctx := ctx.GetSessionVars()
@@ -5966,6 +6088,8 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 
+	ApplyDescGateToIndexParts(indexPartSpecifications)
+
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
 	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeNA, ifNotExists)
 	if err != nil {
@@ -5995,6 +6119,19 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// Skip the cluster-version preflight for hypothetical indexes
+	// (CREATE HYPO INDEX). Hypo indexes are planner-only — they never
+	// produce KV mutations and never reach a TiKV coprocessor — so an
+	// older or unhealthy TiKV cluster has no bearing on whether the
+	// index can be defined. Without this guard, `CREATE HYPO INDEX
+	// ... DESC` would either fail on an out-of-date cluster or block
+	// for the PD round-trip even though it is a no-op on storage.
+	if hasDescIndexColumn(indexColumns) && !isHypo {
+		if err := checkTiKVSupportsDescIndex(ctx); err != nil {
+			return err
+		}
 	}
 
 	if err = checkCreateGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns, unique, indexOption != nil && indexOption.Global); err != nil {

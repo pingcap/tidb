@@ -113,6 +113,176 @@ func estimateValuesSize(typeCtx types.Context, vals []types.Datum) (int, error) 
 	return size, nil
 }
 
+func TestEncodeKeyWithDescRoundTrip(t *testing.T) {
+	// nil desc must match EncodeKey byte for byte.
+	typeCtx := types.DefaultStmtNoWarningContext.WithLocation(time.Local)
+	vals := types.MakeDatums(int64(-5), uint64(42), float64(3.14), []byte("hello"), "world", nil)
+
+	asc, err := EncodeKey(typeCtx.Location(), nil, vals...)
+	require.NoError(t, err)
+	same, err := EncodeKeyWithDesc(typeCtx.Location(), nil, nil, vals...)
+	require.NoError(t, err)
+	require.Equal(t, asc, same, "nil desc slice must match EncodeKey byte-for-byte")
+
+	// All columns descending: decode one datum at a time and compare.
+	desc := []bool{true, true, true, true, true, true}
+	allDesc, err := EncodeKeyWithDesc(typeCtx.Location(), nil, desc, vals...)
+	require.NoError(t, err)
+	remain := allDesc
+	for i, v := range vals {
+		var got types.Datum
+		remain, got, err = DecodeOneWithDesc(remain, true)
+		require.NoError(t, err, "column %d", i)
+		switch v.Kind() {
+		case types.KindInt64:
+			require.Equal(t, types.KindInt64, got.Kind(), "column %d kind", i)
+			require.Equal(t, v.GetInt64(), got.GetInt64(), "column %d", i)
+		case types.KindUint64:
+			require.Equal(t, types.KindUint64, got.Kind(), "column %d kind", i)
+			require.Equal(t, v.GetUint64(), got.GetUint64(), "column %d", i)
+		case types.KindFloat64:
+			require.Equal(t, types.KindFloat64, got.Kind(), "column %d kind", i)
+			require.Equal(t, v.GetFloat64(), got.GetFloat64(), "column %d", i)
+		case types.KindBytes, types.KindString:
+			// Strings decode as KindBytes, as with DecodeOne.
+			require.Equal(t, types.KindBytes, got.Kind(), "column %d kind", i)
+			require.Equal(t, v.GetBytes(), got.GetBytes(), "column %d", i)
+		case types.KindNull:
+			require.Equal(t, types.KindNull, got.Kind(), "column %d kind", i)
+		}
+	}
+	require.Empty(t, remain, "every byte should have been consumed")
+
+	// Mixed composite (ASC, DESC, ASC): only the DESC column is complemented.
+	mixedVals := types.MakeDatums(int64(7), int64(9), int64(11))
+	mixed, err := EncodeKeyWithDesc(typeCtx.Location(), nil, []bool{false, true, false}, mixedVals...)
+	require.NoError(t, err)
+	prefix, err := EncodeKey(typeCtx.Location(), nil, mixedVals[0])
+	require.NoError(t, err)
+	require.Equal(t, prefix, mixed[:len(prefix)])
+	rem := mixed
+	rem, d0, err := DecodeOneWithDesc(rem, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), d0.GetInt64())
+	rem, d1, err := DecodeOneWithDesc(rem, true)
+	require.NoError(t, err)
+	require.Equal(t, int64(9), d1.GetInt64())
+	rem, d2, err := DecodeOneWithDesc(rem, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(11), d2.GetInt64())
+	require.Empty(t, rem)
+}
+
+func TestEncodeKeyWithDescOrdering(t *testing.T) {
+	// For a DESC column, a < b must give encoded(a) > encoded(b).
+	typeCtx := types.DefaultStmtNoWarningContext.WithLocation(time.Local)
+	enc := func(v int64, desc bool) []byte {
+		b, err := EncodeKeyWithDesc(typeCtx.Location(), nil, []bool{desc}, types.NewIntDatum(v))
+		require.NoError(t, err)
+		return b
+	}
+	require.Less(t, bytes.Compare(enc(-100, false), enc(-1, false)), 0)
+	require.Less(t, bytes.Compare(enc(-1, false), enc(0, false)), 0)
+	require.Less(t, bytes.Compare(enc(0, false), enc(1, false)), 0)
+	require.Less(t, bytes.Compare(enc(1, false), enc(1<<30, false)), 0)
+
+	require.Greater(t, bytes.Compare(enc(-100, true), enc(-1, true)), 0)
+	require.Greater(t, bytes.Compare(enc(-1, true), enc(0, true)), 0)
+	require.Greater(t, bytes.Compare(enc(0, true), enc(1, true)), 0)
+	require.Greater(t, bytes.Compare(enc(1, true), enc(1<<30, true)), 0)
+
+	// NULL sorts after real values on a DESC column (MySQL's NULLS LAST for
+	// ORDER BY ... DESC): NilFlag 0x00 complements to 0xFF.
+	nullDesc, err := EncodeKeyWithDesc(typeCtx.Location(), nil, []bool{true}, types.NewDatum(nil))
+	require.NoError(t, err)
+	require.Greater(t, bytes.Compare(nullDesc, enc(1<<62, true)), 0,
+		"NULL must sort after any real value on a DESC column")
+}
+
+func TestEncodeKeyWithDescRangeSentinels(t *testing.T) {
+	// Range sentinels on a DESC column must keep a well-formed byte order:
+	// MaxValue first, then real values, then MinNotNull, then NULL.
+	typeCtx := types.DefaultStmtNoWarningContext.WithLocation(time.Local)
+
+	encDesc := func(d types.Datum) []byte {
+		out, err := EncodeKeyWithDesc(typeCtx.Location(), nil, []bool{true}, d)
+		require.NoError(t, err)
+		return out
+	}
+
+	nullBytes := encDesc(types.NewDatum(nil))
+	maxBytes := encDesc(types.MaxValueDatum())
+	minBytes := encDesc(types.MinNotNullDatum())
+	smallVal := encDesc(types.NewIntDatum(1))
+	largeVal := encDesc(types.NewIntDatum(1 << 30))
+
+	require.Less(t, bytes.Compare(maxBytes, smallVal), 0,
+		"DESC MaxValueDatum must sort before any real value")
+	require.Less(t, bytes.Compare(maxBytes, largeVal), 0)
+
+	require.Less(t, bytes.Compare(largeVal, smallVal), 0,
+		"DESC: larger user value -> smaller byte encoding")
+
+	require.Greater(t, bytes.Compare(minBytes, smallVal), 0,
+		"DESC MinNotNullDatum must sort after every real value")
+	require.Greater(t, bytes.Compare(minBytes, largeVal), 0)
+
+	require.Greater(t, bytes.Compare(nullBytes, minBytes), 0,
+		"DESC NULL must sort after MinNotNullDatum")
+
+	require.Greater(t, bytes.Compare(nullBytes, smallVal), 0)
+	require.Greater(t, bytes.Compare(nullBytes, largeVal), 0)
+
+	// After distsql swaps the bounds, FullRange becomes [MaxValue, NULL] in
+	// byte order and covers every real value plus NULL.
+	require.Less(t, bytes.Compare(maxBytes, nullBytes), 0,
+		"forward walk from MaxValue to NULL must be a non-empty byte range")
+}
+
+func TestEncodeKeyWithDescRejectsUnsupportedKinds(t *testing.T) {
+	// JSON and VECTOR_FLOAT32 have no memcomparable form, so DESC is refused
+	// while ASC encoding keeps working.
+	typeCtx := types.DefaultStmtNoWarningContext.WithLocation(time.Local)
+
+	jsonDatum := types.NewDatum(types.CreateBinaryJSON(map[string]any{"k": "v"}))
+	_, err := EncodeKeyWithDesc(typeCtx.Location(), nil, []bool{true}, jsonDatum)
+	require.Error(t, err, "DESC encoding of KindMysqlJSON must be rejected")
+	require.Contains(t, err.Error(), "descending-order encoding is not supported")
+
+	_, err = EncodeKeyWithDesc(typeCtx.Location(), nil, []bool{false}, jsonDatum)
+	require.NoError(t, err, "ASC encoding of JSON must keep working")
+
+	mixed, err := EncodeKeyWithDesc(typeCtx.Location(), nil, []bool{false, true},
+		jsonDatum, types.NewIntDatum(7))
+	require.NoError(t, err)
+	require.NotEmpty(t, mixed)
+}
+
+func TestCutOneWithDesc(t *testing.T) {
+	// CutOneWithDesc must consume exactly the bytes the encoder wrote.
+	typeCtx := types.DefaultStmtNoWarningContext.WithLocation(time.Local)
+	composite, err := EncodeKeyWithDesc(
+		typeCtx.Location(), nil,
+		[]bool{false, true, false},
+		types.NewIntDatum(1), types.NewBytesDatum([]byte("middle")), types.NewIntDatum(3),
+	)
+	require.NoError(t, err)
+
+	rem := composite
+	part0, rem, err := CutOneWithDesc(rem, false)
+	require.NoError(t, err)
+	require.NotEmpty(t, part0)
+	part1, rem, err := CutOneWithDesc(rem, true)
+	require.NoError(t, err)
+	require.NotEmpty(t, part1)
+	part2, rem, err := CutOneWithDesc(rem, false)
+	require.NoError(t, err)
+	require.NotEmpty(t, part2)
+	require.Empty(t, rem)
+
+	require.Equal(t, composite, append(append(append([]byte{}, part0...), part1...), part2...))
+}
+
 func TestCodecKeyCompare(t *testing.T) {
 	table := []struct {
 		Left   []types.Datum

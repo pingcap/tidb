@@ -121,3 +121,17 @@ func TestOnlyPointRange(t *testing.T) {
 	indexPath.Ranges = []*ranger.Range{&onePointRange}
 	require.False(t, indexPath.OnlyPointRange(tc))
 }
+
+func TestAccessPathCloneCopiesMatchedScanDesc(t *testing.T) {
+	// A clone that drops MatchedScanDesc would turn a reverse scan into a
+	// forward one and return rows in the wrong order.
+	original := &util.AccessPath{
+		IsCommonHandlePath: true,
+		MatchedScanDesc:    true,
+	}
+	cloned := original.Clone()
+	require.True(t, cloned.MatchedScanDesc, "MatchedScanDesc must survive Clone()")
+
+	cloned.MatchedScanDesc = false
+	require.True(t, original.MatchedScanDesc)
+}

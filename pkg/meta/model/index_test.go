@@ -15,6 +15,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -102,4 +103,60 @@ func TestGlobalIndexV1SupportedForNextGen(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		require.True(t, GetGlobalIndexV1Supported())
 	}
+}
+
+func TestIndexColumnDescRoundTrip(t *testing.T) {
+	// Ascending is the zero value and is omitted from JSON.
+	ascCol := IndexColumn{Name: ast.NewCIStr("a"), Offset: 0, Length: -1}
+	ascJSON, err := json.Marshal(ascCol)
+	require.NoError(t, err)
+	require.NotContains(t, string(ascJSON), "desc")
+
+	descCol := IndexColumn{Name: ast.NewCIStr("b"), Offset: 1, Length: -1, Desc: true}
+	descJSON, err := json.Marshal(descCol)
+	require.NoError(t, err)
+	require.Contains(t, string(descJSON), `"desc":true`)
+
+	var decoded IndexColumn
+	require.NoError(t, json.Unmarshal(descJSON, &decoded))
+	require.True(t, decoded.Desc)
+
+	require.True(t, descCol.Clone().Desc)
+}
+
+func TestIndexInfoHasDescColumn(t *testing.T) {
+	c0 := newColumnForTest(0, 0)
+	c1 := newColumnForTest(1, 1)
+
+	idx := newIndexForTest(10, c0, c1)
+	require.False(t, idx.HasDescColumn())
+
+	idx.Columns[1].Desc = true
+	require.True(t, idx.HasDescColumn())
+}
+
+func TestIndexInfoIsServable(t *testing.T) {
+	idx := newIndexForTest(1, newColumnForTest(0, 0))
+
+	require.True(t, idx.IsServable())
+	idx.Version = 1
+	require.True(t, idx.IsServable())
+
+	idx.Version = 255
+	require.False(t, idx.IsServable())
+}
+
+func TestIndexInfoUnservableErr(t *testing.T) {
+	idx := newIndexForTest(7, newColumnForTest(0, 0))
+	idx.Version = 99
+
+	err := idx.UnservableErr("orders")
+	require.Error(t, err)
+	msg := err.Error()
+	require.Contains(t, msg, idx.Name.O)
+	require.Contains(t, msg, "orders")
+	require.Contains(t, msg, "99")
+	require.Contains(t, msg, "DROP INDEX")
+
+	require.NotPanics(t, func() { _ = idx.UnservableErr("") })
 }

@@ -115,6 +115,20 @@ var DefaultCumulativeTimeout = 1 * time.Minute
 // exported for testing.
 var DefaultAnalyzeCheckInterval = 10 * time.Second
 
+// ApplyDescGateToIndexParts clears the Desc flag of every index part when
+// tidb_enable_descending_index is off. SQL-frontend DDL paths call it before
+// the job is enqueued so the decision is fixed at submission time: reading
+// the sysvar when the DDL owner replays the job would let a concurrent
+// SET GLOBAL change the persisted schema.
+func ApplyDescGateToIndexParts(parts []*ast.IndexPartSpecification) {
+	if vardef.EnableDescendingIndex.Load() {
+		return
+	}
+	for _, ip := range parts {
+		ip.Desc = false
+	}
+}
+
 func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
@@ -136,6 +150,12 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		}
 		if columnarIndexType == model.ColumnarIndexTypeFulltext && !types.IsString(col.FieldType.GetType()) {
 			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("only support string type, but this is type: %s", col.FieldType.String()))
+		}
+		// Columnar indexes cannot be descending. Desc is already cleared when
+		// the gate is off, so reaching here means the user asked for it
+		// explicitly; report it rather than dropping the keyword.
+		if ip.Desc && columnarIndexType != model.ColumnarIndexTypeNA {
+			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("%s does not support DESC order", columnarIndexType.SQLName()))
 		}
 
 		// return error in strict sql mode
@@ -180,10 +200,12 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 			ctx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(sumLength, maxIndexLength))
 		}
 
+		// ip.Desc was already gated by ApplyDescGateToIndexParts.
 		idxParts = append(idxParts, &model.IndexColumn{
 			Name:   col.Name,
 			Offset: col.Offset,
 			Length: indexColLen,
+			Desc:   ip.Desc,
 		})
 	}
 
@@ -435,6 +457,18 @@ func BuildIndexInfo(
 	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, columnarIndexType)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	// Clustered PK columns form the row key, which is encoded ascending
+	// everywhere. A NONCLUSTERED primary key is an ordinary unique index and
+	// may use DESC.
+	if isPrimary && idxInfo.HasDescColumn() && (tblInfo.IsCommonHandle || tblInfo.PKIsHandle) {
+		return nil, errors.Errorf(
+			"DESC is not supported on the columns of a clustered PRIMARY KEY; either drop the DESC keyword or declare the primary key as NONCLUSTERED")
+	}
+	// A DESC column bumps the metadata version so an older TiDB refuses to
+	// serve the index; see IndexInfo.IsServable.
+	if idxInfo.HasDescColumn() {
+		idxInfo.Version = 1
 	}
 
 	if indexOption != nil {

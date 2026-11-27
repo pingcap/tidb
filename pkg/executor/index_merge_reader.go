@@ -284,7 +284,10 @@ func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
 		for _, ranges := range groupedRanges {
 			for _, t := range tables {
 				if isIdxScan {
-					kvRange, err := distsql.IndexRangesToKVRanges(dctx, t.physTblID, e.indexes[i].ID, ranges)
+					// Descending-order index columns (pingcap/tidb#2519) need
+					// their range bounds complemented, so build the kv ranges
+					// with per-column desc flags.
+					kvRange, err := distsql.IndexRangesToKVRangesWithDesc(dctx, t.physTblID, e.indexes[i].ID, indexColDescFlags(e.indexes[i]), ranges)
 					if err != nil {
 						return err
 					}

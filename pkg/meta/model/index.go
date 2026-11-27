@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -295,6 +296,46 @@ type IndexInfo struct {
 	// 2=v2 with partition ID in key only (TODO).
 	GlobalIndexVersion uint8              `json:"global_index_version,omitempty"`
 	RegionSplitPolicy  *RegionSplitPolicy `json:"region_split_policy,omitempty"` // RegionSplitPolicy is the persistent split policy.
+	// Version is a monotonic feature fence for the index metadata format.
+	// 0 = legacy; all features representable in older TiDB versions.
+	// 1 = uses per-column descending order (any Columns[i].Desc == true).
+	// An older TiDB reading an index with Version greater than maxKnownIndexVersion
+	// must refuse to serve queries against it to avoid returning wrong results.
+	Version uint8 `json:"version,omitempty"`
+}
+
+// maxKnownIndexVersion is the highest IndexInfo.Version this TiDB binary understands.
+// Bump this when adding index-level features that older binaries cannot safely ignore.
+const maxKnownIndexVersion uint8 = 1
+
+// IsServable reports whether this TiDB binary understands the index metadata
+// version. Callers must reject unservable indexes rather than risk wrong rows.
+func (index *IndexInfo) IsServable() bool {
+	return index.Version <= maxKnownIndexVersion
+}
+
+// UnservableErr returns the error reported for an index this binary cannot serve.
+func (index *IndexInfo) UnservableErr(tableName string) error {
+	return errors.Errorf(
+		"index `%s`%s uses metadata version %d, which is newer than this TiDB binary supports (max %d); upgrade TiDB or DROP INDEX to roll back",
+		index.Name.O, formatTableQualifier(tableName), index.Version, maxKnownIndexVersion)
+}
+
+func formatTableQualifier(tableName string) string {
+	if tableName == "" {
+		return ""
+	}
+	return " on table `" + tableName + "`"
+}
+
+// HasDescColumn reports whether any column of the index is stored in descending order.
+func (index *IndexInfo) HasDescColumn() bool {
+	for _, col := range index.Columns {
+		if col.Desc {
+			return true
+		}
+	}
+	return false
 }
 
 // HypoIndexInfo keeps a session-local index together with its expression columns.
@@ -575,6 +616,9 @@ type IndexColumn struct {
 	Length int `json:"length"`
 	// Whether this index column use changing type
 	UseChangingType bool `json:"using_changing_type,omitempty"`
+	// Desc marks a column stored in descending order. The zero value
+	// (ascending) is omitted from JSON for compatibility with older schemas.
+	Desc bool `json:"desc,omitempty"`
 }
 
 // Clone clones IndexColumn.
