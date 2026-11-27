@@ -527,6 +527,14 @@ pub(crate) fn is_retryable_error(
     while let Some(source) = cause.source() {
         cause = source;
     }
+    // Transient PD TSO stream errors.
+    if let Some(error) = cause.downcast_ref::<tikv_client::pd_errs::PdError>() {
+        if error.definition() == tikv_client::pd_errs::ERR_CLIENT_CREATE_TSO_STREAM
+            || error.definition() == tikv_client::pd_errs::ERR_CLIENT_TSO_STREAM_CLOSED
+        {
+            return true;
+        }
+    }
     if let Some(error) = cause.downcast_ref::<tidb_terror::TerrorError>() {
         return tidb_dbterror::REORG_RETRYABLE_ERR_CODES
             .contains(&tidb_terror::MysqlError::from_terror(error).code);
@@ -586,5 +594,41 @@ impl TaskKeyBuilder {
             labels.push("merge".to_owned());
         }
         labels.join("/")
+    }
+}
+
+#[cfg(test)]
+mod pd_retry_tests {
+    /// An error that annotates another, as Go `errors.Annotate` does.
+    #[derive(Debug)]
+    struct Wrapped(tikv_client::pd_errs::PdError);
+
+    impl std::fmt::Display for Wrapped {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "wrapped: {}", self.0)
+        }
+    }
+
+    impl std::error::Error for Wrapped {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    /// Go `TestIsRetryableError`'s PD rows (08e20a9ea20): transient TSO
+    /// stream errors are retryable during reorg, wrapped or not; an
+    /// unrelated PD error is not made retryable.
+    #[test]
+    fn test_pd_tso_stream_errors_are_retryable() {
+        use tikv_client::pd_errs;
+        for error in [
+            pd_errs::client_create_tso_stream(pd_errs::RETRY_TIMEOUT_ERR),
+            pd_errs::ERR_CLIENT_TSO_STREAM_CLOSED.error(),
+        ] {
+            assert!(super::is_retryable_error(&error, false), "{error}");
+            assert!(super::is_retryable_error(&Wrapped(error.clone()), false), "{error}");
+        }
+        let unrelated = pd_errs::ERR_CLIENT_PROTO_UNMARSHAL.error();
+        assert!(!super::is_retryable_error(&unrelated, false), "{unrelated}");
     }
 }
