@@ -649,11 +649,15 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		}
 	case *ast.UpdateStmt:
 		p.stmtTp = TypeUpdate
+		p.err = checkCommitTSWrite(nil, node.List)
 	case *ast.InsertStmt:
 		p.stmtTp = TypeInsert
 		// handle the insert table name imminently
 		// insert into t with t ..., the insert can not see t here. We should hand it before the CTE statement
 		p.handleTableName(node.Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName))
+		if p.err == nil {
+			p.err = checkCommitTSWrite(node.Columns, node.OnDuplicate)
+		}
 	case *ast.ExecuteStmt:
 		p.stmtTp = TypeExecute
 		p.resolveExecuteStmt(node)
@@ -820,6 +824,9 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
 			switch v.TableSample.SampleMethod {
 			case ast.SampleMethodTypeTiDBRegion:
+				if v.TableSample.Expr != nil || v.TableSample.RepeatableSeed != nil {
+					p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("REGIONS sampling does not support sample size or REPEATABLE")
+				}
 			default:
 				p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("Only supports REGIONS sampling method")
 			}
@@ -874,17 +881,24 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 	case *ast.Constraint:
 		// Used in ALTER TABLE or CREATE TABLE
 		p.checkConstraintGrammar(node)
-	case *ast.ColumnName:
-		if node.Name.L == model.ExtraCommitTSName.L &&
-			(p.stmtTp == TypeSelect || p.stmtTp == TypeSetOpr || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete) &&
-			!p.sctx.GetSessionVars().EnableMView {
-			p.err = plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
-				model.ExtraCommitTSName.O)
-		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
 	return p.err != nil
+}
+
+// checkCommitTSWrite checks the explicit write targets of INSERT and UPDATE.
+func checkCommitTSWrite(columns []*ast.ColumnName, assignments []*ast.Assignment) error {
+	checkCommitTSColumnFunc := func(col *ast.ColumnName) bool {
+		return col.Name.L == model.ExtraCommitTSName.L
+	}
+	if slices.ContainsFunc(columns, checkCommitTSColumnFunc) || slices.ContainsFunc(assignments, func(assign *ast.Assignment) bool {
+		return checkCommitTSColumnFunc(assign.Column)
+	}) {
+		return plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
+			model.ExtraCommitTSName.O)
+	}
+	return nil
 }
 
 // EraseLastSemicolon removes last semicolon of sql.

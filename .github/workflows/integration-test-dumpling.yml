@@ -12,6 +12,7 @@ on:
       - master
       - release-*
     paths:
+      - '.github/workflows/integration-test-dumpling.yml'
       - "dumpling/**"
       - "br/pkg/storage/**"
       - "br/pkg/utils/**"
@@ -26,6 +27,7 @@ on:
       - master
       - release-*
     paths:
+      - '.github/workflows/integration-test-dumpling.yml'
       - 'dumpling/**'
       - 'br/pkg/storage/**'
       - 'br/pkg/utils/**'
@@ -53,7 +55,9 @@ jobs:
           - 8.0.45
           - 8.4.8
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Cold-cache runs build TiDB, Lightning and failpoint-enabled Dumpling.
+    # Reserve time for those builds and cache upload outside the integration step.
+    timeout-minutes: 30
     services:
       mysql:
         image: mysql:${{ matrix.mysql_version }}
@@ -72,6 +76,8 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: 'go.mod'
+          # The explicit cache step below owns the Go caches and their upload.
+          cache: false
       - name: "try to use build cache"
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -90,6 +96,8 @@ jobs:
       - name: "build lightning"
         run: make build_lightning
       - name: "integration test"
+        # This target builds Dumpling before running the test scripts.
+        timeout-minutes: 15
         run: make dumpling_integration_test VERBOSE="true"
       - name: "dump tidb log on failure"
         if: ${{ failure() }}

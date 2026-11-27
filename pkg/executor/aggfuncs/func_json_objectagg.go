@@ -39,6 +39,17 @@ type partialResult4JsonObjectAgg struct {
 	entries hack.MemAwareMap[string, any]
 }
 
+func (p *partialResult4JsonObjectAgg) set(key string, value any) (memDelta int64) {
+	memDelta = getValMemDelta(value)
+	if oldValue, exists := p.entries.Get(key); exists {
+		// Replacing a value releases its previous payload, but retains the key.
+		memDelta -= getValMemDelta(oldValue)
+	} else {
+		memDelta += int64(len(key))
+	}
+	return memDelta + p.entries.Set(key, value)
+}
+
 func (*jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonObjectAgg{}
 	p.entries.Init(make(map[string]any))
@@ -94,9 +105,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGro
 
 		switch x := realVal.(type) {
 		case nil, bool, int64, uint64, float64, string, types.BinaryJSON, types.Opaque, types.Time, types.Duration:
-			if delta, insert := p.entries.SetExt(key, realVal); insert {
-				memDelta += int64(len(key)) + getValMemDelta(realVal) + delta
-			}
+			memDelta += p.set(key, realVal)
 		default:
 			return 0, types.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
@@ -208,7 +217,7 @@ func (*jsonObjectAgg) MergePartialResult(_ AggFuncUpdateContext, src, dst Partia
 	// When the result of this function is normalized, values having duplicate keys are discarded,
 	// and only the last value encountered is used with that key in the returned object
 	for k, v := range p1.entries.M {
-		memDelta += int64(len(k)) + getValMemDelta(v) + p2.entries.Set(k, v)
+		memDelta += p2.set(k, v)
 	}
 	return memDelta, nil
 }

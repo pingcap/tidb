@@ -305,7 +305,9 @@ function start_tidb_server()
 
     echo "start tidb-server, log file: $mysql_tester_log"
     $tidb_server -V
-    $tidb_server $start_options > $mysql_tester_log 2>&1 &
+    local skip_stats_refresh='github.com/pingcap/tidb/pkg/domain/skipPeriodicStatsRefresh=return(true)'
+    GO_FAILPOINTS="${GO_FAILPOINTS:+${GO_FAILPOINTS};}${skip_stats_refresh}" \
+        "$tidb_server" $start_options > "$mysql_tester_log" 2>&1 &
     SERVER_PID=$!
     echo "tidb-server(PID: $SERVER_PID) started"
 }

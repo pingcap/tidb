@@ -1314,4 +1314,9 @@ func TestDecodeWithCommitTS(t *testing.T) {
 	require.Equal(t, "test1", row.GetString(0))
 	require.Equal(t, uint64(123456), row.GetUint64(1))
 	require.Equal(t, "test2", row.GetString(2))
+
+	chk.Reset()
+	err = decoder.DecodeToChunk(newRow, 0, nil, chk)
+	require.NoError(t, err)
+	require.True(t, chk.GetRow(0).IsNull(1))
 }
