@@ -3266,12 +3266,20 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		}
 
 		r.batchRetrieverHelper.totalRows = len(r.lockWaits) + len(r.resolvingLocks)
-		r.batchRetrieverHelper.batchSize = 1024
 	}
 
 	var res [][]types.Datum
 
 	err := r.nextBatch(func(start, end int) error {
+		// data_lock_waits contains both lockWaits (pessimistic lock waiting)
+		// and resolving (optimistic lock "waiting") info
+		// first we'll return the lockWaits, and then resolving, so we need to
+		// do some index calculation here
+		lockWaitsStart := min(start, len(r.lockWaits))
+		resolvingStart := start - lockWaitsStart
+		lockWaitsEnd := min(end, len(r.lockWaits))
+		resolvingEnd := end - lockWaitsEnd
+		waits := r.lockWaits[lockWaitsStart:lockWaitsEnd]
 		// Before getting rows, collect the SQL digests that needs to be retrieved first.
 		var needDigest bool
 		var needSQLText bool
@@ -3285,8 +3293,8 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 		var digests []string
 		if needDigest || needSQLText {
-			digests = make([]string, end-start)
-			for i, lockWait := range r.lockWaits {
+			digests = make([]string, len(waits))
+			for i, lockWait := range waits {
 				digest, err := resourcegrouptag.DecodeResourceGroupTag(lockWait.ResourceGroupTag)
 				if err != nil {
 					// Ignore the error if failed to decode the digest from resource_group_tag. We still want to show
@@ -3317,15 +3325,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 		// Calculate rows.
 		res = make([][]types.Datum, 0, end-start)
-		// data_lock_waits contains both lockWaits (pessimistic lock waiting)
-		// and resolving (optimistic lock "waiting") info
-		// first we'll return the lockWaits, and then resolving, so we need to
-		// do some index calculation here
-		lockWaitsStart := min(start, len(r.lockWaits))
-		resolvingStart := start - lockWaitsStart
-		lockWaitsEnd := min(end, len(r.lockWaits))
-		resolvingEnd := end - lockWaitsEnd
-		for rowIdx, lockWait := range r.lockWaits[lockWaitsStart:lockWaitsEnd] {
+		for rowIdx, lockWait := range waits {
 			row := make([]types.Datum, 0, len(r.columns))
 
 			for _, col := range r.columns {

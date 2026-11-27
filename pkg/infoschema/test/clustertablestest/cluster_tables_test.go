@@ -185,6 +185,18 @@ func TestTestDataLockWaits(t *testing.T) {
 		"6B657932 <nil> 3 4 "+digest2.String()+" <nil> X",
 		"6B657933 <nil> 5 6 <nil> <nil> S->X",
 		"6B657934 <nil> 7 8 <nil> <nil> <nil>"))
+	var entries []*deadlock.WaitForEntry
+	var expected []string
+	modes := []deadlock.RequestedLockMode{deadlock.RequestedLockMode_Shared, deadlock.RequestedLockMode_Exclusive, deadlock.RequestedLockMode_Upgrade}
+	for i := range 1025 {
+		digest := parser.DigestHash(fmt.Sprintf("statement-%d", i))
+		entry := &deadlock.WaitForEntry{Txn: uint64(i), RequestedLockMode: modes[i%3],
+			ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest).EncodeTagWithKey([]byte(""))}
+		entries = append(entries, entry)
+		expected = append(expected, fmt.Sprintf("%d %s %s", i, digest.String(), []string{"S", "X", "S->X"}[i%3]))
+	}
+	s.store.(mockstorage.MockLockWaitSetter).SetMockLockWaits(entries)
+	tk.MustQuery("select trx_id, sql_digest, requested_lock_mode from information_schema.data_lock_waits order by trx_id").Check(testkit.Rows(expected...))
 }
 
 func TestDataLockWaitsPrivilege(t *testing.T) {

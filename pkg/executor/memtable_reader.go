@@ -116,6 +116,10 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		err  error
 	)
 
+	if waits, ok := e.retriever.(*dataLockWaitsTableRetriever); ok {
+		waits.batchSize = min(1024, req.RequiredRows())
+	}
+
 	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
 	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
 	if cache, tbl := e.Ctx().GetSessionVars().InspectionTableCache, e.table.Name.L; cache != nil &&
