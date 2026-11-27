@@ -178,6 +178,11 @@ type ExtraParams struct {
 	// PauseOnKVDiskFull indicates whether the task should be paused instead of
 	// reverted when TiKV reports disk full.
 	PauseOnKVDiskFull bool `json:"pause_on_kv_disk_full,omitempty"`
+	// NonPreemptible indicates that a task of higher rank waits for the task
+	// executor of this task to exit instead of canceling it, and the balancer does
+	// not move running subtasks of this task away from a live node. Use it when a
+	// subtask cannot continue from a checkpoint and must run again from the start.
+	NonPreemptible bool `json:"non_preemptible,omitempty"`
 	// MaxRuntimeSlots is the max slots when running subtasks of this task in
 	// TargetSteps steps.
 	// normally it's 0, means we will use the RequiredSlots to run the subtasks.

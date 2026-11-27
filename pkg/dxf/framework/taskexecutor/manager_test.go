@@ -616,6 +616,33 @@ func TestSlotManagerInManager(t *testing.T) {
 	require.Equal(t, 0, len(m.slotManager.executorTasks))
 	require.True(t, ctrl.Satisfied())
 
+	// ******** Test non-preemptible task ********
+	// task rank: task3(2), task1(9), task2(1)
+	// task1 is not preempted, task3 waits for it, and task2 does not take the free slot.
+	task1.RequiredSlots = 9
+	task1.ExtraParams.NonPreemptible = true
+	task3.RequiredSlots = 2
+	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(&proto.Task{TaskBase: *task1}, nil)
+	mockInternalExecutors[task1.ID].EXPECT().Init(gomock.Any()).Return(nil)
+	mockInternalExecutors[task1.ID].EXPECT().Run().DoAndReturn(func() error {
+		return <-ch
+	})
+	m.handleExecutableTasks([]*storage.TaskExecInfo{{TaskBase: task1}})
+	require.Eventually(t, func() bool {
+		return ctrl.Satisfied()
+	}, 2*time.Second, 300*time.Millisecond)
+	m.handleExecutableTasks([]*storage.TaskExecInfo{{TaskBase: task3}, {TaskBase: task1}, {TaskBase: task2}})
+	require.True(t, ctrl.Satisfied())
+	require.Equal(t, 1, m.slotManager.availableSlots())
+	require.False(t, m.isExecutorStarted(task2.ID))
+	require.False(t, m.isExecutorStarted(task3.ID))
+	mockInternalExecutors[task1.ID].EXPECT().Close()
+	ch <- nil
+	m.executorWG.Wait()
+	require.Equal(t, 10, m.slotManager.availableSlots())
+	task1.ExtraParams.NonPreemptible = false
+	task3.RequiredSlots = 1
+
 	// task rank: task3(1), task1(4), task2(1)
 	task1.RequiredSlots = 4
 	// task3 exchange to 8 slots, task1 cannot start, and we will skip task2 too.

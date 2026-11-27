@@ -16,6 +16,7 @@ package taskexecutor
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -219,9 +220,15 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 	for _, task := range taskInfos {
 		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.TaskBase)
 		if len(tasksNeedFree) > 0 {
-			m.cancelTaskExecutors(tasksNeedFree)
-			m.logger.Info("need to preempt tasks of low ranking", zap.Stringer("task", task.TaskBase),
-				zap.Stringers("preemptedTasks", tasksNeedFree))
+			// a non-preemptible task frees its slots when its task executor exits.
+			if slices.ContainsFunc(tasksNeedFree, func(t *proto.TaskBase) bool { return t.ExtraParams.NonPreemptible }) {
+				m.sampleLogger.Info("wait for non-preemptible tasks of low ranking to free slots",
+					zap.Stringer("task", task.TaskBase), zap.Stringers("tasksNeedFree", tasksNeedFree))
+			} else {
+				m.cancelTaskExecutors(tasksNeedFree)
+				m.logger.Info("need to preempt tasks of low ranking", zap.Stringer("task", task.TaskBase),
+					zap.Stringers("preemptedTasks", tasksNeedFree))
+			}
 			// do not handle the tasks with low ranking if current task is waiting
 			// other tasks to free slots to make sure the order of running.
 			break
