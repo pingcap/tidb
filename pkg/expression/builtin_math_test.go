@@ -382,6 +382,19 @@ func TestRand(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, randGen.Gen(), v.GetFloat64())
 	}
+
+	// A clone evaluated in another context does not restart the sequence of the original one.
+	cloned := f2.Clone()
+	ctx2 := createContext(t)
+	clonedGen := mathutil.NewWithSeed(20160101)
+	for range 3 {
+		v, err = evalBuiltinFunc(cloned, ctx2, chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, clonedGen.Gen(), v.GetFloat64())
+		v, err = evalBuiltinFunc(f2, ctx, chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, randGen.Gen(), v.GetFloat64())
+	}
 }
 
 func TestPow(t *testing.T) {
