@@ -274,6 +274,65 @@ func TestSetVarFromColumn(t *testing.T) {
 	require.Equal(t, "a", sessionVar.GetString())
 }
 
+func TestInSignedConstants(t *testing.T) {
+	ctx := createContext(t)
+	for _, unsigned := range []bool{false, true} {
+		for _, constants := range [][]any{
+			{int64(-1), uint64(math.MaxUint64), int64(-1), uint64(math.MaxUint64)},
+			{uint64(math.MaxUint64), int64(-1), uint64(math.MaxUint64), int64(-1)},
+			{int64(-1)},
+			{uint64(math.MaxUint64)},
+		} {
+			ft := types.NewFieldType(mysql.TypeLonglong)
+			if unsigned {
+				ft.AddFlag(mysql.UnsignedFlag)
+			}
+			args := []Expression{&Column{Index: 0, RetType: ft}}
+			args = append(args, datumsToConstants(types.MakeDatums(constants...))...)
+			f, err := funcs[ast.In].getFunction(ctx, args)
+			require.NoError(t, err)
+			if len(constants) > 1 {
+				// Both signedness domains must survive deduplication for pushdown.
+				require.Len(t, f.getArgs(), 3)
+			}
+			require.True(t, f.vectorized() && f.isChildrenVectorized())
+			input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 3)
+			input.AppendInt64(0, -1)
+			input.AppendInt64(0, 0)
+			input.AppendNull(0)
+			result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 3)
+			require.NoError(t, f.vecEvalInt(ctx, input, result))
+			cloned := f.Clone()
+			require.True(t, cloned.vectorized() && cloned.isChildrenVectorized())
+			clonedResult := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 3)
+			require.NoError(t, cloned.vecEvalInt(ctx, input, clonedResult))
+			want := int64(0)
+			for _, c := range constants {
+				_, isUnsigned := c.(uint64)
+				if unsigned == isUnsigned {
+					want = 1
+				}
+			}
+			for i := range input.NumRows() {
+				value, isNull, err := f.evalInt(ctx, input.GetRow(i))
+				require.NoError(t, err)
+				require.Equal(t, i == 2, isNull)
+				require.Equal(t, isNull, result.IsNull(i))
+				require.Equal(t, isNull, clonedResult.IsNull(i))
+				if i < 2 {
+					expected := int64(0)
+					if i == 0 {
+						expected = want
+					}
+					require.Equal(t, expected, value)
+					require.Equal(t, expected, result.Int64s()[i])
+					require.Equal(t, expected, clonedResult.Int64s()[i])
+				}
+			}
+		}
+	}
+}
+
 func TestInFunc(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.In]
@@ -305,6 +364,15 @@ func TestInFunc(t *testing.T) {
 		{[]any{uint64(math.MaxUint64), uint64(math.MaxUint64), 2, 3}, int64(1)},
 		{[]any{-1, uint64(math.MaxUint64), 2, 3}, int64(0)},
 		{[]any{uint64(math.MaxUint64), -1, 2, 3}, int64(0)},
+		{[]any{uint64(math.MaxUint64), -1, uint64(math.MaxUint64), nil}, int64(1)},
+		{[]any{-1, uint64(math.MaxUint64), -1, nil}, int64(1)},
+		{[]any{0, -1, uint64(math.MaxUint64), nil}, nil},
+		{[]any{int64(1), uint64(1), int64(1)}, int64(1)},
+		{[]any{uint64(1), int64(1), uint64(1)}, int64(1)},
+		{[]any{int64(math.MinInt64), uint64(1 << 63), int64(math.MinInt64)}, int64(1)},
+		{[]any{uint64(1 << 63), int64(math.MinInt64), uint64(1 << 63)}, int64(1)},
+		{[]any{int64(math.MinInt64), uint64(1 << 63)}, int64(0)},
+		{[]any{uint64(1 << 63), int64(math.MinInt64)}, int64(0)},
 		{[]any{1, 0, 2, 3}, int64(0)},
 		{[]any{1.1, 1.2, 1.3}, int64(0)},
 		{[]any{1.1, 1.1, 1.2, 1.3}, int64(1)},
