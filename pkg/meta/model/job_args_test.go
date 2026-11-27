@@ -1066,6 +1066,7 @@ func TestMaskingPolicyArgs(t *testing.T) {
 		PolicyName:     ast.NewCIStr("policy_name"),
 		PolicyID:       123,
 		ReplaceOnExist: false,
+		AlterAction:    MaskingPolicyAlterRestrictOn,
 	}
 	for _, tp := range []ActionType{ActionCreateMaskingPolicy, ActionAlterMaskingPolicy, ActionDropMaskingPolicy} {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -1080,9 +1081,51 @@ func TestMaskingPolicyArgs(t *testing.T) {
 			} else if tp == ActionAlterMaskingPolicy {
 				require.EqualValues(t, inArgs.Policy, args.Policy)
 				require.EqualValues(t, inArgs.PolicyID, args.PolicyID)
+				require.EqualValues(t, inArgs.AlterAction, args.AlterAction)
 			} else {
 				require.EqualValues(t, inArgs.PolicyName, args.PolicyName)
 				require.EqualValues(t, inArgs.PolicyID, args.PolicyID)
+			}
+		}
+	}
+
+	// Golden payloads use release-8.5's persisted values. Parser AST enums
+	// differ between branches and must not change the meaning of these jobs.
+	for _, tc := range []struct {
+		v1, v2 string
+		action MaskingPolicyAlterAction
+	}{
+		{`[{"id":1},59]`, `{"policy":{"id":1},"policy_id":1,"alter_action":59}`, MaskingPolicyAlterEnable},
+		{`[{"id":1},60]`, `{"policy":{"id":1},"policy_id":1,"alter_action":60}`, MaskingPolicyAlterDisable},
+		{`[{"id":1},62]`, `{"policy":{"id":1},"policy_id":1,"alter_action":62}`, MaskingPolicyAlterExpression},
+		{`[{"id":1},63]`, `{"policy":{"id":1},"policy_id":1,"alter_action":63}`, MaskingPolicyAlterRestrictOn},
+		// Jobs from before AlterAction carry a full replacement policy.
+		{`[{"id":1}]`, `{"policy":{"id":1},"policy_id":1}`, 0},
+	} {
+		for _, ver := range []JobVersion{JobVersion1, JobVersion2} {
+			raw := tc.v1
+			if ver == JobVersion2 {
+				raw = tc.v2
+			}
+			job := &Job{Version: ver, Type: ActionAlterMaskingPolicy, SchemaID: 1, RawArgs: json.RawMessage(raw)}
+			args, err := GetMaskingPolicyArgs(job)
+			require.NoError(t, err)
+			require.Equal(t, tc.action, args.AlterAction)
+			if tc.action != 0 {
+				encoded := &Job{}
+				require.NoError(t, encoded.Decode(getJobBytes(t, args, ver, ActionAlterMaskingPolicy)))
+				wire, err := json.Marshal(tc.action)
+				require.NoError(t, err)
+				if ver == JobVersion1 {
+					var payload []json.RawMessage
+					require.NoError(t, json.Unmarshal(encoded.RawArgs, &payload))
+					require.Len(t, payload, 2)
+					require.JSONEq(t, string(wire), string(payload[1]))
+				} else {
+					var payload map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal(encoded.RawArgs, &payload))
+					require.JSONEq(t, string(wire), string(payload["alter_action"]))
+				}
 			}
 		}
 	}

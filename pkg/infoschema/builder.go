@@ -75,6 +75,9 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 	case model.ActionDropSchema:
 		return applyDropSchema(b, diff)
 	case model.ActionRecoverSchema:
+		if err := refreshMaskingPoliciesForTableIDs(b); err != nil {
+			return nil, err
+		}
 		return applyRecoverSchema(b, m, diff)
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, applyModifySchemaCharsetAndCollate(b, m, diff)
@@ -510,8 +513,15 @@ func applyRecoverTable(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
-func applyMaskingPolicyChange(b *Builder, _ meta.Reader, _ *model.SchemaDiff) ([]int64, error) {
-	b.infoSchema.resetMaskingPolicyCache()
+func applyMaskingPolicyChange(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
+	// Reset the loaded flag to trigger a full reload on next access.
+	// This is the simplest and most reliable approach since masking policies are typically small in number.
+	// We need to hold the lock to ensure consistency when resetting these fields.
+	b.infoSchema.maskingPolicyMutex.Lock()
+	b.infoSchema.maskingPoliciesLoaded = false
+	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo)
+	b.infoSchema.maskingPoliciesLoad = nil
+	b.infoSchema.maskingPolicyMutex.Unlock()
 	return nil, nil
 }
 
@@ -731,7 +741,7 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 			return nil, errors.Trace(err)
 		}
 	}
-	if needRefreshMaskingPoliciesForTableDiff(diff.Type) {
+	if needRefreshMaskingPoliciesForTableDiff(diff) {
 		if err := refreshMaskingPoliciesForTableIDs(b, oldTableID, newTableID); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -739,26 +749,23 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
-func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
-	switch tp {
-	case model.ActionCreateMaskingPolicy,
-		model.ActionAlterMaskingPolicy,
-		model.ActionDropMaskingPolicy,
-		model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
-		model.ActionDropColumn,
-		model.ActionModifyColumn,
-		model.ActionRenameTable,
-		model.ActionRenameTables,
-		model.ActionTruncateTable,
-		model.ActionDropSchema:
+func needRefreshMaskingPoliciesForTableDiff(diff *model.SchemaDiff) bool {
+	if maskingPolicyTableAction(diff.Type) {
 		return true
-	default:
-		return false
 	}
+	for _, tp := range diff.SubActionTypes {
+		if maskingPolicyTableAction(tp) {
+			return true
+		}
+	}
+	return false
 }
 
-func refreshMaskingPoliciesForTableIDs(b *Builder, _ ...int64) error {
-	b.infoSchema.resetMaskingPolicyCache()
+func refreshMaskingPoliciesForTableIDs(b *Builder, tableIDs ...int64) error {
+	// Reset the loaded flag and clear the map to trigger a full reload on next access.
+	// This is the simplest and most reliable approach since masking policies are typically small in number.
+	b.infoSchema.maskingPoliciesLoaded = false
+	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo)
 	return nil
 }
 
@@ -1139,6 +1146,7 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 
 // Build builds and returns the built infoschema.
 func (b *Builder) Build(schemaTS uint64) InfoSchema {
+	b.infoSchema.maskingPolicySnapshotTS = schemaTS
 	if b.enableV2 {
 		b.infoschemaV2.ts = schemaTS
 		b.infoschemaV2.infoSchema.ts = schemaTS
@@ -1182,10 +1190,11 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 		b.infoSchema.maskingPolicyTableColumnMap[tableID] = maps.Clone(colMap)
 	}
 	b.infoSchema.maskingPoliciesLoaded = oldIS.maskingPoliciesLoaded
-	if oldIS.maskingPoliciesLoadCh != nil {
+	b.infoSchema.maskingPolicySnapshotTS = oldIS.maskingPolicySnapshotTS
+	if oldIS.maskingPoliciesLoad != nil {
 		b.infoSchema.maskingPoliciesLoaded = false
 	}
-	b.infoSchema.maskingPoliciesLoadCh = nil
+	b.infoSchema.maskingPoliciesLoad = nil
 	oldIS.maskingPolicyMutex.RUnlock()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
@@ -1442,4 +1451,27 @@ func (b *Builder) schemaByID(id int64) (*model.DBInfo, bool) {
 		dbInfo, ok = b.infoSchema.SchemaByID(id)
 	}
 	return dbInfo, ok
+}
+
+func maskingPolicyTableAction(tp model.ActionType) bool {
+	switch tp {
+	case model.ActionCreateMaskingPolicy,
+		model.ActionAlterMaskingPolicy,
+		model.ActionDropMaskingPolicy,
+		model.ActionDropTable,
+		model.ActionDropMaterializedView,
+		model.ActionDropMaterializedViewLog,
+		model.ActionRecoverTable,
+		model.ActionTruncateTable,
+		model.ActionExchangeTablePartition,
+		model.ActionDropColumn,
+		model.ActionModifyColumn,
+		model.ActionRenameTable,
+		model.ActionRenameTables,
+		model.ActionAlterTablePartitioning,
+		model.ActionRemovePartitioning:
+		return true
+	default:
+		return false
+	}
 }

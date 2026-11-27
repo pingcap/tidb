@@ -95,6 +95,7 @@ func New(
 ) *Syncer {
 	s := newSyncer(store, logutil.BgLogger(), schemaLease, sysSessionPool, isValidator)
 	s.loader = newLoader(store, infoCache, &s.deferFn, filter)
+	s.loader.schemaLease = schemaLease
 	return s
 }
 
@@ -110,6 +111,7 @@ func NewCrossKSSyncer(
 	logger := logutil.BgLogger().With(zap.String("targetKS", targetKS))
 	s := newSyncer(store, logger, schemaLease, sysSessionPool, isValidator)
 	s.loader = NewLoaderForCrossKS(store, infoCache)
+	s.loader.schemaLease = schemaLease
 	s.crossKS = true
 	return s
 }
@@ -441,6 +443,9 @@ func (s *Syncer) Reload() error {
 	}
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
+	if hitCache {
+		s.loader.preloadMaskingPolicies(is, startTime)
+	}
 	// only update if it is not from cache
 	if !hitCache {
 		// loaded newer schema
@@ -549,3 +554,11 @@ func getFlashbackStartTSFromErrorMsg(err error) uint64 {
 	}
 	return version
 }
+
+// LoadHistoricalWithTS builds an isolated historical schema without publishing it.
+func (s *Syncer) LoadHistoricalWithTS(ts uint64) (infoschema.InfoSchema, error) {
+	return s.loader.LoadHistoricalWithTS(ts)
+}
+
+// SetSchemaLoadContext binds policy preloading to the schema owner lifecycle.
+func (s *Syncer) SetSchemaLoadContext(ctx context.Context) { s.loader.schemaLoadContext = ctx }

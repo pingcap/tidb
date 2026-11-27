@@ -263,6 +263,16 @@ func planCacheSnapshotVersions(ctx context.Context, is infoschema.InfoSchema, st
 	if is == nil || len(stmt.tbls) == 0 || len(stmt.tbls) != len(stmt.RelateVersion) {
 		return nil
 	}
+	// Policy DDL changes the global schema version without changing the table
+	// revision. Keep that version in the key when policies exist. Deriving a
+	// cache key must not load policy metadata, so cold policy state also falls
+	// back to the global version.
+	if !infoschema.MaskingPoliciesLoaded(is) {
+		return nil
+	}
+	if hasPolicies, err := is.HasMaskingPolicies(ctx); err != nil || hasPolicies {
+		return nil
+	}
 
 	versions := make(map[int64]uint64, len(stmt.tbls))
 	for i, tbl := range stmt.tbls {
@@ -417,6 +427,11 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 	stmtCtx := sessVars.StmtCtx
 	if err := checkPreparedPriv(ctx, sctx, stmt, is); err != nil {
 		return nil, false, err
+	}
+	if cached, ok := sessVars.PlanCacheValue.(*PlanCacheValue); ok {
+		if err := checkCachedMaskingPolicyAccess(ctx, sctx, is, cached.maskingPolicyChecks); err != nil {
+			return nil, false, err
+		}
 	}
 	if !RebuildPlan4CachedPlan(plan) {
 		return nil, false, nil

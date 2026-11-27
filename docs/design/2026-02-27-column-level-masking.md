@@ -74,12 +74,31 @@ Using per-table scope avoids global name collision and maps naturally to DDL own
 
 #### Evaluation semantics
 
-Masking is implemented as **AT RESULT** rewriting. In other words, table data and predicate semantics stay unchanged, and masking is applied when producing query results.
+Masking is implemented as **AT RESULT** rewriting. Table data stays unchanged, ordinary relational processing uses raw base-column values, and masking is applied when producing query results.
 
 From an execution perspective:
 
 - planner/executor still use raw values for `JOIN`, `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY`, set operators
 - returned projection values are rewritten by policy expression based on runtime identity (`current_user()` / `current_role()`)
+
+Subquery outputs consumed by an outer predicate are an exception: scalar, `IN`,
+and quantified-comparison subqueries can mask their output before the outer
+comparison. Relational operations inside the subquery still use raw values.
+For example, comparing against a protected column's subquery output can match
+its masked value, while comparing against `MIN`/`MAX` of that column uses the
+raw aggregate result. Predicate outputs whose policy cannot be preserved
+(including unsupported aggregates or correlated result shapes) retain their
+raw values; each column of a row-valued result is handled separately.
+
+A result expression over a protected column is rebuilt from the masked value
+after sorting and filtering. An expression that has to be evaluated exactly once
+and in its own place cannot be rebuilt, such as `RAND()`, variable assignments and the
+advisory lock functions (`GET_LOCK`, `RELEASE_LOCK`, `RELEASE_ALL_LOCKS`,
+`IS_FREE_LOCK`, `IS_USED_LOCK`). A query with such an expression over a
+protected column in its result fields is rejected with "masking policy cannot be
+preserved through mutable expression" while the policy is enabled, also for an
+identity that reads the original value: the limit is on the query shape, not a
+missing privilege. The same call in `WHERE` is not affected.
 
 This choice minimizes optimizer/storage regressions and keeps compatibility risk lower than predicate-time rewriting.
 The tradeoff is that raw values can still participate in write/read transformations unless restricted by `RESTRICT ON`.
@@ -100,7 +119,7 @@ This section describes how the feature is expected to be wired in code, so imple
 
 1. Build plan with current statement `InfoSchema` (or stale/snapshot `InfoSchema` when applicable).
 2. Resolve masking binding by `(table_id, column_id)`.
-3. Rewrite result projection with masking expression (AT RESULT behavior).
+3. Rewrite result projection with masking expression (AT RESULT behavior). Plans with safely reusable masking expressions remain eligible for session and instance plan caches. Identity and role functions are deferred to the executing session, and cache hits revalidate `RESTRICT ON` checks for their source columns. Expressions with dependencies that cannot be safely reused bypass both plan caches and the session-local expression cache.
 4. For restricted operations (`INSERT ... SELECT`, `UPDATE ... (SELECT ...)`, `DELETE ... (SELECT ...)`, `CTAS`), run restriction check against masked source columns before execution.
 
 #### Metadata maintenance path
@@ -115,7 +134,7 @@ This section describes how the feature is expected to be wired in code, so imple
 - DDL: target validation, metadata writes, lifecycle synchronization, schema actions.
 - InfoSchema: delayed loading and cache invalidation model for masking metadata.
 - Planner/Executor: AT RESULT expression rewrite and restricted-operation enforcement.
-- BR/TiCDC integration: carry DDL semantics and preserve cross-cluster binding correctness.
+- BR: backs up `mysql.tidb_masking_policy` with the other system tables but does not restore masking policies (see `BR backup and restore` below).
 
 Primary code ownership map (for implementation navigation):
 
@@ -123,25 +142,26 @@ Primary code ownership map (for implementation navigation):
 - DDL path: `pkg/ddl/executor.go`, `pkg/ddl/masking_policy.go`, `pkg/ddl/table.go`, `pkg/ddl/modify_column.go`
 - InfoSchema loading/cache: `pkg/infoschema/masking_policy.go`, `pkg/infoschema/masking_policy_loader.go`, `pkg/infoschema/builder.go`
 - Planner/executor behavior: `pkg/planner/core/point_get_plan.go`, `pkg/planner/core/masking_policy_restrict.go`, `pkg/executor/show.go`
-- BR integration (design target): restore should replay policy DDL semantics instead of raw row replay for `mysql.tidb_masking_policy`
+- BR: `br/pkg/restore/snap_client/systable_restore.go` (the policy table is not restored)
 
-#### BR restore compatibility design
+#### BR backup and restore
 
-Masking policy metadata uses `mysql.tidb_masking_policy` as the Single Source of Truth (SSOT), but restore cannot replay source table rows blindly.
+BR behavior in 8.5:
 
-Reason:
+- BR backs up `mysql.tidb_masking_policy` like the other system tables, whenever the table filter selects it (a full backup does by default).
+- A snapshot restore does not restore masking policies. It skips `mysql.tidb_masking_policy`, also with `--with-sys-table`: it does not create or change any policy on the target cluster, and policies that already exist there are kept as they are.
+- An incremental restore does not apply masking policy DDL. An incremental backup can record `CREATE`, `ALTER` and `DROP MASKING POLICY` jobs. These jobs identify the target table but do not carry the database or table metadata that incremental restore uses to select DDL for replay, so it never replays them, even when it restores that table. Operators must apply policy changes made after the base backup on the target cluster themselves. Incremental backup is deprecated.
+- A backup with backup schema version 3, which development builds of this feature wrote for backups with masking policies, is rejected before any data is imported: BR supports at most version 2.
+- A snapshot restore brings back table data only. A restored table has no masking policy unless one is created on the target cluster.
+- Point-in-time recovery does not rebuild the policies of the source cluster on the target cluster either. This says nothing about the content of a log backup: log backup records the changes of the whole data key range, so its raw files may contain masking policy data and must be protected like the protected data itself.
 
-- BR restores schema first, then restores data.
-- Restored table and column IDs can differ from source cluster IDs.
-- Direct replay of source `mysql.tidb_masking_policy` rows can bind policies to wrong target IDs.
+Reason: each row of `mysql.tidb_masking_policy` binds a policy to a table ID and a column ID. Restored tables and columns can get different IDs, so copying the rows would bind policies to the wrong objects.
 
-Design:
+Deployment prerequisite:
 
-1. Read source policy rows as logical policy definitions.
-2. Reconstruct canonical `CREATE MASKING POLICY ...` semantics from those definitions.
-3. During restore schema phase, execute reconstructed masking-policy DDL against restored tables.
-4. Let target cluster generate correct target `table_id/column_id` bindings.
-5. Do not directly replay source physical rows for `mysql.tidb_masking_policy`.
+- Masking on a target cluster depends on the policy existing on that cluster. Before opening restored tables to users, the administrator recreates the masking policies there, together with the roles and users that the policy expressions refer to. `SHOW MASKING POLICIES FOR <table_name>` on the source cluster lists the definitions of a table.
+- After that, verify with an ordinary account that the protected columns return masked values.
+- If a policy exists on the target cluster but the exempt users or roles do not, the masked columns return redacted data to all users.
 
 ### SQL interface (reference)
 
@@ -221,8 +241,13 @@ RESTRICT ON (INSERT_INTO_SELECT, DELETE_SELECT)
 ```
 
 At execution time, restricted operations are validated against source masked columns.
-The check is semantic: TiDB evaluates whether the current session is effectively allowed to read unmasked source data under the bound policy expression.
+The check simplifies session-constant identity and role conditions and allows the operation only when the selected policy expression is the original column. Data-dependent conditions or other expressions whose identity cannot be established are rejected; sampled column values are never used to authorize access.
 If not allowed, the statement is rejected with masking access-denied error.
+
+`UPDATE_SELECT` also covers an `UPDATE` assignment that reads a masked column directly, without a subquery, such as `UPDATE dst JOIN src ON ... SET dst.c = src.c` or `UPDATE t SET c2 = c`: the assignment would write the original value, or a value computed from it, into another column or another row.
+Such an assignment is validated like a restricted subquery and rejected with the same error; it is never rewritten to store the masked value. The same table under another alias is a different source.
+The only exception is assigning a column to itself as is (`SET c = c`), which writes the same value into the same column of the same row. A value computed from the column and written back to the same column, such as `SET c = UPPER(c)`, is restricted like any other computed value. Columns that are only compared in `WHERE` or `JOIN ... ON` are not affected.
+The assignments of `INSERT ... ON DUPLICATE KEY UPDATE` update the existing row and follow the same rule under `UPDATE_SELECT`: an assignment that reads a protected column of the existing row is rejected. The values of the new row (`VALUES(c)`), constants and unprotected columns are not restricted.
 
 ### Expression semantics
 
@@ -251,7 +276,7 @@ Default-deny behavior is recommended: users/roles not matching allow conditions 
   - Example: `MASK_PARTIAL(credit_card, 6, 4, '*')` keeps first 6 and last 4 characters
 
 - `MASK_FULL(col)` - Masks entire column value completely
-  - `col`: The column to mask (string, datetime, or numeric types)
+  - `col`: A string, temporal, floating-point, or decimal column. Ordinary integer columns (`INT`, `BIGINT`, including unsigned variants) are not accepted by `MASK_FULL`; use `MASK_NULL` or a custom policy expression for those columns. `YEAR` is accepted.
   - For datetime types: returns '1970-01-01' (date) or '1970-01-01 00:00:00' (datetime)
   - Example: `MASK_FULL(ssn)` returns 'XXXXXXXXX' for a 9-digit SSN
 
@@ -259,9 +284,9 @@ Default-deny behavior is recommended: users/roles not matching allow conditions 
   - `col`: The column to mask (any supported type)
   - Example: `MASK_NULL(salary)` always returns NULL
 
-- `MASK_DATE(col, date_literal)` - Replaces the date value with a fixed date literal
+- `MASK_DATE(col, date_literal)` - Replaces date components with fixed values or a template
   - `col`: The date/time column to mask
-  - `date_literal`: Fixed date string in 'YYYY-MM-DD' format (e.g., '1970-01-01')
+  - `date_literal`: A date string (e.g., '1970-01-01'); `Y`, `M`, and `D` preserve the corresponding input component, and fixed components may omit leading zeroes.
   - Example: `MASK_DATE(birth_date, '1970-01-01')` returns '1970-01-01' for any date value
 
 ### Supported column types
@@ -366,10 +391,13 @@ This contract is the compatibility baseline for `tidb_snapshot`, `AS OF TIMESTAM
 
 Masking policy administration uses dynamic privileges at global scope (`ON *.*`):
 
+Policy creation and `ALTER TABLE` policy management also require `ALTER` on the target table. `CREATE OR REPLACE MASKING POLICY` requires both `CREATE MASKING POLICY` and `ALTER MASKING POLICY` in addition to the table privilege.
+
 ```sql
 GRANT CREATE MASKING POLICY ON *.* TO 'security_admin'@'%';
 GRANT ALTER MASKING POLICY ON *.* TO 'security_admin'@'%';
 GRANT DROP MASKING POLICY ON *.* TO 'security_admin'@'%';
+GRANT ALTER ON business_db.business_table TO 'security_admin'@'%';
 ```
 
 | Privilege | Description |
@@ -459,9 +487,9 @@ SELECT salary FROM employees WHERE id = 1;
 ## Compatibility
 
 - Syntax and behavior are TiDB-specific (not MySQL-compatible feature parity).
-- BR/TiCDC can carry masking-related DDL and metadata semantics to downstream clusters.
+- BR in 8.5 does not restore masking policies. Recreate the policies on the target cluster before opening restored tables to users (see `BR backup and restore`).
+- Replication of masking policies by TiCDC is not part of this design and is not verified. Automatic masking on a downstream cluster depends on the policies, and the users and roles their expressions refer to, existing there.
 - Runtime masking decisions depend on identity evaluation (`current_user()` / `current_role()`), so missing or diverged user/role state in downstream clusters can change effective masking behavior.
-- BR restore should rebuild masking policies by replaying `CREATE MASKING POLICY` semantics against restored target tables, instead of directly replaying source rows from `mysql.tidb_masking_policy` (restored table/column IDs may differ across clusters).
 - Dump/validation tools may see masked values if executed by non-exempt users.
 
 > **Caution**

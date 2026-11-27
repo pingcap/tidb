@@ -44,6 +44,8 @@ type OOMAlarmVariablesInfo struct {
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
+	RedactPlanValues    bool
+	PlanExplainRows     [][]string
 	Time                time.Time
 	ExpensiveLogTime    time.Time
 	ExpensiveTxnLogTime time.Time

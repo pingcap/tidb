@@ -146,7 +146,7 @@ func (p *PhysicalTopN) ExplainInfo() string {
 		}
 		buffer = util.ExplainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems)
 	}
-	switch p.SCtx().GetSessionVars().EnableRedactLog {
+	switch p.SCtx().GetSessionVars().PlanRedactLog() {
 	case perrors.RedactLogDisable:
 		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 		if p.PrefixCol != nil {

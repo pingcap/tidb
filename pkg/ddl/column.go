@@ -205,19 +205,18 @@ func (w *worker) onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
+		// ADD COLUMN rollback must also work before the policy table is created.
+		if !job.IsRollingback() {
+			if err = w.dropMaskingPoliciesOnColumn(jobCtx, tblInfo.ID, colInfo.ID); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
 		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
-		}
-
-		// Clean up masking policies associated with the dropped column.
-		if !job.IsRollingback() {
-			if err := w.dropMaskingPoliciesOnColumn(jobCtx, tblInfo.ID, colInfo.ID); err != nil {
-				return ver, errors.Wrapf(err, "failed to drop masking policies on column %d of table %d", colInfo.ID, tblInfo.ID)
-			}
 		}
 
 		// Finish this job.

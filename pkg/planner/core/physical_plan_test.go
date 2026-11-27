@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -42,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -718,6 +721,19 @@ func TestPhysicalPlanMemoryTrace(t *testing.T) {
 	size = pp.MemoryUsage()
 	pp.MPPPartitionCols = append(pp.MPPPartitionCols, &property.MPPPartitionColumn{})
 	require.Greater(t, pp.MemoryUsage(), size)
+}
+
+func TestMaskedPointGetPlanMemoryUsage(t *testing.T) {
+	point, batch := &physicalop.PointGetPlan{}, &physicalop.BatchPointGetPlan{}
+	beforePoint, beforeBatch := point.MemoryUsage(), batch.MemoryUsage()
+	expr := &expression.Constant{Value: types.NewStringDatum(strings.Repeat("x", 16384)), RetType: types.NewFieldType(mysql.TypeVarchar)}
+	point.MaskingExprs = []expression.Expression{expr, nil}
+	batch.MaskingExprs = []expression.Expression{expr, nil}
+	require.GreaterOrEqual(t, point.MemoryUsage()-beforePoint, expr.MemoryUsage())
+	require.GreaterOrEqual(t, batch.MemoryUsage()-beforeBatch, expr.MemoryUsage())
+	point.MaskingExprs, batch.MaskingExprs = nil, nil
+	require.Equal(t, beforePoint, point.MemoryUsage())
+	require.Equal(t, beforeBatch, batch.MemoryUsage())
 }
 
 func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {

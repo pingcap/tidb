@@ -939,6 +939,9 @@ func GetBriefBinaryPlan(p base.Plan) string {
 	if planCtx == nil {
 		return ""
 	}
+	if planCtx.GetSessionVars().StmtCtx.ReadsMaskedColumn {
+		return ""
+	}
 	flat := FlattenPhysicalPlan(plan, true)
 	return BinaryPlanStrFromFlatPlan(planCtx, flat, true)
 }
@@ -1970,4 +1973,27 @@ type CompareMaterializedView struct {
 	physicalop.SimpleSchemaProducer
 
 	Statement *ast.CompareMaterializedViewStmt
+}
+
+// GetExplainRowsForPlan renders a row-format snapshot in the plan owner session.
+func GetExplainRowsForPlan(plan base.Plan) (rows [][]string) {
+	explain := &Explain{
+		TargetPlan: plan,
+		Format:     types.ExplainFormatROW,
+		Analyze:    false,
+	}
+	if plan != nil {
+		explain.SetSCtx(plan.SCtx())
+		if sctx := plan.SCtx(); sctx != nil {
+			stmtCtx := sctx.GetSessionVars().StmtCtx
+			inExplain, format := stmtCtx.InExplainStmt, stmtCtx.ExplainFormat
+			defer func() {
+				stmtCtx.InExplainStmt, stmtCtx.ExplainFormat = inExplain, format
+			}()
+		}
+	}
+	if err := explain.RenderResult(); err != nil {
+		return rows
+	}
+	return explain.Rows
 }

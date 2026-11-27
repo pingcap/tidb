@@ -36,7 +36,8 @@ func GetTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (
 	fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
-	is := sctx.GetLatestISWithoutSessExt()
+	// Candidate and historical schemas may not be the published latest schema.
+	is := sctx.GetInfoSchema()
 	tbl, partDef := infoschema.FindTableByTblOrPartID(is.(infoschema.InfoSchema), id)
 	if tbl == nil || tbl.Meta() == nil {
 		return

@@ -49,6 +49,15 @@ func FoldConstant(ctx BuildContext, expr Expression) Expression {
 	return e
 }
 
+// skipNotNullFolding reports whether expressions are being built for a result
+// whose columns may later be replaced by nullable expressions, as result masking
+// does. Rewrites that rely on a column's NOT NULL constraint must then be left
+// to the rebuild that follows the replacement.
+func skipNotNullFolding(ctx BuildContext) bool {
+	guard, ok := ctx.(interface{ SkipNotNullFolding() bool })
+	return ok && guard.SkipNotNullFolding()
+}
+
 func isNullHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 	arg0 := expr.GetArgs()[0]
 	if constArg, isConst := arg0.(*Constant); isConst {
@@ -67,6 +76,11 @@ func isNullHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 		return &Constant{Value: value, RetType: expr.RetType}, false
 	}
 	if mysql.HasNotNullFlag(arg0.GetType(ctx.GetEvalCtx()).GetFlag()) {
+		// Result masking can make a base column nullable. Keep its dependency
+		// until the planner substitutes the policy, while still folding constants.
+		if skipNotNullFolding(ctx) {
+			return expr, false
+		}
 		return NewZero(), false
 	}
 	return expr, false
@@ -144,8 +158,8 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 			return foldedExpr, isDeferredConst
 		}
 	}
-	// If the number of arguments in casewhen is odd, and the previous conditions
-	// is false, then the folded else execution body is returned. otherwise
+	// If number of arguments in casewhen is odd, and the previous conditions
+	// is false, then the folded else execution body is returned. Otherwise
 	// the execution body of the else are folded and replaced.
 	if l%2 == 1 {
 		foldedExpr, isDeferred := foldConstant(ctx, args[l-1])
@@ -155,6 +169,11 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 			return foldedExpr, isDeferredConst
 		}
 		return foldedExpr, isDeferredConst
+	}
+	// If case expression contains deferred constants (e.g., ParamMarkers or DeferredExpr like user variables),
+	// return the expression as-is but marked as deferred, so it will be re-evaluated at runtime.
+	if isDeferredConst {
+		return expr, true
 	}
 	return expr, isDeferredConst
 }

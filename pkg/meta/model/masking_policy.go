@@ -20,6 +20,18 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
+// MaskingPolicyAlterAction identifies the attribute changed by a policy DDL job.
+// Its persisted values match release-8.5 and stay independent of parser AST enums.
+type MaskingPolicyAlterAction byte
+
+// Persisted masking policy alter actions. Keep these values stable across branches.
+const (
+	MaskingPolicyAlterEnable     MaskingPolicyAlterAction = 59
+	MaskingPolicyAlterDisable    MaskingPolicyAlterAction = 60
+	MaskingPolicyAlterExpression MaskingPolicyAlterAction = 62
+	MaskingPolicyAlterRestrictOn MaskingPolicyAlterAction = 63
+)
+
 // MaskingPolicyStatus is the status of a masking policy.
 type MaskingPolicyStatus byte
 

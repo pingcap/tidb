@@ -469,7 +469,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	}
 
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	redactMode := p.SCtx().GetSessionVars().EnableRedactLog
+	redactMode := p.SCtx().GetSessionVars().PlanRedactLog()
 	var buffer strings.Builder
 	if len(p.RangeInfo) > 0 {
 		if !normalized {

@@ -382,6 +382,44 @@ func TestFilterDDLJobs(t *testing.T) {
 	require.Equal(t, 7, len(ddlJobs))
 }
 
+func TestFilterDDLJobsSkipsMaskingPolicyJobs(t *testing.T) {
+	dbInfo := &model.DBInfo{ID: 2, Name: ast.NewCIStr("test_db")}
+	tableInfo := &model.TableInfo{ID: 10, Name: ast.NewCIStr("t")}
+	tables := []*metautil.Table{{DB: dbInfo, Info: tableInfo}}
+
+	// A finished masking policy job names its table but keeps neither DBInfo
+	// nor TableInfo in its history, so incremental restore does not replay it.
+	// Its SchemaID is the policy ID.
+	const policyID = 50
+	policyJobs := make([]*model.Job, 0, 3)
+	for i, tp := range []model.ActionType{
+		model.ActionCreateMaskingPolicy,
+		model.ActionAlterMaskingPolicy,
+		model.ActionDropMaskingPolicy,
+	} {
+		policyJobs = append(policyJobs, &model.Job{
+			ID:         int64(100 + i),
+			Type:       tp,
+			SchemaID:   policyID,
+			TableID:    tableInfo.ID,
+			SchemaName: dbInfo.Name.O,
+			TableName:  tableInfo.Name.O,
+			BinlogInfo: &model.HistoryInfo{SchemaVersion: int64(10 + i)},
+		})
+	}
+	tableJob := &model.Job{
+		ID:         200,
+		Type:       model.ActionAddColumn,
+		SchemaID:   dbInfo.ID,
+		TableID:    tableInfo.ID,
+		SchemaName: dbInfo.Name.O,
+		BinlogInfo: &model.HistoryInfo{SchemaVersion: 20, TableInfo: tableInfo},
+	}
+
+	ddlJobs := task.FilterDDLJobs(append(policyJobs, tableJob), tables)
+	require.Equal(t, []*model.Job{tableJob}, ddlJobs)
+}
+
 func TestFilterDDLJobsV2(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)

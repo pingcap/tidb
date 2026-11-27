@@ -220,6 +220,9 @@ type worker struct {
 	sess            *sess.Session // sess is used and only used in running DDL job.
 	delRangeManager delRangeManager
 	seqAllocator    *atomic.Uint64
+	// Policy SQL can flush earlier metadata writes into the transaction.
+	// A failed step must roll back the transaction rather than only its last statement.
+	maskingPolicyTxn bool
 
 	*ddlCtx
 }
@@ -751,6 +754,7 @@ func (w *worker) transitOneJobStep(
 	jobW *model.JobW,
 ) (int64, error) {
 	jobCtx.mustRollbackTxnOnError = false
+	w.maskingPolicyTxn = false
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
 	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.transitOneJobStep")
 	defer r.End()
@@ -818,6 +822,7 @@ func (w *worker) transitOneJobStep(
 		jobCtx.pendingReorgRU = 0
 	}()
 	restoreAll, restoreKV := snapshotJobStepState(job)
+	wasRollingback := job.IsRollingback()
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
 	if restoreStorageClassTransitionStep != nil {
 		var stagingErr *storageClassTransitionStagingError
@@ -839,9 +844,13 @@ func (w *worker) transitOneJobStep(
 		return 0, err
 	}
 
+	policyStepFailed := w.maskingPolicyTxn && (runJobErr != nil || job.IsCancelled() || job.IsCancelling() || job.IsRollingback() && !wasRollingback)
+	if policyStepFailed {
+		jobCtx.mustRollbackTxnOnError = true
+	}
 	// countForError consumes errors for cancelled jobs, so cancellation must
 	// also trigger a full rollback when internal SQL has flushed step writes.
-	if runJobErr != nil || job.IsCancelled() {
+	if runJobErr != nil || job.IsCancelled() || policyStepFailed {
 		if jobCtx.mustRollbackTxnOnError {
 			// Discard all mutations from this job step, including related-table
 			// updates and ones made while the job is already rolling back.

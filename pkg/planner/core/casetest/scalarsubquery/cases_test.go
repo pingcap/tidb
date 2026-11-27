@@ -92,6 +92,53 @@ func TestExplainNonEvaledSubquery(t *testing.T) {
 	})
 }
 
+func TestExplainEvaluatedScalarSubquery(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_enable_non_eval_scalar_subquery = off")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (1, 10), (2, 20)")
+
+	for _, tc := range []struct {
+		name       string
+		sql        string
+		references []string
+		rows       []string
+	}{
+		{
+			name:       "scalar",
+			sql:        "select (select max(a) from t)",
+			references: []string{`ScalarQueryCol#\d+\(2\)`},
+			rows:       []string{"2"},
+		},
+		{
+			name:       "row",
+			sql:        "select * from t where (a, b) = (select max(a), max(b) from t)",
+			references: []string{`ScalarQueryCol#\d+\(2\)`, `ScalarQueryCol#\d+\(20\)`},
+			rows:       []string{"2 20"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, format := range []string{"brief", "plan_tree"} {
+				sql := fmt.Sprintf("explain format='%s' %s", format, tc.sql)
+				checkPlan := func(sql string) {
+					plan := fmt.Sprint(tk.MustQuery(sql).Rows())
+					// Eager evaluation must retain the subquery plan and its output references.
+					require.Contains(t, plan, "ScalarSubQuery")
+					for _, reference := range tc.references {
+						require.Regexp(t, reference, plan)
+					}
+				}
+				checkPlan(sql)
+				tk.MustExec(fmt.Sprintf("prepare stmt from %q", sql))
+				checkPlan("execute stmt")
+				tk.MustExec("deallocate prepare stmt")
+			}
+			tk.MustQuery(tc.sql).Check(testkit.Rows(tc.rows...))
+		})
+	}
+}
+
 func TestSubqueryInExplainAnalyze(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		var (

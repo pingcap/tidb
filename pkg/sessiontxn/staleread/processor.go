@@ -318,7 +318,7 @@ func getTSFromExternalTS(ctx context.Context, sctx sessionctx.Context) (uint64, 
 
 // GetSessionSnapshotInfoSchema returns the session's information schema with specified ts
 func GetSessionSnapshotInfoSchema(sctx sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
-	is, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
+	is, err := domain.GetDomain(sctx).GetHistoricalInfoSchema(snapshotTS)
 	if err != nil {
 		return nil, err
 	}

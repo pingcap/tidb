@@ -84,6 +84,11 @@ type PointGetPlan struct {
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo `plan-cache-clone:"shallow"`
 
+	// MaskingExprs stores the masking expressions for columns that have masking policies.
+	// If not nil, each element corresponds to a column in the schema.
+	// The executor should evaluate these expressions instead of returning raw column values.
+	MaskingExprs []expression.Expression `plan-cache-clone:"shallow"`
+
 	// required by cost model
 	cost         float64
 	PlanCostInit bool
@@ -198,7 +203,7 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("handle:?")
 		} else {
-			redactMode := p.SCtx().GetSessionVars().EnableRedactLog
+			redactMode := p.SCtx().GetSessionVars().PlanRedactLog()
 			redactOn := redactMode == errors.RedactLogEnable
 			buffer.WriteString("handle:")
 			if redactOn {
@@ -328,6 +333,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	for _, col := range p.accessCols {
 		sum += col.MemoryUsage()
 	}
+	sum += maskingExprsMemoryUsage(p.MaskingExprs)
 	return
 }
 
@@ -523,7 +529,13 @@ type BatchPointGetPlan struct {
 	Lock          bool
 	LockWaitTime  int64
 	Columns       []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	cost          float64
+
+	// MaskingExprs stores the masking expressions for columns that have masking policies.
+	// If not nil, each element corresponds to a column in the schema.
+	// The executor should evaluate these expressions instead of returning raw column values.
+	MaskingExprs []expression.Expression `plan-cache-clone:"shallow"`
+
+	cost float64
 
 	// required by cost model
 	PlanCostInit bool
@@ -647,7 +659,7 @@ func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("handle:?, ")
 		} else {
-			redactMode := p.SCtx().GetSessionVars().EnableRedactLog
+			redactMode := p.SCtx().GetSessionVars().PlanRedactLog()
 			redactOn := redactMode == errors.RedactLogEnable
 			buffer.WriteString("handle:[")
 			for i, handle := range p.Handles {
@@ -754,6 +766,7 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 	for _, col := range p.accessCols {
 		sum += col.MemoryUsage()
 	}
+	sum += maskingExprsMemoryUsage(p.MaskingExprs)
 	return
 }
 
@@ -1044,4 +1057,14 @@ func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
 		res.Indexes = []access.IndexAccess{index}
 	}
 	return res
+}
+
+func maskingExprsMemoryUsage(exprs []expression.Expression) (sum int64) {
+	sum = int64(cap(exprs)) * size.SizeOfInterface
+	for _, expr := range exprs {
+		if expr != nil {
+			sum += expr.MemoryUsage()
+		}
+	}
+	return sum
 }

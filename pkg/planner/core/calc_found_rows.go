@@ -74,7 +74,7 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	}
 	count, _, err = b.buildAggregation(ctx, count, []*ast.AggregateFuncExpr{{
 		F: ast.AggFuncCount, Args: []ast.ExprNode{ast.NewValueExpr(1, "", "")},
-	}}, nil, nil)
+	}}, nil, nil, nil, nil)
 	if err != nil {
 		return nil, err
 	}

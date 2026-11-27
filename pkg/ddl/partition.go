@@ -3129,6 +3129,9 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 	originalPartitionDef := partDef.Clone()
 	originalNt := nt.Clone()
 	partDef.ID, nt.ID = nt.ID, partDef.ID
+	if err := w.updateMaskingPolicyTableID(jobCtx, originalNt.ID, nt.ID); err != nil {
+		return ver, errors.Trace(err)
+	}
 	pt.Partition.DDLState = model.StateNone
 	pt.Partition.DDLAction = model.ActionNone
 
@@ -3834,6 +3837,9 @@ func (w *worker) finishReorganizePartition(jobCtx *jobContext, job *model.Job, t
 		oldTblID = tblInfo.ID
 		physicalTableIDs, err = recreateTableForPartitioningChange(metaMut, job, tblInfo, partInfo.NewTableID, physicalTableIDs)
 		if err != nil {
+			return ver, err
+		}
+		if err := w.updateMaskingPolicyTableID(jobCtx, oldTblID, tblInfo.ID); err != nil {
 			return ver, err
 		}
 	}

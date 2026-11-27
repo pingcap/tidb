@@ -1233,6 +1233,12 @@ ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
 }
 
 func TestUpgradeVersion280MaskingPolicy(t *testing.T) {
+	t.Run("system_table_recovery", testUpgradeVersion280MaskingPolicy)
+	t.Run("legacy_versions", testMaskingPolicyUpgrade)
+	t.Run("retry_after_init_failure", testBootstrapRetriesUpgradeAfterInitFailure)
+}
+
+func testUpgradeVersion280MaskingPolicy(t *testing.T) {
 	fromVersions := []int{251, 254}
 	if kerneltype.IsNextGen() {
 		originalMode := deploymode.Get()
@@ -1968,4 +1974,103 @@ func TestDefaultAnalyzeBackgroundOnlyAffectsFreshBootstrap(t *testing.T) {
 	require.True(t, ok)
 	// The upgrade path should not backfill the fresh-bootstrap background setting.
 	require.Nil(t, defaultGroup.Background)
+}
+
+func testMaskingPolicyUpgrade(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("This scenario uses a legacy classic-kernel bootstrap layout")
+	}
+	t.Cleanup(session.CaptureMockBootstrapStateForTest())
+	for _, tc := range []struct {
+		version  int
+		preserve bool
+	}{{189, false}, {220, false}, {233, false}, {233, true}} {
+		version := tc.version
+		t.Run(fmt.Sprintf("%d/preserve=%t", version, tc.preserve), func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			tk := testkit.NewTestKit(t, store)
+			if tc.preserve {
+				tk.MustExec("create table test.masking_upgrade(c varchar(20))")
+				tk.MustExec("insert into test.masking_upgrade values ('secret')")
+				tk.MustExec("create masking policy p_upgrade on test.masking_upgrade(c) as mask_full(c)")
+			}
+			if version == 189 {
+				tk.MustExec("alter table mysql.tidb_global_task modify dispatcher_id varchar(128)")
+			}
+			revertVersionAndVariables(t, tk.Session(), version)
+			policyTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+			require.NoError(t, err)
+			mysqlDB, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("mysql"))
+			require.True(t, ok)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMutator(txn)
+			if !tc.preserve {
+				require.NoError(t, m.DropTableOrView(mysqlDB.ID, policyTable.Meta().ID))
+			}
+			require.NoError(t, m.FinishBootstrap(int64(version)))
+			require.NoError(t, txn.Commit(context.Background()))
+			store.SetOption(session.StoreBootstrappedKey, nil)
+			tk.Session().Close()
+			dom.Close()
+
+			upgraded, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer upgraded.Close()
+			tk = testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			if tc.preserve {
+				tk.MustQuery("select count(*) from mysql.tidb_masking_policy").Check(testkit.Rows("1"))
+				tableAfter, err := upgraded.InfoSchema().TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+				require.NoError(t, err)
+				require.Equal(t, policyTable.Meta().ID, tableAfter.Meta().ID)
+			} else {
+				tk.MustQuery("select count(*) from mysql.tidb_masking_policy").Check(testkit.Rows("0"))
+				_, err := upgraded.InfoSchema().TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+				require.NoError(t, err)
+
+				tk.MustExec("create table masking_upgrade(c varchar(20))")
+				tk.MustExec("insert into masking_upgrade values ('secret')")
+				tk.MustExec("create masking policy p_upgrade on masking_upgrade(c) as mask_full(c)")
+			}
+			tk.MustQuery("select c from masking_upgrade").Check(testkit.Rows("XXXXXX"))
+			got, err := session.GetBootstrapVersion(tk.Session())
+			require.NoError(t, err)
+			require.Equal(t, session.CurrentBootstrapVersion, got)
+		})
+	}
+}
+
+func testBootstrapRetriesUpgradeAfterInitFailure(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("This scenario uses a legacy classic-kernel bootstrap layout")
+	}
+	t.Cleanup(session.CaptureMockBootstrapStateForTest())
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	tk := testkit.NewTestKit(t, store)
+	revertVersionAndVariables(t, tk.Session(), 233)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(233))
+	require.NoError(t, txn.Commit(context.Background()))
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	tk.Session().Close()
+	dom.Close()
+
+	// The first attempt fails before the upgrade runs. The store must not stay
+	// cached as bootstrapped, or the retry would skip the upgrade.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockInitBootstrapDependentTablesError", "return(true)"))
+	_, err = session.BootstrapSession(store)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockInitBootstrapDependentTablesError"))
+	require.ErrorContains(t, err, "mock init bootstrap dependent tables error")
+
+	upgraded, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer upgraded.Close()
+	se := session.CreateSessionAndSetID(t, store)
+	ver, err := session.GetBootstrapVersion(se)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
 }

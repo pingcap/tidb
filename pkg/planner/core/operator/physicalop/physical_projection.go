@@ -132,7 +132,7 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
+	enableRedactLog := p.SCtx().GetSessionVars().PlanRedactLog()
 	exprStr := expression.ExplainExpressionList(evalCtx, p.Exprs, p.Schema(), enableRedactLog)
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)

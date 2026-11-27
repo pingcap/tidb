@@ -57,7 +57,7 @@ func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProj
 // ExplainInfo implements Plan interface.
 func (p *LogicalProjection) ExplainInfo() string {
 	eCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
+	enableRedactLog := p.SCtx().GetSessionVars().PlanRedactLog()
 	return expression.ExplainExpressionList(eCtx, p.Exprs, p.Schema(), enableRedactLog)
 }
 
