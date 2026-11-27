@@ -441,9 +441,7 @@ func (s *importStepExecutor) readQuery(
 
 	se := resource.(sessionctx.Context)
 	if se.IsCrossKS() {
-		se.GetSessionVars().StatsProvider = statsstorage.NewOnDemandStatsProvider(
-			ctx, pool, statsstorage.WithSkipColumnDistributions(),
-		)
+		se.GetSessionVars().StatsProvider = statsstorage.NewOnDemandStatsProvider(ctx, pool)
 	}
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 

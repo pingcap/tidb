@@ -138,12 +138,6 @@ func (p *countingSessionPool) recordedSQLs() []string {
 	return out
 }
 
-func (p *countingSessionPool) resetSQLs() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.sqls = nil
-}
-
 func TestOnDemandStatsProviderLoadsAndCachesStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -170,8 +164,8 @@ func TestOnDemandStatsProviderLoadsAndCachesStats(t *testing.T) {
 	spyPool := &countingSessionPool{DestroyableSessionPool: dom.SysSessionPool()}
 	provider := statsstorage.NewOnDemandStatsProvider(context.Background(), spyPool)
 
-	// First lookup hits storage once in batched SQL queries (never reading stats_fm_sketch)
-	// and populates Table.Version, LastAnalyzeVersion, and full column/index distributions.
+	// First lookup hits storage once (skipping stats_fm_sketch) and populates
+	// Table.Version, LastAnalyzeVersion, and full column/index distributions.
 	gotT := provider.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	require.NotNil(t, gotT)
 	require.False(t, gotT.Pseudo)
@@ -196,11 +190,7 @@ func TestOnDemandStatsProviderLoadsAndCachesStats(t *testing.T) {
 	require.True(t, idxAStats.IsFullLoad())
 	require.Nil(t, idxAStats.FMSketch)
 
-	// Batched load executes BEGIN + stats_meta + stats_histograms + stats_top_n + stats_buckets (<= 5 SQLs)
-	// and never queries mysql.stats_fm_sketch.
-	sqls := spyPool.recordedSQLs()
-	require.LessOrEqual(t, len(sqls), 5)
-	for _, sql := range sqls {
+	for _, sql := range spyPool.recordedSQLs() {
 		require.NotContains(t, strings.ToLower(sql), "stats_fm_sketch")
 	}
 
@@ -208,32 +198,6 @@ func TestOnDemandStatsProviderLoadsAndCachesStats(t *testing.T) {
 	gotTCached := provider.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	require.Same(t, gotT, gotTCached)
 	require.Equal(t, int64(1), spyPool.getCount.Load())
-
-	// WithSkipColumnDistributions loads column metadata + full index distributions
-	// while filtering stats_top_n/stats_buckets to indexes only.
-	restrictedPool := &countingSessionPool{DestroyableSessionPool: dom.SysSessionPool()}
-	restrictedProvider := statsstorage.NewOnDemandStatsProvider(
-		context.Background(), restrictedPool, statsstorage.WithSkipColumnDistributions(),
-	)
-	gotTRestricted := restrictedProvider.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
-	require.False(t, gotTRestricted.Pseudo)
-	require.Greater(t, gotTRestricted.Version, uint64(0))
-	restrictedColA := gotTRestricted.GetCol(colA.ID)
-	require.NotNil(t, restrictedColA)
-	require.True(t, restrictedColA.IsStatsInitialized())
-	require.True(t, restrictedColA.IsAllEvicted())
-	require.Greater(t, restrictedColA.NDV, int64(0))
-	require.Nil(t, restrictedColA.TopN)
-	require.Empty(t, restrictedColA.Buckets)
-	restrictedIdxA := gotTRestricted.GetIdx(idxA.ID)
-	require.NotNil(t, restrictedIdxA)
-	require.True(t, restrictedIdxA.IsFullLoad())
-	for _, sql := range restrictedPool.recordedSQLs() {
-		low := strings.ToLower(sql)
-		if strings.Contains(low, "stats_top_n") || strings.Contains(low, "stats_buckets") {
-			require.Contains(t, low, "is_index = 1")
-		}
-	}
 
 	// Reserved/system table IDs return pseudo stats without querying storage.
 	sysTblInfo := &model.TableInfo{ID: metadef.TiDBImportJobsTableID, Name: ast.NewCIStr("tidb_import_jobs")}
@@ -314,12 +278,12 @@ func TestOnDemandStatsProviderLoadsAndCachesStats(t *testing.T) {
 	}
 }
 
-func TestOnDemandStatsProviderSnapshotFallbackAndPartitionBatching(t *testing.T) {
+func TestOnDemandStatsProviderSnapshotFallback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// 1. Partitioned table with stats_meta.snapshot > 0 and no stats_histograms rows
+	// Partitioned table with stats_meta.snapshot > 0 and no stats_histograms rows
 	// (simulating tidb_analyze_column_options='PREDICATE' with no predicate columns/indexes).
 	tk.MustExec(`create table tp_snap (id int, v int)
 		partition by range (id) (
@@ -357,55 +321,6 @@ func TestOnDemandStatsProviderSnapshotFallbackAndPartitionBatching(t *testing.T)
 	_, _, err = planner.Optimize(context.Background(), mockCtx, resolve.NewNodeW(stmt), is)
 	require.NoError(t, err)
 	require.True(t, mockCtx.GetSessionVars().StmtCtx.UseDynamicPruneMode)
-
-	// 2. Static partition pruning batch prefetching: unanalyzed 4-partition table
-	// borrows only 1 session to negative-cache all partitions.
-	tk.MustExec(`create table tp_batch (id int, v int, key idx_v(v))
-		partition by range (id) (
-			partition p0 values less than (10),
-			partition p1 values less than (20),
-			partition p2 values less than (30),
-			partition p3 values less than (40)
-		)`)
-	is = dom.InfoSchema()
-	tblBatch, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp_batch"))
-	require.NoError(t, err)
-	defs := tblBatch.Meta().GetPartitionInfo().Definitions
-	require.Len(t, defs, 4)
-
-	unanaPool := &countingSessionPool{DestroyableSessionPool: dom.SysSessionPool()}
-	unanaProvider := statsstorage.NewOnDemandStatsProvider(context.Background(), unanaPool)
-	for _, def := range defs {
-		got := unanaProvider.GetPhysicalTableStats(def.ID, tblBatch.Meta())
-		require.True(t, got.Pseudo)
-	}
-	require.Equal(t, int64(1), unanaPool.getCount.Load())
-	require.Equal(t, int64(1), unanaPool.putCount.Load())
-
-	// 3. Analyzed 4-partition table with WithMaxPartitionBatchLoad(2):
-	// borrows only 1 session, loads requested partition + 1 sibling, and caps the rest to pseudo.
-	tk.MustExec("insert into tp_batch values (1, 1), (11, 11), (21, 21), (31, 31)")
-	tk.MustExec("analyze table tp_batch")
-
-	cappedPool := &countingSessionPool{DestroyableSessionPool: dom.SysSessionPool()}
-	cappedProvider := statsstorage.NewOnDemandStatsProvider(
-		context.Background(), cappedPool, statsstorage.WithMaxPartitionBatchLoad(2),
-	)
-	requested := cappedProvider.GetPhysicalTableStats(defs[2].ID, tblBatch.Meta())
-	require.False(t, requested.Pseudo)
-	require.Greater(t, requested.Version, uint64(0))
-	nonPseudoCount := 1
-	for i, def := range defs {
-		if i == 2 {
-			continue
-		}
-		if !cappedProvider.GetPhysicalTableStats(def.ID, tblBatch.Meta()).Pseudo {
-			nonPseudoCount++
-		}
-	}
-	require.Equal(t, 2, nonPseudoCount)
-	require.Equal(t, int64(1), cappedPool.getCount.Load())
-	require.Equal(t, int64(1), cappedPool.putCount.Load())
 }
 
 func TestOnDemandStatsProviderCancellationAndPanicDestroy(t *testing.T) {
