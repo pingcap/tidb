@@ -1288,6 +1288,9 @@ CREATE TABLE t (a DATETIME);
 INSERT INTO t VALUES('1988-04-17 01:59:59');
 SELECT DATE_ADD(a, INTERVAL 1 SECOND) FROM t;
 
+# TestIssue63719
+select date_sub('0000-01-01 00:00:00', interval '-1-0' YEAR_MONTH);
+
 # TestZeroDateTimeCompatibility
 --enable_warnings
 select YEAR(0000-00-00), YEAR("0000-00-00");
