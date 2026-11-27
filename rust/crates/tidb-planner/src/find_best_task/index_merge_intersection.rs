@@ -220,6 +220,7 @@ pub(super) fn build_prepared_index_merge_task(
         idx_merge_part_plans: partial_plans_raw,
         idx_merge_is_intersection: path.index_merge_is_intersection,
         idx_merge_access_mv_index: path.index_merge_access_mv_index,
+        idx_merge_mv_covered_conds: path.index_merge_mv_covered_conds.clone(),
         index_plan_finished,
         stats_context: ctx.task_stats_context(ds, &root_task_conds),
         root_task_conds,

@@ -6533,7 +6533,7 @@ mod tests {
         let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(10.0, [])));
         base.set_children(vec![dual(&allocator, 10.0)]);
-        let selection = LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()));
+        let selection = LogicalPlan::Selection(LogicalSelection::new(base, vec![tidb_expr::expression::Expression::Constant(tidb_expr::constant::Constant::new(tidb_datatype::Datum::Int(1), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)))]));
 
         let task =
             find_best_task(&selection, &PhysicalProperty::default(), &mut ctx).expect("plans");
@@ -6558,7 +6558,7 @@ mod tests {
         let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(10.0, [])));
         base.set_children(vec![dual(&allocator, 1.0)]);
-        let selection = LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()));
+        let selection = LogicalPlan::Selection(LogicalSelection::new(base, vec![tidb_expr::expression::Expression::Constant(tidb_expr::constant::Constant::new(tidb_datatype::Datum::Int(1), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)))]));
 
         let prop = PhysicalProperty {
             sort_items: vec![SortItem::from_unique_id(7, false)],
@@ -6597,7 +6597,7 @@ mod tests {
         let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(4.0, [])));
         base.set_children(vec![cte]);
-        let selection = LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()));
+        let selection = LogicalPlan::Selection(LogicalSelection::new(base, vec![tidb_expr::expression::Expression::Constant(tidb_expr::constant::Constant::new(tidb_datatype::Datum::Int(1), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)))]));
 
         let prop = PhysicalProperty {
             sort_items: vec![SortItem::from_unique_id(7, false)],
@@ -6646,7 +6646,7 @@ mod tests {
         let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(10.0, [])));
         base.set_children(vec![source]);
-        let selection = LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()));
+        let selection = LogicalPlan::Selection(LogicalSelection::new(base, vec![tidb_expr::expression::Expression::Constant(tidb_expr::constant::Constant::new(tidb_datatype::Datum::Int(1), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)))]));
 
         let task =
             find_best_task(&selection, &PhysicalProperty::default(), &mut ctx).expect("plans");

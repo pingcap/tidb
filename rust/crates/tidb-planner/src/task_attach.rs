@@ -1443,6 +1443,39 @@ pub fn attach2_task_with_group_ndv_skew_ratio(
     )
 }
 
+/// Go `removeMVIndexCoveredConds`: `conds` without the conditions the
+/// IndexMergeReader under `task` already enforces exactly through MV index
+/// ranges. These cannot be pushed down to TiKV (`JSON_OVERLAPS(j->'$.a',
+/// '[1, 2]')`), so they stay in a Selection above the DataSource even when
+/// the MV index consumes them. They are removed only when the reader is
+/// reached through Projections and Selections, which add no rows; a
+/// UnionScan, for one, adds uncommitted rows that did not come through the
+/// index.
+fn remove_mv_index_covered_conds(conds: &[Expression], task: &Task) -> Vec<Expression> {
+    let Task::Root(root) = task else {
+        return conds.to_vec();
+    };
+    if root.idx_merge_mv_covered_conds.is_empty() {
+        return conds.to_vec();
+    }
+    let mut plan = root.get_plan();
+    loop {
+        match plan {
+            PhysicalPlan::IndexMergeReader(_) => break,
+            PhysicalPlan::Projection(_) | PhysicalPlan::Selection(_) => {
+                let Some(child) = plan.children().first() else {
+                    return conds.to_vec();
+                };
+                plan = child;
+            }
+            _ => return conds.to_vec(),
+        }
+    }
+    let hash = |condition: &Expression| condition.clone().hash_code().to_vec();
+    let covered: std::collections::HashSet<Vec<u8>> = root.idx_merge_mv_covered_conds.iter().map(hash).collect();
+    conds.iter().filter(|condition| !covered.contains(&hash(condition))).cloned().collect()
+}
+
 /// Attaches a candidate without losing the statement evaluation context at conversion.
 pub(crate) fn attach2_task_in(
     plan: PhysicalPlan,
@@ -1473,7 +1506,32 @@ pub(crate) fn attach2_task_in(
         PhysicalPlan::Selection(_) => match &first {
             Task::Root(_) | Task::Cop(_) => {
                 let converted = first.into_root_task_in(allocator, evaluate)?;
-                Ok(attach_plan_2_task(plan, converted))
+                let PhysicalPlan::Selection(selection) = plan else {
+                    unreachable!("the arm matched Selection");
+                };
+                let conds = remove_mv_index_covered_conds(&selection.conditions, &converted);
+                if conds.is_empty() {
+                    return Ok(converted);
+                }
+                let selection = if conds.len() < selection.conditions.len() {
+                    // Go builds a new Selection rather than modifying sel,
+                    // which may also be attached to other child tasks.
+                    let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
+                        allocator,
+                        "Selection",
+                        selection.base.base.query_block_offset(),
+                    );
+                    base.base.set_stats(selection.base.base.stats_info().cloned());
+                    base.base.set_schema(selection.base.base.schema().cloned());
+                    tidb_planner_core_operator_physicalop::PhysicalSelection {
+                        base,
+                        conditions: conds,
+                        from_data_source: selection.from_data_source,
+                    }
+                } else {
+                    selection
+                };
+                Ok(attach_plan_2_task(PhysicalPlan::Selection(selection), converted))
             }
             Task::Mpp(_) => {
                 let PhysicalPlan::Selection(selection) = &plan else {
@@ -3036,6 +3094,8 @@ mod attach_tests {
         // new plan becomes the task's, and Count reads the NEW top's stats.
         let selection = PhysicalPlan::Selection(PhysicalSelection {
             base: op_with_stats("Selection", 8.0),
+            // A real Selection has conditions; Go drops one left with none.
+            conditions: vec![Expression::Constant(tidb_expr::constant::Constant::new(tidb_datatype::Datum::Int(1), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)))],
             ..PhysicalSelection::default()
         });
         let task = attach2_task(
@@ -3570,6 +3630,8 @@ mod attach_tests {
         };
         let selection = PhysicalPlan::Selection(PhysicalSelection {
             base: op_with_stats("Selection", 8.0),
+            // A real Selection has conditions; Go drops one left with none.
+            conditions: vec![Expression::Constant(tidb_expr::constant::Constant::new(tidb_datatype::Datum::Int(1), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)))],
             ..PhysicalSelection::default()
         });
         let cop = Task::Cop(CopTask {

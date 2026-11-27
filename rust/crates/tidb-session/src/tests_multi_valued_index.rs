@@ -198,7 +198,7 @@ fn brief_plan(session: &mut Session, sql: &str) -> Vec<String> {
 
 /// Go `generateANDIndexMerge4MVIndex` and `generateANDIndexMerge4ComposedIndex`:
 /// `member of` reads one MV partial (a union), `json_overlaps` a union of one
-/// partial per value with the filter kept above it, and a hinted `id > 0`
+/// partial per value (whose exact ranges need no recheck above), and a hinted `id > 0`
 /// joins an intersection. Before the port every one read the whole table.
 /// Plans and estimates are the recorded TiDB output.
 #[test]
@@ -241,14 +241,15 @@ fn multi_valued_predicates_plan_index_merges_as_go_does() {
             "explain format='brief' select * from customers \
              where json_overlaps(\"[1, 6, 10]\", custinfo->'$.zipcode') and id > 1"
         ),
+        // Go master 2f3a0667362: the union's exact point ranges enforce the
+        // json_overlaps, so no root Selection rechecks it.
         vec![
-            "Selection 2.40 ".to_owned(),
-            "└─IndexMerge 1.00 partition:all".to_owned(),
-            format!("  ├─IndexRangeScan(Build) 1.00 {zips}"),
-            format!("  ├─IndexRangeScan(Build) 1.00 {zips}"),
-            format!("  ├─IndexRangeScan(Build) 1.00 {zips}"),
-            "  └─Selection(Probe) 1.00 ".to_owned(),
-            "    └─TableRowIDScan 3.00 table:customers".to_owned(),
+            "IndexMerge 1.00 partition:all".to_owned(),
+            format!("├─IndexRangeScan(Build) 1.00 {zips}"),
+            format!("├─IndexRangeScan(Build) 1.00 {zips}"),
+            format!("├─IndexRangeScan(Build) 1.00 {zips}"),
+            "└─Selection(Probe) 1.00 ".to_owned(),
+            "  └─TableRowIDScan 3.00 table:customers".to_owned(),
         ]
     );
     assert_eq!(
@@ -477,4 +478,110 @@ fn an_added_array_index_is_a_multi_valued_index() {
         row_text(session.run("select a from t where 3 member of (b->'$.b')")),
         vec![vec!["1"]]
     );
+}
+
+/// Go master `TestMVIndexSkipCoveredJSONPredicateRecheck`
+/// (`expression/multi_valued_index.test`, 2f3a0667362): JSON_OVERLAPS cannot
+/// be pushed down to TiKV, but exact MV index point ranges enforce it, so no
+/// Selection rechecks it; a condition the ranges do not cover is still
+/// evaluated; inside a transaction the UnionScan adds uncommitted rows that
+/// did not come through the index, so the Selection stays.
+#[test]
+fn test_mv_index_skip_covered_json_predicate_recheck() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t (id bigint primary key, j json, index zips ((cast(json_extract(j, '$.zipcode') as unsigned array))))",
+        r#"insert into t values (1, '{"zipcode":[1,2]}'), (2, '{"zipcode":[3,4]}'), (3, '{"zipcode":[5,6]}'), (4, '{"zipcode":[]}'), (5, null)"#,
+    ] {
+        session.run(sql).unwrap();
+    }
+    let zips = "table:t, index:zips(cast(json_extract(`j`, _utf8mb4'$.zipcode') as unsigned array))";
+    let plan = |session: &mut Session, sql: &str| {
+        row_text(session.run(sql))
+            .into_iter()
+            .map(|row| format!("{} {} {} {}", row[0], row[1], row[3], row[4]))
+            .collect::<Vec<_>>()
+    };
+    let scans = |indent: &str| {
+        vec![
+            format!("{indent}├─IndexRangeScan(Build) 10.00 {zips} range:[1,1], keep order:false, stats:pseudo"),
+            format!("{indent}├─IndexRangeScan(Build) 10.00 {zips} range:[3,3], keep order:false, stats:pseudo"),
+            format!("{indent}├─IndexRangeScan(Build) 10.00 {zips} range:[7,7], keep order:false, stats:pseudo"),
+            format!("{indent}└─TableRowIDScan(Probe) 29.97 table:t keep order:false, stats:pseudo"),
+        ]
+    };
+    let mut expected = vec![
+        "Projection 23.98  test.t.id".to_owned(),
+        "└─IndexMerge 29.97  type: union".to_owned(),
+    ];
+    expected.extend(scans("  "));
+    assert_eq!(
+        plan(&mut session, "explain format='brief' select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]')"),
+        expected
+    );
+    assert_eq!(
+        row_text(session.run("select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]') order by id")),
+        vec![vec!["1"], vec!["2"]]
+    );
+    let mut expected = vec![
+        "Projection 23.98  test.t.id".to_owned(),
+        r#"└─Selection 23.98  json_overlaps(json_extract(test.t.j, "$.zipcode"), cast("[2, 6]", json BINARY))"#.to_owned(),
+        "  └─IndexMerge 29.97  type: union".to_owned(),
+    ];
+    expected.extend(scans("    "));
+    assert_eq!(
+        plan(
+            &mut session,
+            "explain format='brief' select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]') and json_overlaps(j->'$.zipcode', '[2, 6]')"
+        ),
+        expected
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]') and json_overlaps(j->'$.zipcode', '[2, 6]') order by id"
+        )),
+        vec![vec!["1"]]
+    );
+    session.run("begin").unwrap();
+    session.run(r#"insert into t values (6, '{"zipcode":[3]}'), (7, '{"zipcode":[8]}')"#).unwrap();
+    let mut expected = vec![
+        "Projection 23.98  test.t.id".to_owned(),
+        r#"└─Selection 23.98  json_overlaps(json_extract(test.t.j, "$.zipcode"), cast("[1, 3, 7]", json BINARY))"#.to_owned(),
+        r#"  └─UnionScan 29.97  json_overlaps(json_extract(test.t.j, "$.zipcode"), cast("[1, 3, 7]", json BINARY))"#.to_owned(),
+        "    └─IndexMerge 29.97  type: union".to_owned(),
+    ];
+    expected.extend(scans("      "));
+    assert_eq!(
+        plan(&mut session, "explain format='brief' select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]')"),
+        expected
+    );
+    assert_eq!(
+        row_text(session.run("select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]') order by id")),
+        vec![vec!["1"], vec!["2"], vec!["6"]]
+    );
+    session.run("rollback").unwrap();
+}
+
+/// Go master `TestWriteMultiValuedIndex`'s DOUBLE ARRAY tail (2f3a0667362):
+/// the index range is built from float64, so integers above 2^53 collapse
+/// into one key and the JSON predicate is still rechecked.
+#[test]
+fn a_double_array_mv_index_keeps_the_json_recheck() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t1(pk int primary key, a json, index idx((cast(a->'$' as double array))))",
+        "insert into t1 values (1, '[9007199254740993]'), (2, '[9007199254740992]'), (3, '[42]')",
+        "analyze table t1",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for hint in ["ignore", "use"] {
+        assert_eq!(
+            row_text(session.run(&format!(
+                "select pk from t1 {hint} index(idx) where json_overlaps(a->'$', '[9007199254740993]')"
+            ))),
+            vec![vec!["1"]],
+            "{hint} index"
+        );
+    }
 }

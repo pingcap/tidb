@@ -652,15 +652,98 @@ pub(crate) fn generate_and_index_merge_4_mv_index(
         for partial in &mut partials {
             partial.index_filters.extend(index_filters.iter().cloned());
         }
-        paths.push(build_partial_path_up_for_mv_index(
+        let covers = mv_index_range_covers_json_predicates(ds, index, &partials);
+        let mut index_merge_path = build_partial_path_up_for_mv_index(
             ds,
             partials,
             is_intersection,
             table_filters,
             noncacheable,
-        ));
+        );
+        if covers {
+            index_merge_path.index_merge_mv_covered_conds = collect_mv_covered_json_conds(&access_filters);
+        }
+        paths.push(index_merge_path);
     }
     Ok(paths)
+}
+
+/// Go `mvIndexRangeCoversJSONPredicates`: whether the ranges built for this
+/// MV index enforce the JSON predicates exactly. Ranges for floating-point
+/// array elements are built from float values, which cannot represent every
+/// JSON number (integers above 2^53), so they only over-approximate the
+/// predicate and the recheck stays. So does a predicate whose range on the
+/// array column is not a single point: it was not turned into an exact
+/// index range.
+fn mv_index_range_covers_json_predicates(
+    ds: &DataSource,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
+    partial_paths: &[AccessPath],
+) -> bool {
+    let Some(table_info) = ds.table_info.as_ref() else {
+        return false;
+    };
+    let col_infos = table_info.read().cols();
+    for (i, key) in index.read().columns.iter_deref().enumerate() {
+        let Some(col_meta) = col_infos.get(key.read().offset as usize) else {
+            return false;
+        };
+        let col_meta = col_meta.read();
+        if !col_meta.field_type.is_array() {
+            continue;
+        }
+        if matches!(col_meta.field_type.array_type().code(), FieldTypeCode::Float | FieldTypeCode::Double) {
+            return false;
+        }
+        if !partial_paths
+            .iter()
+            .all(|partial_path| ranges_restrict_column_to_point(&partial_path.ranges, i))
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Go `rangesRestrictColumnToPoint`: whether every range restricts the
+/// column at `col_idx` to a single value. A full range means the predicate
+/// was not turned into an exact index range, so the recheck stays.
+fn ranges_restrict_column_to_point(ranges: &tidb_ranger::types::Ranges, col_idx: usize) -> bool {
+    if ranges.is_empty() {
+        return false;
+    }
+    ranges.iter().all(|range| {
+        if range.low_val.len() != range.high_val.len()
+            || range.low_val.len() <= col_idx
+            || range.collators.len() <= col_idx
+        {
+            return false;
+        }
+        let (lo, hi) = (&range.low_val[col_idx], &range.high_val[col_idx]);
+        if matches!(lo, Datum::MinNotNull) || matches!(hi, Datum::MaxValue) {
+            return false;
+        }
+        lo.compare(hi, range.collators[col_idx])
+            .is_ok_and(|cmp| cmp == std::cmp::Ordering::Equal)
+            && !range.low_exclude
+            && !range.high_exclude
+    })
+}
+
+/// Go `collectMVCoveredJSONConds`: the JSON predicates among the access
+/// filters. The ranges a single MV index builds enforce them exactly (unsafe
+/// type conversions and empty arrays are refused while building them), so
+/// the rows the path returns satisfy them. The caller makes sure the MV
+/// index ranges are exact.
+fn collect_mv_covered_json_conds(access_filters: &[Expression]) -> Vec<Expression> {
+    access_filters
+        .iter()
+        .filter(|filter| {
+            matches!(filter, Expression::ScalarFunction(function)
+                if matches!(function.func_name.lowercase(), "json_memberof" | "json_contains" | "json_overlaps"))
+        })
+        .cloned()
+        .collect()
 }
 
 /// Go `generateMVAccessPathPaths4And`: the partial paths of every MV

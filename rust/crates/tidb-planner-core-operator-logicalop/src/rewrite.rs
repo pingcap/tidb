@@ -514,9 +514,9 @@ enum PendingPredicates {
     /// `LogicalSelection` above it via `logicalop.AddSelection`, and the
     /// carried vector is what this node reports upward.
     AddSelection(Vec<Expression>),
-    /// The tail `LogicalProjection`, `LogicalUnionScan` and `LogicalSequence`
-    /// take: the child's leftover keeps travelling upward, joined with what
-    /// this node could not push.
+    /// The tail `LogicalUnionScan` and `LogicalSequence` take: the child's
+    /// leftover keeps travelling upward, joined with what this node could
+    /// not push.
     PassThrough(Vec<Expression>),
     /// Go `BaseLogicalPlan.PredicatePushDown`'s tail
     /// (`base_logical_plan.go:128`): the child's leftovers are attached as a
@@ -706,11 +706,16 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
             }
             // Go `LogicalUnionScan.PredicatePushDown`
             // (`logical_union_scan.go:70`).
+            // The child's leftovers travel upward with the virtual-column
+            // predicates (`retainedPredicates = append(retainedPredicates,
+            // predicatesWithVCol...)`), so the parent Selection stays above
+            // the union scan; the union scan's own conditions, for the added
+            // rows only, are the predicates it pushed.
             LogicalPlan::UnionScan(op) => {
                 let split = LogicalUnionScan::predicate_push_down(&predicates);
-                op.conditions = predicates;
+                op.conditions = split.without_virtual_column.clone();
                 self.stash
-                    .push(PendingPredicates::AttachBelow(split.with_virtual_column));
+                    .push(PendingPredicates::PassThrough(split.with_virtual_column));
                 Descend::Children(vec![split.without_virtual_column])
             }
             // Go `LogicalUnionAll.PredicatePushDown`

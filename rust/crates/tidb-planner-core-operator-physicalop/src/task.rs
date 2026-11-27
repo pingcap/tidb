@@ -230,6 +230,10 @@ pub struct RootTask {
     /// Go `RootTask.IndexJoinInfo`, passed through unary root operators until
     /// the owning physical index join consumes it.
     pub index_join_info: Option<IndexJoinInfo>,
+    /// Go `IdxMergeMVCoveredConds`: conditions the IndexMergeReader at the
+    /// bottom of this task enforces exactly through MV index ranges (see
+    /// `AccessPath.index_merge_mv_covered_conds`).
+    pub idx_merge_mv_covered_conds: Vec<Expression>,
     /// Go `Warnings`.
     pub warnings: SimpleWarnings,
 }
@@ -269,6 +273,7 @@ impl RootTask {
         let mut copied = RootTask {
             plan: self.plan.clone(),
             index_join_info: self.index_join_info.clone(),
+            idx_merge_mv_covered_conds: self.idx_merge_mv_covered_conds.clone(),
             warnings: SimpleWarnings::default(),
         };
         copied.warnings.copy_of(&self.warnings);
@@ -517,6 +522,9 @@ pub struct CopTask {
     pub idx_merge_is_intersection: bool,
     /// Go `IdxMergeAccessMVIndex`.
     pub idx_merge_access_mv_index: bool,
+    /// Go `IdxMergeMVCoveredConds`, from
+    /// `AccessPath.index_merge_mv_covered_conds`.
+    pub idx_merge_mv_covered_conds: Vec<Expression>,
     /// Merge ordering feedback used by parent LIMIT/TopN attachment.
     pub idx_merge_order: Option<IndexMergeOrder>,
     /// Go `RootTaskConds`: selections carrying virtual columns, which cannot
@@ -1006,6 +1014,7 @@ impl CopTask {
             };
             let mut root = RootTask::default();
             root.set_plan(reader);
+            root.idx_merge_mv_covered_conds = std::mem::take(&mut self.idx_merge_mv_covered_conds);
             root.index_join_info = self.index_join_info.take();
             if self.warnings.warning_count() > 0 {
                 root.warnings.copy_of(&self.warnings);

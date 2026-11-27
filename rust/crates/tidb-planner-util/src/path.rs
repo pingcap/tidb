@@ -113,6 +113,13 @@ pub struct AccessPath {
     pub index_merge_is_intersection: bool,
     /// Go `IndexMergeAccessMVIndex`.
     pub index_merge_access_mv_index: bool,
+    /// Go `IndexMergeMVCoveredConds`: the JSON predicates (MEMBER OF,
+    /// JSON_CONTAINS, JSON_OVERLAPS) on an MV index array column that a
+    /// single-MV-index IndexMerge path turned into exact index ranges. Every
+    /// row this path returns satisfies them, so a parent Selection that
+    /// holds them (because they cannot be pushed down to TiKV) need not
+    /// evaluate them again.
+    pub index_merge_mv_covered_conds: Vec<Expression>,
 }
 
 impl AccessPath {
