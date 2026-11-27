@@ -194,6 +194,12 @@ type Allocator interface {
 	// If allocIDs is false, it will not allocate IDs.
 	Rebase(ctx context.Context, newBase int64, allocIDs bool) error
 
+	// RebaseKeepCache is Rebase with allocIDs set, except that it keeps the cached IDs when newBase is beyond
+	// them but has already been handed out to some cached range. Such a value can never be allocated again, so
+	// the cache stays safe to use. It is meant for explicit values in INSERT statements, which often name rows
+	// inserted through other TiDB servers. See https://github.com/pingcap/tidb/issues/72555.
+	RebaseKeepCache(ctx context.Context, newBase int64) error
+
 	// ForceRebase set the next global auto ID to newBase.
 	ForceRebase(newBase int64) error
 
@@ -345,7 +351,7 @@ func (alloc *allocator) Transfer(databaseID, tableID int64) error {
 	return err
 }
 
-func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64, allocIDs bool) error {
+func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64, allocIDs, keepCache bool) error {
 	// Satisfied by alloc.base, nothing to do.
 	if requiredBase <= uint64(alloc.base) {
 		return nil
@@ -366,6 +372,7 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64
 		}()
 	}
 	var newBase, newEnd uint64
+	var cacheKept bool
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -379,6 +386,10 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64
 		}
 		uCurrentEnd := uint64(currentEnd)
 		if allocIDs {
+			if keepCache && uCurrentEnd >= requiredBase {
+				cacheKept = true
+				return nil
+			}
 			newBase = max(uCurrentEnd, requiredBase)
 			newEnd = min(math.MaxUint64-uint64(alloc.step), newBase) + uint64(alloc.step)
 		} else {
@@ -398,14 +409,14 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64
 		return err1
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	if err != nil {
+	if err != nil || cacheKept {
 		return err
 	}
 	alloc.base, alloc.end = int64(newBase), int64(newEnd)
 	return nil
 }
 
-func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, allocIDs bool) error {
+func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, allocIDs, keepCache bool) error {
 	// Satisfied by alloc.base, nothing to do.
 	if requiredBase <= alloc.base {
 		return nil
@@ -426,6 +437,7 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 		}()
 	}
 	var newBase, newEnd int64
+	var cacheKept bool
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -438,6 +450,10 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 			return err1
 		}
 		if allocIDs {
+			if keepCache && currentEnd >= requiredBase {
+				cacheKept = true
+				return nil
+			}
 			newBase = max(currentEnd, requiredBase)
 			newEnd = min(math.MaxInt64-alloc.step, newBase) + alloc.step
 		} else {
@@ -457,7 +473,7 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 		return err1
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	if err != nil {
+	if err != nil || cacheKept {
 		return err
 	}
 	alloc.base, alloc.end = newBase, newEnd
@@ -513,9 +529,19 @@ func (alloc *allocator) Rebase(ctx context.Context, requiredBase int64, allocIDs
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
-		return alloc.rebase4Unsigned(ctx, uint64(requiredBase), allocIDs)
+		return alloc.rebase4Unsigned(ctx, uint64(requiredBase), allocIDs, false)
 	}
-	return alloc.rebase4Signed(ctx, requiredBase, allocIDs)
+	return alloc.rebase4Signed(ctx, requiredBase, allocIDs, false)
+}
+
+// RebaseKeepCache implements autoid.Allocator RebaseKeepCache interface.
+func (alloc *allocator) RebaseKeepCache(ctx context.Context, requiredBase int64) error {
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+	if alloc.isUnsigned {
+		return alloc.rebase4Unsigned(ctx, uint64(requiredBase), true, true)
+	}
+	return alloc.rebase4Signed(ctx, requiredBase, true, true)
 }
 
 // ForceRebase implements autoid.Allocator ForceRebase interface.
@@ -889,7 +915,7 @@ func SeekToFirstAutoIDUnSigned(base, increment, offset uint64) uint64 {
 func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, offset int64) (minv, maxv int64, err error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
-		if err := alloc.rebase4Signed(ctx, offset-1, true); err != nil {
+		if err := alloc.rebase4Signed(ctx, offset-1, true, false); err != nil {
 			return 0, 0, err
 		}
 	}
@@ -977,7 +1003,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (minv int64, maxv int64, err error) {
 	// Check offset rebase if necessary.
 	if uint64(offset-1) > uint64(alloc.base) {
-		if err := alloc.rebase4Unsigned(ctx, uint64(offset-1), true); err != nil {
+		if err := alloc.rebase4Unsigned(ctx, uint64(offset-1), true, false); err != nil {
 			return 0, 0, err
 		}
 	}

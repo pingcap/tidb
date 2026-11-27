@@ -683,3 +683,53 @@ func TestGetAutoIDServiceLeaderEtcdPath(t *testing.T) {
 	path = autoid.GetAutoIDServiceLeaderEtcdPath(uint32(keyspaceID))
 	require.Equal(t, "/"+autoid.AutoIDLeaderPath, path)
 }
+
+func TestRebaseKeepCache(t *testing.T) {
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")}))
+		require.NoError(t, m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")}))
+		require.NoError(t, m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: ast.NewCIStr("t1")}))
+		return nil
+	})
+	require.NoError(t, err)
+
+	for tblID, isUnsigned := range map[int64]bool{1: false, 2: true} {
+		// Two allocators on the same table stand for two TiDB servers.
+		allocA := autoid.NewAllocator(mockRequirement{store}, 1, tblID, isUnsigned, autoid.AutoIncrementType, autoid.CustomAutoIncCacheOption(100))
+		allocB := autoid.NewAllocator(mockRequirement{store}, 1, tblID, isUnsigned, autoid.AutoIncrementType, autoid.CustomAutoIncCacheOption(100))
+		_, id, err := allocA.Alloc(ctx, 1, 1, 1)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), id)
+		_, id, err = allocB.Alloc(ctx, 1, 1, 1)
+		require.NoError(t, err)
+		require.Equal(t, int64(101), id)
+
+		// 101 is beyond A's cache but already handed out to B, so A keeps (1, 100].
+		require.NoError(t, allocA.RebaseKeepCache(ctx, 101))
+		require.Equal(t, int64(1), allocA.Base())
+		require.Equal(t, int64(100), allocA.End())
+		_, id, err = allocA.Alloc(ctx, 1, 1, 1)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), id)
+
+		// A value inside A's cache moves the base as Rebase does.
+		require.NoError(t, allocA.RebaseKeepCache(ctx, 50))
+		_, id, err = allocA.Alloc(ctx, 1, 1, 1)
+		require.NoError(t, err)
+		require.Equal(t, int64(51), id)
+
+		// A value beyond every handed-out range still claims a new cache past it.
+		require.NoError(t, allocA.RebaseKeepCache(ctx, 250))
+		_, id, err = allocA.Alloc(ctx, 1, 1, 1)
+		require.NoError(t, err)
+		require.Equal(t, int64(251), id)
+	}
+}
