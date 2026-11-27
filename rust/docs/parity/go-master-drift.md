@@ -211,4 +211,4 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 
 ## Held
 
-Ported or not applicable, though the audit still flags them (keep them out of the candidates on a rerun): 0386d784bc8 07b758bf938 143374f759f 1d19049f6e3 22fd1ac756e 3bd6b6d4d63 4c0e2c06244 56ee5bb2684 592082dee72 655769534b4 70970592ab0 7981253e7c3 87d45a1d703 8cde78af3c5 8d5a3a1908f a40e9d6e76f adee1920e10 b0f09ba1ea4 d3928d5c659 d880d7fabe5.
+Ported or not applicable, though the audit still flags them (keep them out of the candidates on a rerun): 0386d784bc8 07b758bf938 143374f759f 1d19049f6e3 22fd1ac756e 3bd6b6d4d63 4c0e2c06244 56ee5bb2684 592082dee72 655769534b4 70970592ab0 7981253e7c3 87d45a1d703 8cde78af3c5 8d5a3a1908f a40e9d6e76f adee1920e10 ed2376acc6e b0f09ba1ea4 d3928d5c659 d880d7fabe5.
