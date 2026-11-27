@@ -148,6 +148,46 @@ func TestMPPVirtualTextFilter(t *testing.T) {
 	require.NotContains(t, withoutPruning, "cast(lower")
 }
 
+func TestMPPVirtualTextFilterWithCommonHandle(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table obj_new(
+		workspace_id varchar(255) not null, id binary(16) not null,
+		obj_type_id binary(16) not null, sequential_id bigint, label varchar(255),
+		text_value_7 text, text_value_7_lower text as (lower(text_value_7)) virtual,
+		primary key (workspace_id, id) clustered,
+		key ix_obj_type_lower (workspace_id(36), obj_type_id, text_value_7_lower(500))
+	) collate utf8mb4_bin`)
+	tk.MustExec(`create table obj_relationship_new(
+		workspace_id varchar(255) not null, id binary(16) not null,
+		object_id binary(16) not null, object_type_attribute_id binary(16) not null,
+		primary key (workspace_id, id) clustered
+	) collate utf8mb4_bin`)
+	testkit.SetTiFlashReplica(t, dom, "test", "obj_new")
+	testkit.SetTiFlashReplica(t, dom, "test", "obj_relationship_new")
+	tk.MustExec("set tidb_allow_mpp=on, tidb_allow_tiflash_cop=off, tidb_enforce_mpp=off")
+	tk.MustExec("set tidb_isolation_read_engines='tiflash,tidb', tidb_opt_enable_alternative_logical_plans=on")
+	const query = `explain format='brief'
+		select hex(o.id), o.sequential_id, o.label from obj_new o
+		where o.workspace_id = 'workspace' and o.obj_type_id = x'00000000000000000000000000000001'
+		and o.text_value_7_lower = 'fagor'
+		and exists (
+			select 1 from obj_relationship_new d
+			where d.object_id = o.id and d.object_type_attribute_id = x'00000000000000000000000000000002'
+		)
+		order by o.label, o.id limit 1000`
+
+	tk.MustExec("set mpp_version=2")
+	require.NotContains(t, fmt.Sprint(tk.MustQuery(query).Rows()), "cast(lower")
+
+	tk.MustExec("set mpp_version=3")
+	plan := fmt.Sprint(tk.MustQuery(query).Rows())
+	require.Regexp(t, `Selection[^]]*mpp\[tiflash\][^]]*cast[(]lower`, plan)
+	require.Regexp(t, `HashJoin[^]]*mpp\[tiflash\][^]]*semi join`, plan)
+	require.NotContains(t, plan, "Apply")
+}
+
 func TestMPPVirtualIntegerFilter(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)

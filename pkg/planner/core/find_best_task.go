@@ -3131,7 +3131,10 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			}
 			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
-		if prop.TaskTp == property.MppTaskType && candidate.path.IsTiFlashSimpleTablePath() {
+		// A common-handle table scan carries PRIMARY as handle metadata.
+		idx := candidate.path.Index
+		isPlainTiFlashScan := isTiFlashPath && (idx == nil || (candidate.path.IsCommonHandlePath && idx.Primary))
+		if prop.TaskTp == property.MppTaskType && isPlainTiFlashScan {
 			ts.expandMPPVirtualColumnFilters(ds)
 		}
 		// ********************************** future deprecated start **************************/
