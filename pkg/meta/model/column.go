@@ -246,18 +246,39 @@ func (c *ColumnInfo) GetChangingOriginName() string {
 	return columnName[:pos]
 }
 
+// defaultStoredAsBytes returns whether the default value of the column is also kept
+// as raw bytes (in DefaultValueBit/OriginDefaultValueBit), because it is not guaranteed
+// to be valid UTF-8 and json.Marshal would otherwise replace invalid bytes with U+FFFD.
+func (c *ColumnInfo) defaultStoredAsBytes() bool {
+	switch c.GetType() {
+	case mysql.TypeBit:
+		return true
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
+		return c.GetCollate() == charset.CollationBin
+	}
+	return false
+}
+
 // SetOriginDefaultValue sets the origin default value.
 // For mysql.TypeBit type, the default value storage format must be a string.
 // Other value such as int must convert to string format first.
 // The mysql.TypeBit type supports the null default value.
 func (c *ColumnInfo) SetOriginDefaultValue(value any) error {
 	c.OriginDefaultValue = value
-	if c.GetType() == mysql.TypeBit {
+	if c.defaultStoredAsBytes() {
 		if value == nil {
+			if c.GetType() != mysql.TypeBit {
+				c.OriginDefaultValueBit = nil
+			}
 			return nil
 		}
 		if v, ok := value.(string); ok {
 			c.OriginDefaultValueBit = []byte(v)
+			return nil
+		}
+		if c.GetType() != mysql.TypeBit {
+			// Drop stale raw bytes, otherwise GetXxx would keep returning the old default.
+			c.OriginDefaultValueBit = nil
 			return nil
 		}
 		return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
@@ -267,7 +288,7 @@ func (c *ColumnInfo) SetOriginDefaultValue(value any) error {
 
 // GetOriginDefaultValue gets the origin default value.
 func (c *ColumnInfo) GetOriginDefaultValue() any {
-	if c.GetType() == mysql.TypeBit && c.OriginDefaultValueBit != nil {
+	if c.defaultStoredAsBytes() && c.OriginDefaultValueBit != nil {
 		// If the column type is BIT, both `OriginDefaultValue` and `DefaultValue` of ColumnInfo are corrupted,
 		// because the content before json.Marshal is INCONSISTENT with the content after json.Unmarshal.
 		return string(c.OriginDefaultValueBit)
@@ -278,15 +299,23 @@ func (c *ColumnInfo) GetOriginDefaultValue() any {
 // SetDefaultValue sets the default value.
 func (c *ColumnInfo) SetDefaultValue(value any) error {
 	c.DefaultValue = value
-	if c.GetType() == mysql.TypeBit {
+	if c.defaultStoredAsBytes() {
 		// For mysql.TypeBit type, the default value storage format must be a string.
 		// Other value such as int must convert to string format first.
 		// The mysql.TypeBit type supports the null default value.
 		if value == nil {
+			if c.GetType() != mysql.TypeBit {
+				c.DefaultValueBit = nil
+			}
 			return nil
 		}
 		if v, ok := value.(string); ok {
 			c.DefaultValueBit = []byte(v)
+			return nil
+		}
+		if c.GetType() != mysql.TypeBit {
+			// Drop stale raw bytes, otherwise GetXxx would keep returning the old default.
+			c.DefaultValueBit = nil
 			return nil
 		}
 		return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
@@ -298,7 +327,7 @@ func (c *ColumnInfo) SetDefaultValue(value any) error {
 // Default value use to stored in DefaultValue field, but now,
 // bit type default value will store in DefaultValueBit for fix bit default value decode/encode bug.
 func (c *ColumnInfo) GetDefaultValue() any {
-	if c.GetType() == mysql.TypeBit && c.DefaultValueBit != nil {
+	if c.defaultStoredAsBytes() && c.DefaultValueBit != nil {
 		return string(c.DefaultValueBit)
 	}
 	return c.DefaultValue

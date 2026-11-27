@@ -104,3 +104,50 @@ func TestDefaultValue(t *testing.T) {
 	require.Equal(t, mysql.NotNullFlag, extraPhysTblIDCol.GetFlag())
 	require.Equal(t, mysql.TypeLonglong, extraPhysTblIDCol.GetType())
 }
+
+func TestBinaryDefaultValueJSONRoundTrip(t *testing.T) {
+	raw := "\x00\xffA"
+	for _, tp := range []byte{mysql.TypeVarchar, mysql.TypeString} {
+		col := &ColumnInfo{ID: 1, Name: ast.NewCIStr("b")}
+		col.FieldType = *types.NewFieldType(tp)
+		col.SetCharset("binary")
+		col.SetCollate("binary")
+		require.NoError(t, col.SetDefaultValue(raw))
+		require.NoError(t, col.SetOriginDefaultValue(raw))
+
+		data, err := json.Marshal(col)
+		require.NoError(t, err)
+		var got ColumnInfo
+		require.NoError(t, json.Unmarshal(data, &got))
+		require.Equal(t, raw, got.GetDefaultValue())
+		require.Equal(t, raw, got.GetOriginDefaultValue())
+	}
+
+	// A non-binary string column keeps the old behavior and stores no raw bytes.
+	col := &ColumnInfo{ID: 2, Name: ast.NewCIStr("s")}
+	col.FieldType = *types.NewFieldType(mysql.TypeVarchar)
+	col.SetCharset("utf8mb4")
+	col.SetCollate("utf8mb4_bin")
+	require.NoError(t, col.SetDefaultValue("abc"))
+	require.Nil(t, col.DefaultValueBit)
+
+	// A nil or non-string default of a binary column is accepted as before.
+	bin := &ColumnInfo{ID: 3, Name: ast.NewCIStr("n")}
+	bin.FieldType = *types.NewFieldType(mysql.TypeVarchar)
+	bin.SetCollate("binary")
+	require.NoError(t, bin.SetDefaultValue(nil))
+	require.NoError(t, bin.SetDefaultValue(1))
+	require.Nil(t, bin.DefaultValueBit)
+
+	// Replacing a raw-bytes default by nil or a non-string value drops the stale bytes.
+	for _, v := range []any{nil, 1} {
+		require.NoError(t, bin.SetDefaultValue(raw))
+		require.NoError(t, bin.SetOriginDefaultValue(raw))
+		require.NoError(t, bin.SetDefaultValue(v))
+		require.NoError(t, bin.SetOriginDefaultValue(v))
+		require.Equal(t, v, bin.GetDefaultValue())
+		require.Equal(t, v, bin.GetOriginDefaultValue())
+		require.Nil(t, bin.DefaultValueBit)
+		require.Nil(t, bin.OriginDefaultValueBit)
+	}
+}
