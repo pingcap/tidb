@@ -315,7 +315,7 @@ API handlers. Each endpoint determines which methods and parameters it accepts.
      *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `t1(p1)` for example:*
 
      ```shell
-     $curl http://127.0.0.1:10080/mvcc/key/test/t1(p1)/1
+     $curl "http://127.0.0.1:10080/mvcc/key/test/t1(p1)/1"
      ```
 
      *Hint: The method to convert the Hex format key returned by TiDB API into the format recognized by [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control).*
