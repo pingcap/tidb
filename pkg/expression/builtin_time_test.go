@@ -2272,6 +2272,60 @@ func TestUnixTimestamp(t *testing.T) {
 	}
 }
 
+func TestAdjustUnixTimestampForDSTOverlap(t *testing.T) {
+	tests := []struct {
+		name     string
+		zone     string
+		value    types.CoreTime
+		expected int64
+	}{
+		{
+			name:     "one hour overlap",
+			zone:     "Europe/Vilnius",
+			value:    types.FromDate(2020, 10, 25, 3, 45, 0, 0),
+			expected: 1603586700,
+		},
+		{
+			name:     "different transition hour",
+			zone:     "Europe/Amsterdam",
+			value:    types.FromDate(2020, 10, 25, 2, 35, 0, 0),
+			expected: 1603586100,
+		},
+		{
+			name:     "thirty minute overlap",
+			zone:     "Australia/Lord_Howe",
+			value:    types.FromDate(2020, 4, 5, 1, 45, 0, 0),
+			expected: 1586011500,
+		},
+		{
+			name:     "outside overlap",
+			zone:     "Europe/Vilnius",
+			value:    types.FromDate(2020, 6, 29, 3, 45, 0, 0),
+			expected: 1593391500,
+		},
+		{
+			name:     "fixed offset",
+			zone:     "UTC",
+			value:    types.FromDate(2020, 6, 29, 3, 45, 0, 0),
+			expected: 1593402300,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loc, err := time.LoadLocation(tt.zone)
+			require.NoError(t, err)
+			val := types.NewTime(tt.value, mysql.TypeDatetime, 0)
+			got, err := val.GoTime(loc)
+			require.NoError(t, err)
+
+			got = adjustUnixTimestampForDSTOverlap(val, got)
+			require.Equal(t, tt.expected, got.Unix())
+			require.Equal(t, val.CoreTime(), types.FromGoTime(got))
+		})
+	}
+}
+
 func TestDateArithFuncs(t *testing.T) {
 	ctx := createContext(t)
 	date := []string{"2016-12-31", "2017-01-01"}
