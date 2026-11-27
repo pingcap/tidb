@@ -1,7 +1,11 @@
 # Every geospatial function name in the parser's ast package, one statement each: the ones
-# MySQL 9.7.2 has, TiDB's EWKB pair and the geospatial index functions. A function TiDB
-# does not have raises 1305, as any unknown function does. The arguments are NULL, at least
-# as many as MySQL requires.
+# MySQL 9.7.2 has, the ones beyond MySQL that SQL/MM Part 3 defines, and TiDB's own: the
+# EWKB and EWKT pairs, the Z, M, linear-referencing and trajectory functions, the relations
+# a geospatial index can serve, the PostGIS spellings TiDB Cloud Lake also has, and further
+# measurement and processing, as PostGIS names them, and the geospatial index functions. A
+# function TiDB does not have raises 1305, as any unknown function does. The arguments are
+# NULL, at least as many as MySQL, or for a function MySQL lacks PostGIS, or else the
+# shortest SQL/MM form, requires.
 
 # === Constructors ===
 --error 1305
@@ -239,11 +243,138 @@ select ST_LongFromGeoHash(NULL);
 --error 1305
 select ST_PointFromGeoHash(NULL, NULL);
 
-# === TiDB only: EWKB, and the functions behind a geospatial index's hidden columns ===
+# === Beyond MySQL, as SQL/MM Part 3 names them ===
+--error 1305
+select ST_Point(NULL, NULL);
+--error 1305
+select ST_LineString(NULL);
+--error 1305
+select ST_Polygon(NULL, NULL);
+--error 1305
+select ST_MultiPoint(NULL);
+--error 1305
+select ST_MultiLineString(NULL);
+--error 1305
+select ST_MultiPolygon(NULL);
+--error 1305
+select ST_GeomCollection(NULL);
+--error 1305
+select ST_WKTToSQL(NULL);
+--error 1305
+select ST_WKBToSQL(NULL);
+--error 1305
+select ST_BdPolyFromText(NULL, NULL);
+--error 1305
+select ST_BdPolyFromWKB(NULL, NULL);
+--error 1305
+select ST_BdMPolyFromText(NULL, NULL);
+--error 1305
+select ST_BdMPolyFromWKB(NULL, NULL);
+--error 1305
+select ST_Z(NULL);
+--error 1305
+select ST_M(NULL);
+--error 1305
+select ST_CoordDim(NULL);
+--error 1305
+select ST_Is3D(NULL);
+--error 1305
+select ST_IsMeasured(NULL);
+--error 1305
+select ST_MinX(NULL);
+--error 1305
+select ST_MaxX(NULL);
+--error 1305
+select ST_MinY(NULL);
+--error 1305
+select ST_MaxY(NULL);
+--error 1305
+select ST_MinZ(NULL);
+--error 1305
+select ST_MaxZ(NULL);
+--error 1305
+select ST_MinM(NULL);
+--error 1305
+select ST_MaxM(NULL);
+--error 1305
+select ST_Boundary(NULL);
+--error 1305
+select ST_IsRing(NULL);
+--error 1305
+select ST_PointOnSurface(NULL);
+--error 1305
+select ST_Perimeter(NULL);
+--error 1305
+select ST_Relate(NULL, NULL);
+--error 1305
+select ST_LocateAlong(NULL, NULL);
+--error 1305
+select ST_LocateBetween(NULL, NULL, NULL);
+--error 1305
+select ST_DistanceToPoint(NULL, NULL);
+--error 1305
+select ST_PerpPoints(NULL, NULL);
+--error 1305
+select ST_SpatialRefSys(NULL);
+--error 1305
+select ST_AsWKTSRS(NULL);
+--error 1305
+select ST_WKTSRSToSQL(NULL);
+--error 1305
+select ST_OrderingEquals(NULL, NULL);
+
+# === TiDB only, PostGIS names: EWKB, EWKT, Z and M, index relations, Cloud Lake spellings,
+# further measurement and processing, and the geospatial index functions ===
 --error 1305
 select ST_AsEWKB(NULL);
 --error 1305
 select ST_GeomFromEWKB(NULL);
+--error 1305
+select ST_AsEWKT(NULL);
+--error 1305
+select ST_GeomFromEWKT(NULL);
+--error 1305
+select ST_HasZ(NULL);
+--error 1305
+select ST_HasM(NULL);
+--error 1305
+select ST_Force2D(NULL);
+--error 1305
+select ST_InterpolatePoint(NULL, NULL);
+--error 1305
+select ST_AddMeasure(NULL, NULL, NULL);
+--error 1305
+select ST_IsValidTrajectory(NULL);
+--error 1305
+select ST_ClosestPointOfApproach(NULL, NULL);
+--error 1305
+select ST_DistanceCPA(NULL, NULL);
+--error 1305
+select ST_CPAWithin(NULL, NULL, NULL);
+--error 1305
+select ST_Covers(NULL, NULL);
+--error 1305
+select ST_CoveredBy(NULL, NULL);
+--error 1305
+select ST_DWithin(NULL, NULL, NULL);
+--error 1305
+select ST_MakePoint(NULL, NULL);
+--error 1305
+select ST_SetSRID(NULL, NULL);
+--error 1305
+select ST_XMin(NULL);
+--error 1305
+select ST_XMax(NULL);
+--error 1305
+select ST_YMin(NULL);
+--error 1305
+select ST_YMax(NULL);
+--error 1305
+select ST_ClosestPoint(NULL, NULL);
+--error 1305
+select ST_Azimuth(NULL, NULL);
+--error 1305
+select ST_SimplifyPreserveTopology(NULL, NULL);
 --error 1305
 select tidb_spatial_key(NULL);
 --error 1305

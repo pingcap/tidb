@@ -921,6 +921,7 @@ const (
 	ErrInvalidEncryptionOption                               = 3184
 	ErrUnexpectedGeometryType                                = 3516
 	ErrRoleNotGranted                                        = 3530
+	ErrSRSNotFound                                           = 3548
 	ErrInvalidOptionKey                                      = 3558
 	ErrInvalidOptionValue                                    = 3559
 	ErrInvalidOptionKeyValuePair                             = 3560

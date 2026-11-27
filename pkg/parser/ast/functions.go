@@ -497,9 +497,91 @@ const (
 	StLongFromGeoHash  = "st_longfromgeohash"
 	StPointFromGeoHash = "st_pointfromgeohash"
 
-	// geospatial functions (TiDB extension): EWKB in and out
+	// geospatial functions beyond MySQL's, as SQL/MM Part 3 (ISO/IEC 13249-3) names them:
+	// constructors
+	StPoint           = "st_point"
+	StLineString      = "st_linestring"
+	StPolygon         = "st_polygon"
+	StMultiPoint      = "st_multipoint"
+	StMultiLineString = "st_multilinestring"
+	StMultiPolygon    = "st_multipolygon"
+	StGeomCollection  = "st_geomcollection"
+	// SQL/MM readers
+	StWKTToSQL        = "st_wkttosql"
+	StWKBToSQL        = "st_wkbtosql"
+	StBdPolyFromText  = "st_bdpolyfromtext"
+	StBdPolyFromWKB   = "st_bdpolyfromwkb"
+	StBdMPolyFromText = "st_bdmpolyfromtext"
+	StBdMPolyFromWKB  = "st_bdmpolyfromwkb"
+	// SQL/MM accessors
+	StZ              = "st_z"
+	StM              = "st_m"
+	StCoordDim       = "st_coorddim"
+	StIs3D           = "st_is3d"
+	StIsMeasured     = "st_ismeasured"
+	StMinX           = "st_minx"
+	StMaxX           = "st_maxx"
+	StMinY           = "st_miny"
+	StMaxY           = "st_maxy"
+	StMinZ           = "st_minz"
+	StMaxZ           = "st_maxz"
+	StMinM           = "st_minm"
+	StMaxM           = "st_maxm"
+	StBoundary       = "st_boundary"
+	StIsRing         = "st_isring"
+	StPointOnSurface = "st_pointonsurface"
+	// SQL/MM measurement
+	StPerimeter = "st_perimeter"
+	// SQL/MM predicates
+	StRelate = "st_relate"
+	// SQL/MM linear referencing
+	StLocateAlong     = "st_locatealong"
+	StLocateBetween   = "st_locatebetween"
+	StDistanceToPoint = "st_distancetopoint"
+	StPerpPoints      = "st_perppoints"
+	// SQL/MM spatial reference systems
+	StSpatialRefSys  = "st_spatialrefsys"
+	StAsWKTSRS       = "st_aswktsrs"
+	StWKTSRSToSQL    = "st_wktsrstosql"
+	StOrderingEquals = "st_orderingequals"
+
+	// geospatial functions (TiDB extension): EWKB and EWKT in and out
 	StAsEWKB       = "st_asewkb"
 	StGeomFromEWKB = "st_geomfromewkb"
+	StAsEWKT       = "st_asewkt"
+	StGeomFromEWKT = "st_geomfromewkt"
+
+	// geospatial functions (TiDB extension): Z and M coordinates, linear referencing and
+	// trajectories, as PostGIS names them
+	StHasZ                   = "st_hasz"
+	StHasM                   = "st_hasm"
+	StForce2D                = "st_force2d"
+	StInterpolatePoint       = "st_interpolatepoint"
+	StAddMeasure             = "st_addmeasure"
+	StIsValidTrajectory      = "st_isvalidtrajectory"
+	StClosestPointOfApproach = "st_closestpointofapproach"
+	StDistanceCPA            = "st_distancecpa"
+	StCPAWithin              = "st_cpawithin"
+
+	// geospatial functions (TiDB extension): relations a geospatial index can serve, as
+	// PostGIS names them
+	StCovers    = "st_covers"
+	StCoveredBy = "st_coveredby"
+	StDWithin   = "st_dwithin"
+
+	// geospatial functions (TiDB extension): PostGIS spellings TiDB Cloud Lake also has
+	StMakePoint = "st_makepoint"
+	StSetSRID   = "st_setsrid"
+	StXMin      = "st_xmin"
+	StXMax      = "st_xmax"
+	StYMin      = "st_ymin"
+	StYMax      = "st_ymax"
+
+	// geospatial functions (TiDB extension): measurement and processing beyond MySQL's, as
+	// PostGIS names them
+	StClosestPoint             = "st_closestpoint"
+	StAzimuth                  = "st_azimuth"
+	StSimplifyPreserveTopology = "st_simplifypreservetopology"
 
 	// geospatial index functions (TiDB internal), behind the hidden columns of a geospatial index
 	TiDBSpatialKey  = "tidb_spatial_key"
