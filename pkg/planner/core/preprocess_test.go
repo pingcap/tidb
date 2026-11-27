@@ -277,6 +277,15 @@ func TestValidator(t *testing.T) {
 		{"SELECT CAST(1 AS DATETIME(31));", true, types.ErrTooBigPrecision.GenWithStackByArgs(31, "CAST", types.MaxFsp)},
 
 		// TABLESAMPLE
+		{"select * from t tablesample regions();", false, nil},
+		{"select * from t tablesample regions(0 rows);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions(0 percent);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions(100 percent);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions(1);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions() repeatable (0);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions(1 rows) repeatable (1);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions(? rows);", true, expression.ErrInvalidTableSample},
+		{"select * from t tablesample regions() repeatable (?);", true, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli();", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(23 percent) repeatable (23);", false, expression.ErrInvalidTableSample},
