@@ -71,7 +71,8 @@ func (b *builtinCastIntAsIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}
-	if b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) {
+	// Same as evalInt: only a signed source is clamped, an unsigned source >= 2^63 is stored as a negative int64.
+	if b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && !mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
 		i64s := result.Int64s()
 		// the null array of result is set by its child args[0],
 		// so we can skip it here to make this loop simpler to improve its performance.

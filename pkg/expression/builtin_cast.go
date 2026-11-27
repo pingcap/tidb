@@ -995,7 +995,9 @@ func (b *builtinCastIntAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res in
 	if isNull || err != nil {
 		return
 	}
-	if b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && res < 0 {
+	// Only a signed negative source is clamped to 0. An unsigned source is stored as int64, so a value >= 2^63
+	// looks negative here but is a valid unsigned value.
+	if b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && res < 0 && !mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
 		res = 0
 	}
 	return
