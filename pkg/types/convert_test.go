@@ -429,6 +429,24 @@ func TestConvertToStringWithCheck(t *testing.T) {
 	}
 }
 
+func TestConvertToStringWithCheckStillEnforcesLength(t *testing.T) {
+	ft := NewFieldType(mysql.TypeVarchar)
+	ft.SetFlen(10)
+	ft.SetCharset(charset.CharsetUTF8)
+
+	warnings := &warnStore{}
+	ctx := NewContext(DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, warnings)
+	inputDatum := NewStringDatum("ABCDE📝FGHIJ📓KLMNO🖍PQRST📝UVWXYZ")
+	outputDatum, err := inputDatum.ConvertTo(ctx, ft)
+
+	require.True(t, charset.ErrInvalidCharacterString.Equal(err))
+	require.Equal(t, "ABCDE?FGHI", outputDatum.GetString())
+
+	warn := warnings.GetWarnings()
+	require.Len(t, warn, 1)
+	require.True(t, terror.ErrorEqual(warn[0], ErrDataTooLong))
+}
+
 func TestConvertToBinaryString(t *testing.T) {
 	nhUTF8 := "你好"
 	nhGBK := string([]byte{0xC4, 0xE3, 0xBA, 0xC3}) // "你好" in GBK
