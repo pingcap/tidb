@@ -973,6 +973,11 @@ impl TxnManager {
         let temporary = session
             .stage_temporary_data_commit(&self.buffer)
             .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
+        // Go `LazyTxn.Commit`: the commit and its deferred cleanup may
+        // release MemDB memory after the session tracker has been killed;
+        // Rollback's dummy hook protects that terminal phase too.
+        self.buffer
+            .set_memory_footprint_change_hook(std::sync::Arc::new(|_: u64| {}));
         // Go `LazyTxn.Commit`, after publishing TxnCommitting.
         tidb_failpoint::eval("github.com/pingcap/tidb/pkg/session/mockSlowCommit");
         let commit_result = transaction.commit(&self.buffer);
@@ -1042,6 +1047,10 @@ impl TxnManager {
                 }
                 // Go `LazyTxn.Rollback`, after publishing TxnRollingBack.
                 tidb_failpoint::eval("github.com/pingcap/tidb/pkg/session/mockSlowRollback");
+                // When rolling back a txn, swap with a dummy hook to avoid
+                // operations on an invalid memory tracker.
+                self.buffer
+                    .set_memory_footprint_change_hook(std::sync::Arc::new(|_: u64| {}));
                 let result = transaction.rollback();
                 if let Some(observer) = session.transaction_observer() {
                     observer.finished();

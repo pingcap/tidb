@@ -622,3 +622,49 @@ fn dml_batch_text_set_after_oom_retires_the_previous_statement() {
         vec![vec!["1".to_owned(), "42".to_owned()]]
     );
 }
+
+/// Go `TestPanicOnRollbackKilledTxn` (with b127b9ab2b9's "commit cleanup"
+/// case): once the session tracker's root has been killed, committing or
+/// closing a transaction must not panic while the MemDB's memory is
+/// released -- the transaction end swaps in a dummy footprint hook.
+#[test]
+fn test_panic_on_rollback_killed_txn() {
+    let killed_root = |tk: &Session| {
+        let tracker = tidb_memory::Tracker::new(-1, -1);
+        tracker
+            .is_root_tracker_of_sess
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        tk.session_memory.session_tracker().attach_to(&tracker);
+        tracker
+            .killer
+            .send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
+        tracker
+    };
+
+    // commit cleanup
+    let mut tk = Session::new();
+    tk.run("create table t(id int)").unwrap();
+    tk.run("begin pessimistic").unwrap();
+    tk.run("insert into t values(1)").unwrap();
+    for _ in 0..6 {
+        tk.run("insert into t select * from t").unwrap();
+    }
+    let tracker = killed_root(&tk);
+    let committed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tk.run("commit")));
+    let committed = committed.unwrap_or_else(|panic| panic!("commit panicked: {panic:?}"));
+    committed.unwrap();
+    tracker.killer.reset();
+    assert_eq!(crate::tests_support::row_text(tk.run("select count(*) from t")), [["64"]]);
+
+    // rollback when the session closes
+    let mut tk = Session::new();
+    tk.run("create table t(id int)").unwrap();
+    tk.run("begin pessimistic").unwrap();
+    tk.run("insert into t values(1);").unwrap();
+    for _ in 0..6 {
+        tk.run("insert into t select * from t").unwrap();
+    }
+    let _tracker = killed_root(&tk);
+    let closed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(tk)));
+    assert!(closed.is_ok(), "closing the session panicked");
+}
