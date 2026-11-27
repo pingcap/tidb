@@ -251,6 +251,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	if ds.HandleCols != nil && ds.HandleCols.IsInt() && ds.Schema().ColumnIndex(ds.HandleCols.GetCol(0)) == -1 {
 		ds.HandleCols = nil
 	}
+	ds.refreshSingleScanOfIndexPaths()
 	// Current DataSource operator contains all the filters on this table, and the columns used by these filters are always included
 	// in the output schema. Even if they are not needed by DataSource's parent operator. Thus add a projection here to prune useless columns
 	// Limit to MPP tasks, because TiKV can't benefit from this now(projection can't be pushed down to TiKV now).
@@ -266,6 +267,28 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 		return proj, nil
 	}
 	return ds, nil
+}
+
+// refreshSingleScanOfIndexPaths recomputes IsSingleScan of the index paths after column
+// pruning changed ColsRequiringFullLen. IsSingleScan is set when stats are derived, and stats
+// can be derived before the last column pruning, for example by join reorder. At that point a
+// column that only a pushed-down condition uses can still be in ColsRequiringFullLen, because
+// the condition was above the join in the first column pruning. Without the refresh, the path
+// keeps a table lookup it does not need, for example for a prefix index and `c IS NULL`.
+func (ds *DataSource) refreshSingleScanOfIndexPaths() {
+	if ds.StatsInfo() == nil {
+		// Stats are derived later, after the last column pruning.
+		return
+	}
+	for _, paths := range [][]*util.AccessPath{ds.AllPossibleAccessPaths, ds.PossibleAccessPaths} {
+		for _, path := range paths {
+			if path.IsTablePath() || path.Index == nil || path.Index.MVIndex ||
+				len(path.PartialIndexPaths) > 0 || len(path.PartialAlternativeIndexPaths) > 0 {
+				continue
+			}
+			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+		}
+	}
 }
 
 // HasTiFlash checks whether the table has TiFlash replicas (real or hypothetical).

@@ -47,14 +47,14 @@
         "Plan": [
           "Projection root  test.t1.id1, test.t1.id2, Column",
           "└─Projection root  1->Column, test.t1.id1, test.t1.id2",
-          "  └─HashJoin root  inner join, equal:[eq(test.t2.id1, test.t3.id1) eq(test.t2.id2, test.t3.id2)]",
+          "  └─MergeJoin root  inner join, left key:test.t2.id1, test.t2.id2, right key:test.t3.id1, test.t3.id2",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
-          "    │ └─IndexFullScan cop[tikv] table:t3, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
-          "    └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.id1, test.t2.id1) eq(test.t1.id2, test.t2.id2)]",
+          "    │ └─IndexFullScan cop[tikv] table:t3, index:UK_id1_id2(id1, id2) keep order:true, stats:pseudo",
+          "    └─MergeJoin(Probe) root  inner join, left key:test.t1.id1, test.t1.id2, right key:test.t2.id1, test.t2.id2",
           "      ├─IndexReader(Build) root  index:IndexFullScan",
-          "      │ └─IndexFullScan cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) root  data:TableFullScan",
-          "        └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "      │ └─IndexFullScan cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:true, stats:pseudo",
+          "      └─IndexReader(Probe) root  index:IndexFullScan",
+          "        └─IndexFullScan cop[tikv] table:t1, index:UK_id1_id2(id1, id2) keep order:true, stats:pseudo"
         ],
         "Warn": null
       },
@@ -101,8 +101,8 @@
           "└─Projection root  1->Column, test.t1.id1, test.t1.id2",
           "  └─HashJoin root  inner join, equal:[eq(test.t2.id2, test.t1.id2) eq(test.t2.id1, Column)]",
           "    ├─Projection(Build) root  test.t1.id1, test.t1.id2, abs(test.t1.id1)->Column",
-          "    │ └─TableReader root  data:TableFullScan",
-          "    │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    │ └─IndexReader root  index:IndexFullScan",
+          "    │   └─IndexFullScan cop[tikv] table:t1, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
           "    └─IndexReader(Probe) root  index:IndexFullScan",
           "      └─IndexFullScan cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo"
         ],
@@ -139,14 +139,14 @@
         "Plan": [
           "Projection root  test.t1.id1, test.t1.id2, Column",
           "└─Projection root  1->Column, test.t1.id1, test.t1.id2",
-          "  └─HashJoin root  inner join, equal:[eq(test.t1.id1, test.t3.id1) eq(test.t1.id2, test.t3.id2)]",
+          "  └─MergeJoin root  inner join, left key:test.t1.id1, test.t1.id2, right key:test.t3.id1, test.t3.id2",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
-          "    │ └─IndexFullScan cop[tikv] table:t3, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
-          "    └─HashJoin(Probe) root  left outer join, left side:TableReader, equal:[eq(test.t1.id1, test.t2.id1) eq(test.t1.id2, test.t2.id2)]",
+          "    │ └─IndexFullScan cop[tikv] table:t3, index:UK_id1_id2(id1, id2) keep order:true, stats:pseudo",
+          "    └─MergeJoin(Probe) root  left outer join, left side:IndexReader, left key:test.t1.id1, test.t1.id2, right key:test.t2.id1, test.t2.id2",
           "      ├─IndexReader(Build) root  index:IndexFullScan",
-          "      │ └─IndexFullScan cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) root  data:TableFullScan",
-          "        └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "      │ └─IndexFullScan cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:true, stats:pseudo",
+          "      └─IndexReader(Probe) root  index:IndexFullScan",
+          "        └─IndexFullScan cop[tikv] table:t1, index:UK_id1_id2(id1, id2) keep order:true, stats:pseudo"
         ],
         "Warn": null
       },

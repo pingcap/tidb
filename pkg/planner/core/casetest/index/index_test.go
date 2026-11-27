@@ -933,3 +933,41 @@ func TestPartialIndexInvalidTimestampRange(t *testing.T) {
 		tk.MustQuery("explain select k from t_invalid_timestamp force index (idx) where ts < '0000-00-00 12:00:00'").CheckContain("index:idx")
 	})
 }
+
+// TestSingleScanUnderJoin checks that an index that covers the query once the conditions are
+// pushed down is read in a single scan under a join too. Join reorder derives stats, and so
+// IsSingleScan, before the last column pruning, while a column that only a pushed-down
+// condition uses is still required by the parent of the data source.
+func TestSingleScanUnderJoin(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t, k")
+		tk.MustExec("create table t (id int primary key, b int, c varchar(20), d int, key ibc(b, c(5)))")
+		tk.MustExec("create table k (id int primary key)")
+		tk.MustExec("insert into t values (1, 1, null, 1), (2, 1, 'abcdefg', 2), (3, 1, null, 3), (4, 2, null, 4)")
+		tk.MustExec("insert into k values (1), (2), (3), (4)")
+		for _, tc := range []struct {
+			sql        string
+			singleScan bool
+			result     []string
+		}{
+			// `c is null` is covered by the prefix of c, so t is read in a single scan.
+			{"select /*+ use_index(t, ibc) hash_join(t) */ count(*) from k join t on t.id = k.id where t.b = 1 and t.c is null", true, []string{"2"}},
+			{"select /*+ use_index(t, ibc) merge_join(t) */ k.id from k join t on t.id = k.id where t.b = 1 and t.c is null order by k.id", true, []string{"1", "3"}},
+			{"select /*+ inl_join(t) use_index(t, ibc) */ k.id, t.id from k join t on t.b = k.id where t.c is null order by k.id, t.id", true, []string{"1 1", "1 3", "2 4"}},
+			// Columns that the index does not have, or only has a prefix of, still need the table.
+			{"select /*+ use_index(t, ibc) hash_join(t) */ k.id, t.d from k join t on t.id = k.id where t.b = 1 and t.c is null order by k.id", false, []string{"1 1", "3 3"}},
+			{"select /*+ use_index(t, ibc) hash_join(t) */ k.id, t.c from k join t on t.id = k.id where t.b = 1 and t.c is null order by k.id", false, []string{"1 <nil>", "3 <nil>"}},
+			{"select /*+ use_index(t, ibc) hash_join(t) */ k.id from k join t on t.id = k.id where t.b = 1 and t.c = 'abcdefg' order by k.id", false, []string{"2"}},
+		} {
+			plan := fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+tc.sql).Rows())
+			require.Contains(t, plan, "index:ibc", tc.sql)
+			if tc.singleScan {
+				require.NotContains(t, plan, "IndexLookUp", tc.sql)
+			} else {
+				require.Contains(t, plan, "IndexLookUp", tc.sql)
+			}
+			tk.MustQuery(tc.sql).Check(testkit.Rows(tc.result...))
+		}
+	})
+}
