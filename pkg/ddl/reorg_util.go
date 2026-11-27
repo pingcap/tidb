@@ -48,11 +48,13 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 
 	var setReorgParam bool
 	var setDistTaskParam bool
+	var validateDistTaskAtSubmit bool
 
 	switch job.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		setReorgParam = true
 		setDistTaskParam = true
+		validateDistTaskAtSubmit = true
 	case model.ActionModifyColumn:
 		setReorgParam = true
 		setDistTaskParam = job.NeedReorg
@@ -66,6 +68,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			case model.ActionAddIndex, model.ActionAddPrimaryKey:
 				setReorgParam = true
 				setDistTaskParam = true
+				validateDistTaskAtSubmit = true
 			case model.ActionReorganizePartition,
 				model.ActionRemovePartitioning,
 				model.ActionAlterTablePartitioning:
@@ -156,7 +159,9 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 				LastReorgMetaFastReorgDisabled = true
 			})
 		}
-		if m.IsDistReorg && !m.IsFastReorg {
+		// MODIFY/CHANGE COLUMN reserves NeedReorg=true before execution classifies
+		// the conversion; defer its dist-reorg check until index reorg starts.
+		if validateDistTaskAtSubmit && m.IsDistReorg && !m.IsFastReorg {
 			return dbterror.ErrUnsupportedDistTask
 		}
 	}
