@@ -36,11 +36,12 @@ func checkTTLOptions(options []*ast.TableOption) bool {
 }
 
 var sqlRuleNameMap = map[string]SQLRule{
-	"time_to_live":            TimeToLiveSQLRule,
-	"alter_table_attributes":  AlterTableAttributesRule,
-	"import_with_external_id": ImportWithExternalIDRule,
-	"select_into_file":        SelectIntoFileRule,
-	"import_from_local":       ImportFromLocalRule,
+	"time_to_live":                TimeToLiveSQLRule,
+	"alter_table_attributes":      AlterTableAttributesRule,
+	"import_with_external_id":     ImportWithExternalIDRule,
+	"select_into_file":            SelectIntoFileRule,
+	"import_from_local":           ImportFromLocalRule,
+	"explain_replayer_from_local": ExplainReplayerFromLocalRule,
 }
 
 // TimeToLiveSQLRule returns true if the SQL statement is related to Time To Live (TTL) options.
@@ -92,6 +93,16 @@ var ImportWithExternalIDRule SQLRule = func(_ ast.StmtNode) bool {
 var SelectIntoFileRule SQLRule = func(stmt ast.StmtNode) bool {
 	if selectStmt, ok := stmt.(*ast.SelectStmt); ok {
 		return selectStmt.SelectIntoOpt != nil
+	}
+	return false
+}
+
+// ExplainReplayerFromLocalRule SQLRule returns true if the SQL statement is
+// `EXPLAIN EXPLORE REPLAYER '<path>'`, which always reads the replayer archive
+// from the TiDB server's local disk.
+var ExplainReplayerFromLocalRule SQLRule = func(stmt ast.StmtNode) bool {
+	if explainStmt, ok := stmt.(*ast.ExplainStmt); ok {
+		return explainStmt.ReplayerFile != ""
 	}
 	return false
 }

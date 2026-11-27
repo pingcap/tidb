@@ -61,6 +61,16 @@ func TestSQLRules(t *testing.T) {
 			expected: true,
 		},
 		{
+			rule:     ExplainReplayerFromLocalRule,
+			stmt:     "EXPLAIN EXPLORE REPLAYER '/tmp/replayer/dump.zip'",
+			expected: true,
+		},
+		{
+			rule:     ExplainReplayerFromLocalRule,
+			stmt:     "EXPLAIN SELECT * FROM t1",
+			expected: false,
+		},
+		{
 			rule:     ImportFromLocalRule,
 			stmt:     "IMPORT INTO t1 FROM '/bucket/path/to/file.csv'",
 			expected: true,

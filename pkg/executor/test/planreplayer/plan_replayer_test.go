@@ -30,9 +30,12 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/replayer"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
 )
 
@@ -380,6 +383,25 @@ func TestExplainExploreReplayer(t *testing.T) {
 			require.NotEmpty(t, row[3])
 		}
 	}
+
+	// The replayer file is read from the TiDB server's disk, so it needs the
+	// FILE privilege and is rejected under SEM, like LOAD DATA INFILE.
+	loadTK.MustExec("create user 'explore_replayer_user'@'%'")
+	userTK := testkit.NewTestKit(t, loadStore)
+	require.NoError(t, userTK.Session().Auth(&auth.UserIdentity{Username: "explore_replayer_user", Hostname: "%"}, nil, nil, nil))
+	err = userTK.ExecToErr(fmt.Sprintf("explain explore replayer '%s'", replayerPath))
+	require.ErrorContains(t, err, "FILE privilege")
+	loadTK.MustExec("grant file on *.* to 'explore_replayer_user'@'%'")
+	loadTK.MustExec("grant all on test.* to 'explore_replayer_user'@'%'")
+	// Authenticate again so the session picks up the new grants.
+	grantedTK := testkit.NewTestKit(t, loadStore)
+	require.NoError(t, grantedTK.Session().Auth(&auth.UserIdentity{Username: "explore_replayer_user", Hostname: "%"}, nil, nil, nil))
+	require.NotEmpty(t, grantedTK.MustQuery(fmt.Sprintf("explain explore replayer '%s'", replayerPath)).Rows())
+
+	sem.Enable()
+	defer sem.Disable()
+	err = loadTK.ExecToErr(fmt.Sprintf("explain explore replayer '%s'", replayerPath))
+	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
 }
 
 func TestPlanReplayerDumpPresignedURLOutput(t *testing.T) {

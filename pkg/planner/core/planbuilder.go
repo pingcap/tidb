@@ -6156,6 +6156,17 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		explain.Stmt = hintedStmt
 	}
 
+	if explain.ReplayerFile != "" {
+		// The replayer file is read from the TiDB server's local disk, so treat
+		// it like LOAD DATA INFILE / SELECT INTO OUTFILE. Only `semv1.IsEnabled()`
+		// is checked here because under SEM v2 the statement is filtered by the
+		// `explain_replayer_from_local` rule in `sem/v2/sql_rule.go`.
+		if semv1.IsEnabled() {
+			return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("EXPLAIN EXPLORE REPLAYER")
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
+	}
+
 	sctx, err := AsSctx(b.ctx)
 	if err != nil {
 		return nil, err
