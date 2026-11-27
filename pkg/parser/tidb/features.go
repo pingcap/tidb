@@ -46,21 +46,24 @@ const (
 	FeatureIDAffinity = "affinity"
 	// FeatureIDSplitRegion is the `region split` feature.
 	FeatureIDSplitRegion = "region_split"
+	// FeatureIDAffinityTableGroup is the `affinity table group` feature.
+	FeatureIDAffinityTableGroup = "affinity_table_group"
 )
 
 var featureIDs = map[string]struct{}{
-	FeatureIDAutoRandom:     {},
-	FeatureIDAutoIDCache:    {},
-	FeatureIDAutoRandomBase: {},
-	FeatureIDClusteredIndex: {},
-	FeatureIDForceAutoInc:   {},
-	FeatureIDPlacement:      {},
-	FeatureIDTTL:            {},
-	FeatureIDGlobalIndex:    {},
-	FeatureIDPreSplit:       {},
-	FeatureIDAutoPreSplit:   {},
-	FeatureIDAffinity:       {},
-	FeatureIDSplitRegion:    {},
+	FeatureIDAutoRandom:         {},
+	FeatureIDAutoIDCache:        {},
+	FeatureIDAutoRandomBase:     {},
+	FeatureIDClusteredIndex:     {},
+	FeatureIDForceAutoInc:       {},
+	FeatureIDPlacement:          {},
+	FeatureIDTTL:                {},
+	FeatureIDGlobalIndex:        {},
+	FeatureIDPreSplit:           {},
+	FeatureIDAutoPreSplit:       {},
+	FeatureIDAffinity:           {},
+	FeatureIDSplitRegion:        {},
+	FeatureIDAffinityTableGroup: {},
 }
 
 // CanParseFeature is used to check if a feature can be parsed.

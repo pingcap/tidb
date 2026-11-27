@@ -457,6 +457,27 @@ func (n *CreatePlacementPolicyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	return v.Leave(n)
 }
 
+func (n *CreateAffinityTableGroupStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	return v.Leave(n)
+}
+
+func (n *DropAffinityTableGroupStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	return v.Leave(n)
+}
+
+func (n *RepairAffinityTableGroupStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	return v.Leave(n)
+}
+
 func (n *CreateMaskingPolicyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)

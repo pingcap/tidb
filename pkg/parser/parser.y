@@ -1075,6 +1075,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	RefreshMaterializedViewStmt   "REFRESH MATERIALIZED VIEW statement"
 	CreateUserStmt                "CREATE User statement"
 	CreateRoleStmt                "CREATE Role statement"
+	CreateAffinityTableGroupStmt  "CREATE AFFINITY TABLE GROUP statement"
 	CreateDatabaseStmt            "Create Database Statement"
 	CreateIndexStmt               "CREATE INDEX statement"
 	CreateBindingStmt             "CREATE BINDING statement"
@@ -1086,6 +1087,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	CreateSequenceStmt            "CREATE SEQUENCE statement"
 	CreateStatisticsStmt          "CREATE STATISTICS statement"
 	DoStmt                        "Do statement"
+	DropAffinityTableGroupStmt    "DROP AFFINITY TABLE GROUP statement"
 	DropDatabaseStmt              "DROP DATABASE statement"
 	DropIndexStmt                 "DROP INDEX statement"
 	DropProcedureStmt             "DROP PROCEDURE statement"
@@ -1196,6 +1198,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
+	AffinityTableGroupMemberSlotsOpt       "Optional MEMBER_SLOTS of CREATE AFFINITY TABLE GROUP"
+	AffinityTableGroupMemberSlotsKwd       "MEMBER_SLOTS of CREATE AFFINITY TABLE GROUP"
 	LikeOrIlikeEscapeOpt                   "like or ilike escape option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
@@ -12743,6 +12747,13 @@ AdminStmt:
 			CreateStmt: $5.(*ast.CreateTableStmt),
 		}
 	}
+|	"ADMIN" "REPAIR" "AFFINITY" "TABLE" "GROUP" Identifier ForceOpt
+	{
+		$$ = &ast.RepairAffinityTableGroupStmt{
+			GroupName: ast.NewCIStr($6),
+			Force:     $7.(bool),
+		}
+	}
 |	"ADMIN" "FLUSH" "BINDINGS"
 	{
 		$$ = &ast.AdminStmt{
@@ -13016,6 +13027,24 @@ ShowStmt:
 			Tp:                ast.ShowCreateResourceGroup,
 			ResourceGroupName: $5,
 		}
+	}
+|	"SHOW" "CREATE" "AFFINITY" "TABLE" "GROUP" Identifier
+	{
+		$$ = &ast.ShowStmt{
+			Tp:                     ast.ShowCreateAffinityTableGroup,
+			AffinityTableGroupName: $6,
+		}
+	}
+|	"SHOW" "AFFINITY" "TABLE" "GROUP" "STATUS" Identifier WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{
+			Tp:                     ast.ShowAffinityTableGroupStatus,
+			AffinityTableGroupName: $6,
+		}
+		if $7 != nil {
+			stmt.Where = $7.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 |	"SHOW" "CREATE" "USER" Username
 	{
@@ -13505,6 +13534,19 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowAffinity}
 	}
+|	"AFFINITY" "TABLE" "GROUPS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowAffinityTableGroups}
+	}
+|	"AFFINITY" "TABLE" identifier
+	{
+		// GROUPS is lexed as a keyword only when window functions are enabled.
+		if !strings.EqualFold($3, "groups") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected GROUPS"))
+			return 1
+		}
+		$$ = &ast.ShowStmt{Tp: ast.ShowAffinityTableGroups}
+	}
 |	"ANALYZE" "STATUS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowAnalyzeStatus}
@@ -13802,6 +13844,7 @@ Statement:
 |	ExplainStmt
 |	CalibrateResourceStmt
 |	CancelDistributionJobStmt
+|	CreateAffinityTableGroupStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
@@ -13830,6 +13873,7 @@ Statement:
 |	DropIndexStmt
 |	DropTableStmt
 |	DropProcedureStmt
+|	DropAffinityTableGroupStmt
 |	DropPolicyStmt
 |	DropSequenceStmt
 |	DropViewStmt
@@ -14320,6 +14364,10 @@ TableOption:
 |	"AFFINITY" EqOpt StringName
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionAffinity, StrValue: $3}
+	}
+|	"AFFINITY" "TABLE" "GROUP" EqOpt StringName
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionAffinityTableGroup, StrValue: $5}
 	}
 /* MariaDB specific options
  * - https://mariadb.com/docs/server/reference/sql-statements/data-definition/create/create-table
@@ -17310,6 +17358,50 @@ StatsObject:
 		$$ = &ast.StatsObject{
 			StatsObjectScope: ast.StatsObjectScopeTable,
 			TableName:        ast.NewCIStr($1),
+		}
+	}
+
+CreateAffinityTableGroupStmt:
+	"CREATE" "AFFINITY" "TABLE" "GROUP" IfNotExists Identifier "PARTITIONS" LengthNum AffinityTableGroupMemberSlotsOpt
+	{
+		stmt := &ast.CreateAffinityTableGroupStmt{
+			IfNotExists: $5.(bool),
+			GroupName:   ast.NewCIStr($6),
+			Partitions:  $8.(uint64),
+		}
+		if $9 != nil {
+			memberSlots := $9.(uint64)
+			stmt.MemberSlots = &memberSlots
+		}
+		$$ = stmt
+	}
+
+AffinityTableGroupMemberSlotsOpt:
+	{
+		$$ = nil
+	}
+|	AffinityTableGroupMemberSlotsKwd EqOpt LengthNum
+	{
+		$$ = $3
+	}
+
+AffinityTableGroupMemberSlotsKwd:
+	identifier
+	{
+		// MEMBER_SLOTS is matched as an identifier rather than a keyword, so that
+		// role and procedure names that only accept plain identifiers keep working.
+		if !strings.EqualFold($1, "member_slots") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected MEMBER_SLOTS"))
+			return 1
+		}
+	}
+
+DropAffinityTableGroupStmt:
+	"DROP" "AFFINITY" "TABLE" "GROUP" IfExists Identifier
+	{
+		$$ = &ast.DropAffinityTableGroupStmt{
+			IfExists:  $5.(bool),
+			GroupName: ast.NewCIStr($6),
 		}
 	}
 

@@ -8989,9 +8989,97 @@ func TestTableAffinityOption(t *testing.T) {
 		{"create table t (a int) AFFINITY 1", false, ""},
 		{"create table t (a int) AFFINITY = 1", false, ""},
 		{"create table t (a int) AFFINITY", false, ""},
+
+		// affinity table group option
+		{"create table t (a int) affinity table group = g partition by hash (a) partitions 4", true, "CREATE TABLE `t` (`a` INT) AFFINITY TABLE GROUP = `g` PARTITION BY HASH (`a`) PARTITIONS 4"},
+		{"create table t (a int) AFFINITY TABLE GROUP g", true, "CREATE TABLE `t` (`a` INT) AFFINITY TABLE GROUP = `g`"},
+		{"create table t (a int) affinity table group 'G1'", true, "CREATE TABLE `t` (`a` INT) AFFINITY TABLE GROUP = `G1`"},
+		{"create table t (a int) affinity table group = `select`", true, "CREATE TABLE `t` (`a` INT) AFFINITY TABLE GROUP = `select`"},
+		{"create table t (a int) affinity table group = 'a`b-c'", true, "CREATE TABLE `t` (`a` INT) AFFINITY TABLE GROUP = `a``b-c`"},
+		{"create table t (a int) /*T![affinity_table_group] AFFINITY TABLE GROUP=`g` */", true, "CREATE TABLE `t` (`a` INT) AFFINITY TABLE GROUP = `g`"},
+		{"create table t (a int) affinity = 'partition' affinity table group = g", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'partition' AFFINITY TABLE GROUP = `g`"},
+		{"alter table t affinity table group = g", true, "ALTER TABLE `t` AFFINITY TABLE GROUP = `g`"},
+		{"alter table t affinity table group 'g', comment 'c'", true, "ALTER TABLE `t` AFFINITY TABLE GROUP = `g`, COMMENT = 'c'"},
+		{"create table t (a int) affinity table group", false, ""},
+		{"create table t (a int) affinity table group = db.g", false, ""},
+		{"create table t (a int) affinity table group = 1", false, ""},
+		{"create table t (a int) affinity table g", false, ""},
+		{"create table t (a int) affinity group g", false, ""},
 	}
 
 	RunTest(t, table, false, false)
+}
+
+func TestAffinityTableGroupStatements(t *testing.T) {
+	table := []testCase{
+		{"create affinity table group g partitions 4", true, "CREATE AFFINITY TABLE GROUP `g` PARTITIONS 4"},
+		{"CREATE AFFINITY TABLE GROUP IF NOT EXISTS tpcc_atg PARTITIONS 128 MEMBER_SLOTS = 65536", true, "CREATE AFFINITY TABLE GROUP IF NOT EXISTS `tpcc_atg` PARTITIONS 128 MEMBER_SLOTS = 65536"},
+		{"create affinity table group g partitions 4 member_slots 16", true, "CREATE AFFINITY TABLE GROUP `g` PARTITIONS 4 MEMBER_SLOTS = 16"},
+		{"create affinity table group g partitions 4 member_slots = 0", true, "CREATE AFFINITY TABLE GROUP `g` PARTITIONS 4 MEMBER_SLOTS = 0"},
+		{"create affinity table group `select` partitions 1", true, "CREATE AFFINITY TABLE GROUP `select` PARTITIONS 1"},
+		{"create affinity table group `a``b-c` partitions 1", true, "CREATE AFFINITY TABLE GROUP `a``b-c` PARTITIONS 1"},
+		{"create affinity table group member_slots partitions 2 member_slots 3", true, "CREATE AFFINITY TABLE GROUP `member_slots` PARTITIONS 2 MEMBER_SLOTS = 3"},
+		{"drop affinity table group g", true, "DROP AFFINITY TABLE GROUP `g`"},
+		{"drop affinity table group if exists `select`", true, "DROP AFFINITY TABLE GROUP IF EXISTS `select`"},
+		{"admin repair affinity table group g", true, "ADMIN REPAIR AFFINITY TABLE GROUP `g`"},
+		{"admin repair affinity table group `a``b-c` force", true, "ADMIN REPAIR AFFINITY TABLE GROUP `a``b-c` FORCE"},
+		{"show affinity table groups", true, "SHOW AFFINITY TABLE GROUPS"},
+		{"show affinity table groups like 'g%'", true, "SHOW AFFINITY TABLE GROUPS LIKE _UTF8MB4'g%'"},
+		{"show affinity table groups where Remaining_slots < 10", true, "SHOW AFFINITY TABLE GROUPS WHERE `Remaining_slots`<10"},
+		{"show affinity table group status g", true, "SHOW AFFINITY TABLE GROUP STATUS `g`"},
+		{"show affinity table group status g where single_region = 'NO'", true, "SHOW AFFINITY TABLE GROUP STATUS `g` WHERE `single_region`=_UTF8MB4'NO'"},
+		{"show affinity table group status `select`", true, "SHOW AFFINITY TABLE GROUP STATUS `select`"},
+		{"show create affinity table group g", true, "SHOW CREATE AFFINITY TABLE GROUP `g`"},
+		{"show create affinity table group `a``b-c`", true, "SHOW CREATE AFFINITY TABLE GROUP `a``b-c`"},
+
+		{"create affinity table group g partitions 4 Member_Slots = 8", true, "CREATE AFFINITY TABLE GROUP `g` PARTITIONS 4 MEMBER_SLOTS = 8"},
+		{"create affinity table group g partitions 4 MEMBER_SLOTS 8", true, "CREATE AFFINITY TABLE GROUP `g` PARTITIONS 4 MEMBER_SLOTS = 8"},
+
+		// MEMBER_SLOTS is not a keyword, so names that only accept plain identifiers still parse.
+		{"create role member_slots", true, "CREATE ROLE `member_slots`@`%`"},
+		{"call member_slots()", true, "CALL `member_slots`()"},
+		{"grant member_slots to u", true, "GRANT `member_slots`@`%` TO `u`@`%`"},
+		{"create database member_slots", true, "CREATE DATABASE `member_slots`"},
+		{"create table member_slots.member_slots (member_slots int)", true, "CREATE TABLE `member_slots`.`member_slots` (`member_slots` INT)"},
+		{"select member_slots from member_slots.member_slots", true, "SELECT `member_slots` FROM `member_slots`.`member_slots`"},
+
+		{"create affinity table group db.g partitions 4", false, ""},
+		{"create affinity table group g", false, ""},
+		{"create affinity table group g partitions = 4", false, ""},
+		{"create affinity table group g partitions 'a'", false, ""},
+		{"create affinity table group g member_slots 4 partitions 4", false, ""},
+		{"create affinity table group g partitions 4 member_slots 4 member_slots 4", false, ""},
+		{"create affinity table group g partitions 4 member_slot = 8", false, ""},
+		{"create affinity table group g partitions 4 slots 8", false, ""},
+		{"create affinity table group g partitions 4 member_slots", false, ""},
+		{"create affinity table group g partitions 4 placement policy p", false, ""},
+		{"create affinity table group g partitions 4 comment 'c'", false, ""},
+		{"create or replace affinity table group g partitions 4", false, ""},
+		{"create affinity group g partitions 4", false, ""},
+		{"alter affinity table group g partitions 8", false, ""},
+		{"alter affinity table group g member_slots 8", false, ""},
+		{"drop affinity table group db.g", false, ""},
+		{"drop affinity table group g, h", false, ""},
+		{"admin repair affinity table group db.g", false, ""},
+		{"admin repair affinity table group g force force", false, ""},
+		{"show affinity table group status g like 'x'", false, ""},
+		{"show affinity table group status", false, ""},
+		{"show affinity table group status db.g", false, ""},
+		{"show affinity table status g", false, ""},
+		{"show affinity table foo", false, ""},
+		{"show create affinity table group db.g", false, ""},
+	}
+	// GROUPS is a keyword only when window functions are enabled.
+	RunTest(t, table, false, false)
+	RunTest(t, table, true, false)
+
+	// Existing SHOW AFFINITY keeps parsing to the same statement type.
+	p := parser.New()
+	for _, sql := range []string{"show affinity", "show affinity like 't%'", "show affinity where table_name = 't'"} {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err, sql)
+		require.EqualValues(t, ast.ShowAffinity, stmt.(*ast.ShowStmt).Tp, sql)
+	}
 }
 
 func TestSplitPartition(t *testing.T) {

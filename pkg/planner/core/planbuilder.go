@@ -3708,6 +3708,13 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	buildPattern := true
 
 	switch show.Tp {
+	// TODO: replace these three cases when the affinity table group SHOW statements are implemented.
+	case ast.ShowAffinityTableGroups:
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SHOW AFFINITY TABLE GROUPS")
+	case ast.ShowAffinityTableGroupStatus:
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SHOW AFFINITY TABLE GROUP STATUS")
+	case ast.ShowCreateAffinityTableGroup:
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SHOW CREATE AFFINITY TABLE GROUP")
 	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowMaterializedViews, ast.ShowMaterializedViewLogs, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation, ast.ShowAffinity:
 		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus || show.Tp == ast.ShowMaterializedViews || show.Tp == ast.ShowMaterializedViewLogs) && p.DBName == "" {
 			return nil, plannererrors.ErrNoDB
@@ -5971,6 +5978,13 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 	case *ast.OptimizeTableStmt:
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("OPTIMIZE TABLE is not supported")
+	// TODO: replace these three cases when the affinity table group DDL is implemented.
+	case *ast.CreateAffinityTableGroupStmt:
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("CREATE AFFINITY TABLE GROUP")
+	case *ast.DropAffinityTableGroupStmt:
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("DROP AFFINITY TABLE GROUP")
+	case *ast.RepairAffinityTableGroupStmt:
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("ADMIN REPAIR AFFINITY TABLE GROUP")
 	}
 	p := &DDL{Statement: node}
 	return p, nil

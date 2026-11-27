@@ -1949,6 +1949,9 @@ func checkUnsupportedTableOptions(options []*ast.TableOption) error {
 			err = dbterror.ErrTableOptionInsertMethodUnsupported
 		case ast.TableOptionEngine:
 			err = checkTableEngine(option.StrValue)
+		case ast.TableOptionAffinityTableGroup:
+			// TODO: remove this case when DDL handles the AFFINITY TABLE GROUP option.
+			err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("AFFINITY TABLE GROUP")
 		}
 		if err != nil {
 			return err

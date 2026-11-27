@@ -797,6 +797,20 @@ func TestCreatePlacementPolicyRestore(t *testing.T) {
 	}
 }
 
+func TestAffinityTableGroupRestoreWithSpecialComment(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"create affinity table group if not exists g partitions 4 member_slots 8", "/*T![affinity_table_group] CREATE AFFINITY TABLE GROUP IF NOT EXISTS `g` PARTITIONS 4 MEMBER_SLOTS = 8 */"},
+		{"drop affinity table group if exists g", "/*T![affinity_table_group] DROP AFFINITY TABLE GROUP IF EXISTS `g` */"},
+		{"admin repair affinity table group g force", "/*T![affinity_table_group] ADMIN REPAIR AFFINITY TABLE GROUP `g` FORCE */"},
+		{"create table t (a int) affinity table group 'g' partition by hash (a) partitions 4", "CREATE TABLE `t` (`a` INT) /*T![affinity_table_group] AFFINITY TABLE GROUP = `g` */ PARTITION BY HASH (`a`) PARTITIONS 4"},
+		{"alter table t affinity table group g", "ALTER TABLE `t` /*T![affinity_table_group] AFFINITY TABLE GROUP = `g` */"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment)
+}
+
 func TestAlterPlacementPolicyRestore(t *testing.T) {
 	sourceSQL := "alter placement policy p1 primary_region=\"r1\" regions='r1,r2' followers=1"
 	cases := []struct {
