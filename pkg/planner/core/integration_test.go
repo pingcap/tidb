@@ -2959,6 +2959,24 @@ func TestIndexScanSeekCost(t *testing.T) {
 	tsRows := tk.MustQuery("explain format='cost_trace' select * from t4 where c in (1,2,3) and d > 5").Rows()
 	require.Contains(t, tsRows[len(tsRows)-1][0].(string), "TableRangeScan")
 	require.Contains(t, tsRows[len(tsRows)-1][3].(string), "rangeSeek")
+
+	// On a unique index, only full-key point ranges are exempt from pruning (they can become a
+	// [Batch]PointGet). Ranges that span every index column but end in an interval are not
+	// points, so the 12 (a, b, c > 100) ranges must still prune to 2 (a) ranges.
+	tk.MustExec("create table t5 (a int, b int, c int, d int, unique key uk(a, b, c))")
+	tk.MustExec(`insert into t5 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 50000)
+		select n % 2000, n % 7, n, n from cte`)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t5")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	const where5 = "a in (1,3) and b in (0,1,2,3,4,5) and c > 100"
+	tk.MustQuery("explain format='brief' select a, b, c from t5 where "+where5).CheckAt([]int{0, 4}, [][]any{
+		{"IndexReader", "index:Selection"},
+		{"└─Selection", "gt(test.t5.c, 100), in(test.t5.b, 0, 1, 2, 3, 4, 5)"},
+		{"  └─IndexRangeScan", "range:[1,1], [3,3], keep order:false"},
+	})
+	tk.MustQuery("select a, b, c from t5 where " + where5).Sort().Check(
+		tk.MustQuery("select a, b, c from t5 ignore index(uk) where " + where5).Sort().Rows())
 }
 
 func TestIssue72090(t *testing.T) {
