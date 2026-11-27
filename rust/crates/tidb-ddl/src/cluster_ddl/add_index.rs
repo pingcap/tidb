@@ -2293,6 +2293,12 @@ pub(super) fn rollingback_add_index(
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let _ = start_ts;
+    // Go `convertNotReorgAddIdxJob2RollbackJob`: a job that has not
+    // published any index metadata is cancelled as it is. A same-named index
+    // may belong to an earlier job and must not be rolled back here.
+    if active.job.schema_state == SchemaState::NONE {
+        return Err(cancelled_ddl_job(active));
+    }
     let stored = checked_job_table(txn, active, true)?;
     let stored = stored.read();
     let mut info = stored.clone_like_go();
@@ -2396,5 +2402,90 @@ mod next_gen_local_sort_tests {
         // Global sort is allowed.
         assert!(check_next_gen_local_sort(&new_job(true, true)).is_ok());
         lit.store(old, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod rollingback_tests {
+    use super::*;
+
+    struct EmptySnapshot;
+
+    impl tidb_infoschema::cluster_catalog::MetaSnapshot for EmptySnapshot {
+        fn get(&mut self, _: &[u8]) -> Result<Option<Vec<u8>>, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
+            Ok(None)
+        }
+
+        fn scan_prefix(
+            &mut self,
+            _: &[u8],
+        ) -> Result<tidb_infoschema::cluster_catalog::MetaPairs, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Go `TestCancelQueuedAddIndexKeepsExistingIndex` (8523c574c48), its
+    /// queued half: a cancelled add-index job that has published no index
+    /// metadata is cancelled as it is, and a same-named public index from an
+    /// earlier job stays.
+    #[test]
+    fn test_cancel_queued_add_index_keeps_existing_index() {
+        for version in [tidb_model::JobVersion::V1, tidb_model::JobVersion::V2] {
+            let mut store = EmptySnapshot;
+            let mut txn = JobTxn::new(&mut store, 1, crate::job_txn::unused_step_session(crate::StartMode::Normal));
+            let mut job = Job::default();
+            job.id = 10;
+            job.version = version;
+            job.type_ = ActionType::ACTION_ADD_INDEX;
+            job.schema_id = 1;
+            job.table_id = 2;
+            job.state = tidb_model::JobState::CANCELLING;
+            let index = IndexInfo {
+                id: 3,
+                name: tidb_ast::CiString::new("idx"),
+                state: SchemaState::PUBLIC,
+                ..IndexInfo::default()
+            };
+            job.fill_args(Some(GoShared::new(tidb_model::ModifyIndexArgs {
+                index_args: vec![tidb_model::IndexArg {
+                    index_name: index.name.clone(),
+                    ..tidb_model::IndexArg::default()
+                }]
+                .into(),
+                ..tidb_model::ModifyIndexArgs::default()
+            })));
+            job.encode(true).unwrap();
+            let db = tidb_model::db::DBInfo { id: 1, name: tidb_ast::CiString::new("test"), ..Default::default() };
+            txn.meta().create_database(&db).unwrap();
+            let table = TableInfo {
+                id: 2,
+                name: tidb_ast::CiString::new("t"),
+                state: SchemaState::PUBLIC,
+                indices: vec![index].into(),
+                ..TableInfo::default()
+            };
+            txn.meta().create_table_or_view(1, &table).unwrap();
+            let mut active = tidb_ddl_systable::ddl_job_table::ActiveDdlJob {
+                job,
+                reorg: true,
+                schema_ids: "1".to_owned(),
+                table_ids: "2".to_owned(),
+                type_: i64::from(ActionType::ACTION_ADD_INDEX.0),
+                processing: true,
+            };
+            let Err(error) = rollingback_add_index(&mut txn, &mut active, 1) else {
+                panic!("{version:?}: the queued job was rolled back instead of cancelled");
+            };
+            assert!(error.to_string().contains("Cancelled DDL job"), "{version:?}: {error}");
+            let updated = txn.meta().table(1, 2).unwrap().unwrap();
+            assert_eq!(updated.indices.len(), 1);
+            let updated_index = updated.indices.iter_deref().next().unwrap();
+            assert_eq!(updated_index.read().id, 3);
+            // A queued job has not created an index. The public index belongs
+            // to an earlier job and must not become a rollback target.
+            assert_eq!(updated_index.read().state, SchemaState::PUBLIC, "{version:?}");
+            assert_eq!(active.job.state, tidb_model::JobState::CANCELLED, "{version:?}");
+            assert_eq!(active.job.schema_state, SchemaState::NONE, "{version:?}");
+        }
     }
 }
