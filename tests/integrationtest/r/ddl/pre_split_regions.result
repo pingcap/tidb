@@ -1,0 +1,42 @@
+drop table if exists t_by_east, t_by_utc, t_between_east, t_between_utc;
+# How to read the END_KEY below. After the masked t_i_ prefix the bytes are the encoded
+# index value followed by the handle sentinel:
+#   04                  uint flag
+#   19b3102000000000    the TIMESTAMP, packed as
+#                       ((year*13+month)<<5 | day)<<17 | hour<<12 | minute<<6 | second,
+#                       shifted left 24 for microseconds, always in UTC
+#                       = 2024-04-08 02:00:00 UTC
+#   03 0000000000000000 int flag plus MinInt64, the sentinel handle used for a split key
+# So 2024-04-08 10:00:00 at +08:00 and 2024-04-08 02:00:00 at UTC must both encode to
+# 0419b3102000000000, and any other time zone applied to the value shows up as different bytes.
+set @@session.time_zone = '+08:00';
+create table t_by_east (a bigint, b timestamp);
+alter table t_by_east add index idx(b) pre_split_regions = (by ('2024-04-08 10:00:00'));
+show table t_by_east index idx regions;
+REGION_ID	START_KEY	END_KEY	LEADER_ID	LEADER_STORE_ID	PEERS	SCATTERING	WRITTEN_BYTES	READ_BYTES	APPROXIMATE_SIZE(MB)	APPROXIMATE_KEYS	SCHEDULING_CONSTRAINTS	SCHEDULING_STATE
+#	t_	t_i_0419b3102000000000030000000000000000	#	#	#	#	#	#	#	#	NULL	NULL
+set @@session.time_zone = 'UTC';
+create table t_by_utc (a bigint, b timestamp);
+alter table t_by_utc add index idx(b) pre_split_regions = (by ('2024-04-08 02:00:00'));
+show table t_by_utc index idx regions;
+REGION_ID	START_KEY	END_KEY	LEADER_ID	LEADER_STORE_ID	PEERS	SCATTERING	WRITTEN_BYTES	READ_BYTES	APPROXIMATE_SIZE(MB)	APPROXIMATE_KEYS	SCHEDULING_CONSTRAINTS	SCHEDULING_STATE
+#	t_	t_i_0419b3102000000000030000000000000000	#	#	#	#	#	#	#	#	NULL	NULL
+# A BETWEEN key is built differently: the common prefix of the two bound keys plus one
+# 8-byte interpolated value, so it is shorter than a whole index key. The bounds here are
+# 02:00:00 and 06:00:00 UTC over 4 regions, so the first boundary is one hour in and its
+# leading bytes still read as 0419b3103000000000 = 2024-04-08 03:00:00 UTC; the trailing
+# 030000 is what is left of the handle after the interpolation, not a complete one.
+set @@session.time_zone = '+08:00';
+create table t_between_east (a bigint, b timestamp);
+alter table t_between_east add index idx(b) pre_split_regions = (between ('2024-04-08 10:00:00') and ('2024-04-08 14:00:00') regions 4);
+show table t_between_east index idx regions;
+REGION_ID	START_KEY	END_KEY	LEADER_ID	LEADER_STORE_ID	PEERS	SCATTERING	WRITTEN_BYTES	READ_BYTES	APPROXIMATE_SIZE(MB)	APPROXIMATE_KEYS	SCHEDULING_CONSTRAINTS	SCHEDULING_STATE
+#	t_	t_i_0419b3103000000000030000	#	#	#	#	#	#	#	#	NULL	NULL
+set @@session.time_zone = 'UTC';
+create table t_between_utc (a bigint, b timestamp);
+alter table t_between_utc add index idx(b) pre_split_regions = (between ('2024-04-08 02:00:00') and ('2024-04-08 06:00:00') regions 4);
+show table t_between_utc index idx regions;
+REGION_ID	START_KEY	END_KEY	LEADER_ID	LEADER_STORE_ID	PEERS	SCATTERING	WRITTEN_BYTES	READ_BYTES	APPROXIMATE_SIZE(MB)	APPROXIMATE_KEYS	SCHEDULING_CONSTRAINTS	SCHEDULING_STATE
+#	t_	t_i_0419b3103000000000030000	#	#	#	#	#	#	#	#	NULL	NULL
+set @@session.time_zone = default;
+drop table if exists t_by_east, t_by_utc, t_between_east, t_between_utc;
