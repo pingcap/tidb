@@ -6163,19 +6163,38 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	var targetPlan base.Plan
+	execStmtNode := explain.Stmt
 	if explain.Stmt != nil && !explain.Explore {
+		origStmtType := stmtCtx.StmtType
 		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
 		if stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
 			targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
 		} else {
 			targetPlan, _, err = OptimizeAstNodeNoCache(ctx, sctx, nodeW, b.is)
 		}
+		stmtCtx.StmtType = origStmtType
 		if err != nil {
 			return nil, err
 		}
+		if execPlan, ok := targetPlan.(*Execute); ok {
+			if !isExplainablePreparedStmt(execPlan.Stmt) {
+				return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported type %T", execPlan.Stmt)
+			}
+			targetPlan = execPlan.Plan
+			execStmtNode = execPlan.Stmt
+		}
 	}
 
-	return b.buildExplainPlan(targetPlan, explain.Format, "", explain.Analyze, explain.Explore, explain.Stmt, nil, explain.SQLDigest, explain.ReplayerFile)
+	return b.buildExplainPlan(targetPlan, explain.Format, "", explain.Analyze, explain.Explore, execStmtNode, nil, explain.SQLDigest, explain.ReplayerFile)
+}
+
+func isExplainablePreparedStmt(stmt ast.StmtNode) bool {
+	switch stmt.(type) {
+	case *ast.SelectStmt, *ast.SetOprStmt, *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.AlterTableStmt:
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {

@@ -228,6 +228,9 @@ func optimizeCache(ctx context.Context, sctx sessionctx.Context, node *resolve.N
 }
 
 func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	if _, ok := node.Node.(*ast.ExecuteStmt); ok {
+		return OptimizeExecStmt(ctx, sctx, node, is)
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			retErr = tidbutil.GetRecoverError(r)

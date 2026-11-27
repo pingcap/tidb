@@ -1105,6 +1105,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreExplainIDSuffix = sc.ExplainFormat == types.ExplainFormatBrief || sc.ExplainFormat == types.ExplainFormatPlanTree
 		sc.InVerboseExplain = sc.ExplainFormat == types.ExplainFormatVerbose
 		s = explainStmt.Stmt
+		if execStmt, ok := s.(*ast.ExecuteStmt); ok {
+			prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
+			if err != nil {
+				return err
+			}
+			s = prepareStmt.PreparedAst.Stmt
+			sc.MemSensitive = true
+			if selStmt, ok := s.(*ast.SelectStmt); ok && selStmt.LockInfo == nil {
+				sc.WeakConsistency = isWeakConsistencyRead(ctx, execStmt)
+			}
+		}
 	} else {
 		sc.ExplainFormat = ""
 	}
