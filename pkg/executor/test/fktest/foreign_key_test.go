@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -2628,4 +2629,108 @@ func TestLockKeysInInsertIgnore(t *testing.T) {
 	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
 	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
+}
+
+func TestForeignKeyCascadeLocksKeysInPessimisticTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table parent (id int primary key, u int)")
+	tk.MustExec("create table child (id int primary key, pid int, constraint fk foreign key (pid) references parent(id) on update cascade)")
+	tk.MustExec("create table src (id int primary key, next_id int)")
+	tk.MustExec("insert into parent values (1, 10)")
+	tk.MustExec("insert into child values (100, 1)")
+	tk.MustExec("insert into src values (1, 2)")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update parent p join src s on s.id = p.id set p.id = s.next_id where p.id = 1")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set innodb_lock_wait_timeout = 1")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustGetErrCode("insert into child values (200, 1)", mysql.ErrLockWaitTimeout)
+	tk2.MustExec("rollback")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from parent").Check(testkit.Rows("2 10"))
+	tk.MustQuery("select * from child").Check(testkit.Rows("100 2"))
+}
+
+func TestForeignKeyCascadeStmtAtomicityInPessimisticTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table parent (id int primary key, x int, unique key(x))")
+	tk.MustExec("create table child (id int primary key, cx int, constraint fk foreign key (cx) references parent(x) on update cascade)")
+	tk.MustExec("create table guard (id int primary key, version int)")
+	tk.MustExec("insert into parent values (1, 10)")
+	tk.MustExec("insert into child values (100, 10)")
+	tk.MustExec("insert into guard values (1, 0)")
+	updateSQL := "update parent p join guard g on g.id = 1 set p.x = p.x + 1, g.version = g.version where p.id = 1"
+
+	// The statement fails when it locks the guard row after the cascade, its changes must not be committed.
+	holder := testkit.NewTestKit(t, store)
+	holder.MustExec("use test")
+	holder.MustExec("begin pessimistic")
+	holder.MustExec("update guard set version = version + 1 where id = 1")
+	tk.MustExec("set innodb_lock_wait_timeout = 1")
+	tk.MustExec("begin pessimistic")
+	tk.MustGetErrCode(updateSQL, mysql.ErrLockWaitTimeout)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from parent").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select * from child").Check(testkit.Rows("100 10"))
+	holder.MustExec("rollback")
+
+	// The statement retries after a write conflict on the guard row, its first attempt must not be applied twice.
+	holder.MustExec("begin pessimistic")
+	holder.MustExec("update guard set version = version + 1 where id = 1")
+	tk.MustExec("set innodb_lock_wait_timeout = 50")
+	tk.MustExec("begin pessimistic")
+	done := make(chan error, 1)
+	go func() {
+		done <- tk.ExecToErr(updateSQL)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	holder.MustExec("commit")
+	require.NoError(t, <-done)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from parent").Check(testkit.Rows("1 11"))
+	tk.MustQuery("select * from child").Check(testkit.Rows("100 11"))
+	tk.MustQuery("select * from guard").Check(testkit.Rows("1 1"))
+
+	// The same retry in a pessimistic autocommit statement.
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	})
+	holder.MustExec("begin pessimistic")
+	holder.MustExec("update guard set version = version + 1 where id = 1")
+	go func() {
+		done <- tk.ExecToErr(updateSQL)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	holder.MustExec("commit")
+	require.NoError(t, <-done)
+	tk.MustQuery("select * from parent").Check(testkit.Rows("1 12"))
+	tk.MustQuery("select * from child").Check(testkit.Rows("100 12"))
+	tk.MustQuery("select * from guard").Check(testkit.Rows("1 2"))
+}
+
+func TestForeignKeyCascadeErrorRollsBackStmtInOptimisticTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table parent (id int primary key)")
+	tk.MustExec("create table child (id int primary key, pid int, foreign key (pid) references parent(id) on delete cascade)")
+	tk.MustExec("create table grandchild (id int primary key, cid int, foreign key (cid) references child(id))")
+	tk.MustExec("insert into parent values (1)")
+	tk.MustExec("insert into child values (10, 1)")
+	tk.MustExec("insert into grandchild values (100, 10)")
+
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into parent values (2)")
+	tk.MustGetErrCode("delete from parent where id = 1", mysql.ErrRowIsReferenced2)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from parent order by id").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select * from child").Check(testkit.Rows("10 1"))
+	tk.MustQuery("select * from grandchild").Check(testkit.Rows("100 10"))
 }
