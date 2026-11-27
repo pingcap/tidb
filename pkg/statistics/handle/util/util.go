@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session/syssession"
@@ -360,6 +361,53 @@ func IsSpecialGlobalIndex(idx *model.IndexInfo, tblInfo *model.TableInfo) bool {
 		colInfo := tblInfo.Columns[col.Offset]
 		isPrefixCol := col.Length != types.UnspecifiedLength
 		if colInfo.IsVirtualGenerated() || isPrefixCol {
+			return true
+		}
+	}
+	return false
+}
+
+// ColumnDependsOnGeometry reports whether a column is a geometry column, or a virtual
+// generated column computed from one, directly or through other virtual generated columns.
+// ANALYZE computes virtual generated columns from the sampled columns, and the samples have
+// no geometry values. A stored generated column is read from storage, so it ends the chain.
+func ColumnDependsOnGeometry(col *model.ColumnInfo, tblInfo *model.TableInfo) bool {
+	if col.GetType() == mysql.TypeGeometry {
+		return true
+	}
+	if !col.IsVirtualGenerated() {
+		return false
+	}
+	return columnDependsOnGeometry(col, tblInfo, make(map[string]struct{}, len(tblInfo.Columns)))
+}
+
+// columnDependsOnGeometry is ColumnDependsOnGeometry. visited holds the columns already
+// checked, so that a column reached along several paths is checked once.
+func columnDependsOnGeometry(col *model.ColumnInfo, tblInfo *model.TableInfo, visited map[string]struct{}) bool {
+	if col.GetType() == mysql.TypeGeometry {
+		return true
+	}
+	if !col.IsVirtualGenerated() {
+		return false
+	}
+	for name := range col.Dependences {
+		if _, ok := visited[name]; ok {
+			continue
+		}
+		visited[name] = struct{}{}
+		if dep := tblInfo.FindPublicColumnByName(name); dep != nil && columnDependsOnGeometry(dep, tblInfo, visited) {
+			return true
+		}
+	}
+	return false
+}
+
+// IndexDependsOnGeometry reports whether an index has a column that depends on a
+// geometry column, see ColumnDependsOnGeometry. Such an index is analyzed from its own
+// entries, since the samples cannot give its values.
+func IndexDependsOnGeometry(idx *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	for _, col := range idx.Columns {
+		if ColumnDependsOnGeometry(tblInfo.Columns[col.Offset], tblInfo) {
 			return true
 		}
 	}

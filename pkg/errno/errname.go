@@ -891,6 +891,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidNumberOfArgs:                                   mysql.Message("Too many arguments for function %s; maximum allowed is %d", nil),
 	ErrFieldInGroupingNotGroupBy:                             mysql.Message("Argument %s of GROUPING function is not in GROUP BY", nil),
 	ErrRoleNotGranted:                                        mysql.Message("%s is not granted to %s", nil),
+	ErrSRSNotFound:                                           mysql.Message("There's no spatial reference system with SRID %d.", nil),
 	ErrMaxExecTimeExceeded:                                   mysql.Message("Query execution was interrupted, maximum statement execution time exceeded", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           mysql.Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
 	ErrNotHintUpdatable:                                      mysql.Message("Variable '%s' might not be affected by SET_VAR hint.", nil),

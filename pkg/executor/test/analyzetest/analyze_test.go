@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -2449,4 +2450,233 @@ func TestAnalyzeNDVRate(t *testing.T) {
 	tk.MustExec("analyze table ndv_large with 1 NDVRATE, 5000000 SAMPLES")
 	tk.MustQuery("show warnings").CheckNotContain("raised the NDV rate")
 	tk.MustQuery(lastJob).CheckNotContain("ndvrate")
+}
+
+// TestAnalyzeSkipsGeometryColumns verifies that ANALYZE never collects statistics for a
+// geometry column, whatever tidb_analyze_skip_column_types holds and even when the
+// statement names the column, and that it still analyzes a table with only geometry
+// columns. The skipped columns raise no warning of their own.
+func TestAnalyzeSkipsGeometryColumns(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_skip_column_types = ''")
+	h := dom.StatsHandle()
+	checkWarnings := func(stmt string) {
+		// The only warning is the usual note on the sample rate.
+		rows := tk.MustQuery("show warnings").Rows()
+		require.Len(t, rows, 1, stmt)
+		require.Equal(t, "Note", rows[0][0], stmt)
+		require.Equal(t, "1105", rows[0][1], stmt)
+		require.True(t, strings.HasPrefix(rows[0][2].(string), "Analyze use auto adjusted sample rate"), stmt)
+	}
+	checkNoColumnStats := func(tblInfo *model.TableInfo, cols ...*model.ColumnInfo) {
+		tblStats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+		for _, col := range cols {
+			if colStats := tblStats.GetCol(col.ID); colStats != nil {
+				require.False(t, colStats.IsAnalyzed(), col.Name.O)
+			}
+			tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_histograms where table_id = %d and is_index = 0 and hist_id = %d",
+				tblInfo.ID, col.ID)).Check(testkit.Rows("0"))
+		}
+	}
+
+	tk.MustExec("create table t (a int, g point, p polygon srid 0, key (a))")
+	tk.MustExec("insert into t (a) values (1), (2), (3)")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	for _, stmt := range []string{"analyze table t", "analyze table t all columns", "analyze table t columns a, g, p"} {
+		tk.MustExec(stmt)
+		checkWarnings(stmt)
+		tblStats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+		require.True(t, tblStats.IsAnalyzed(), stmt)
+		require.True(t, tblStats.GetCol(tblInfo.Columns[0].ID).IsAnalyzed(), stmt)
+		checkNoColumnStats(tblInfo, tblInfo.Columns[1], tblInfo.Columns[2])
+	}
+	// A query that needs the statistics of the geometry columns estimates as for columns
+	// that were never analyzed.
+	tk.MustQuery("explain format = 'brief' select * from t where g is null and p is null").Check(testkit.Rows(
+		"Selection 2.40 root  isnull(test.t.g), isnull(test.t.p)",
+		"└─TableReader 3.00 root  data:TableFullScan",
+		"  └─TableFullScan 3.00 cop[tikv] table:t keep order:false",
+	))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	// A table with only geometry columns is analyzed for its row count alone.
+	tk.MustExec("create table t2 (g point, h geometry)")
+	tk.MustExec("insert into t2 values (null, null), (null, null)")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+	for _, stmt := range []string{"analyze table t2", "analyze table t2 all columns", "analyze table t2 columns g, h"} {
+		tk.MustExec(stmt)
+		checkWarnings(stmt)
+		tblStats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+		require.True(t, tblStats.IsAnalyzed(), stmt)
+		require.Equal(t, int64(2), tblStats.RealtimeCount, stmt)
+		tk.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tblInfo.ID)).Check(testkit.Rows("2"))
+		checkNoColumnStats(tblInfo, tblInfo.Columns...)
+	}
+
+	// Virtual generated columns computed from a geometry column get no statistics either. An
+	// index on them is analyzed from its own entries, so it has statistics.
+	checkIndexNDVs := func(stmt string, tableID int64, tblInfo *model.TableInfo, ndvs ...string) {
+		rows := make([]string, 0, len(ndvs))
+		for i, name := range []string{"k1", "k2", "k3"}[:len(ndvs)] {
+			rows = append(rows, fmt.Sprintf("%d %s", tblInfo.FindIndexByName(name).ID, ndvs[i]))
+		}
+		tk.MustQuery(fmt.Sprintf("select hist_id, distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1 order by hist_id",
+			tableID)).Check(testkit.Rows(rows...))
+	}
+	tk.MustExec("create table t3 (a int, g point, c1 int as (g is null) virtual, c2 int as (c1 + 1) virtual, " +
+		"key k1 ((g is null)), key k2 (c2), key k3 (a))")
+	tk.MustExec("insert into t3 (a) values (1), (2), (3)")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+	for _, stmt := range []string{"analyze table t3", "analyze table t3 all columns", "analyze table t3 columns a"} {
+		tk.MustExec(stmt)
+		checkWarnings(stmt)
+		tk.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tblInfo.ID)).Check(testkit.Rows("3"))
+		require.True(t, h.GetPhysicalTableStats(tblInfo.ID, tblInfo).GetCol(tblInfo.Columns[0].ID).IsAnalyzed(), stmt)
+		checkNoColumnStats(tblInfo, tblInfo.Columns[1:]...)
+		checkIndexNDVs(stmt, tblInfo.ID, tblInfo, "1", "1", "3")
+	}
+	// They are skipped also when the statement names them but not the columns they are
+	// computed from.
+	for _, stmt := range []string{"analyze table t3 columns c2", "analyze table t3 columns c1, c2"} {
+		tk.MustExec(stmt)
+		checkNoColumnStats(tblInfo, tblInfo.Columns[1:]...)
+		checkIndexNDVs(stmt, tblInfo.ID, tblInfo, "1", "1", "3")
+	}
+
+	tk.MustExec("create table t4 (a int, g point, key k1 ((g is null)), key k2 (a)) partition by hash (a) partitions 2")
+	tk.MustExec("insert into t4 (a) values (1), (2), (3), (4)")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t4"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+	tk.MustExec("analyze table t4")
+	tk.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tblInfo.ID)).Check(testkit.Rows("4"))
+	checkIndexNDVs("t4", tblInfo.ID, tblInfo, "1", "4")
+	for _, def := range tblInfo.Partition.Definitions {
+		tk.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", def.ID)).Check(testkit.Rows("2"))
+		checkIndexNDVs("t4 "+def.Name.O, def.ID, tblInfo, "1", "2")
+	}
+
+	// A geometry column added to an analyzed table has the record the DDL handler writes for
+	// a new column: a NULL count and no histogram. A query that needs its statistics loads
+	// that record, estimates as above, and does not try to load it again.
+	tk.MustExec("create table t5 (a int)")
+	tk.MustExec("insert into t5 values (1), (2), (3)")
+	tk.MustExec("analyze table t5")
+	tk.MustExec("alter table t5 add column g point")
+	require.NoError(t, statstestutil.HandleDDLEventWithTxn(h, statstestutil.FindEvent(h.DDL().DDLEventCh(), model.ActionAddColumn)))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t5"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+	tk.MustQuery(fmt.Sprintf("select hist_id, null_count, distinct_count, stats_ver from mysql.stats_histograms where table_id = %d and is_index = 0 order by hist_id", tblInfo.ID)).Check(testkit.Rows("1 0 3 2", "2 3 0 0"))
+	// As after a restart, the statistics cache knows what is stored but has loaded nothing.
+	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
+	_, loadNeeded, _ := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).ColumnIsLoadNeeded(tblInfo.Columns[1].ID, false)
+	require.True(t, loadNeeded)
+	tk.MustQuery("explain format = 'brief' select * from t5 where g is null").Check(testkit.Rows(
+		"Selection 2.40 root  isnull(test.t5.g)",
+		"└─TableReader 3.00 root  data:TableFullScan",
+		"  └─TableFullScan 3.00 cop[tikv] table:t5 keep order:false",
+	))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	require.Eventually(t, func() bool {
+		_, loadNeeded, _ := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).ColumnIsLoadNeeded(tblInfo.Columns[1].ID, false)
+		return !loadNeeded
+	}, 5*time.Second, 100*time.Millisecond)
+
+	// A stored generated column computed from a geometry column is read from storage, so it
+	// can be in the clustered primary key, whose columns the samples need for the row handles.
+	for i, def := range []string{
+		"c int as (if(g is null, a, 0)) stored primary key",
+		"c varchar(10) as (if(g is null, 'a', 'b')) stored, primary key (a, c) clustered",
+	} {
+		name := fmt.Sprintf("t6_%d", i)
+		tk.MustExec("create table " + name + " (g point, a int, " + def + ")")
+		tk.MustExec("insert into " + name + " (a) values (1), (2), (3)")
+		tk.MustExec("analyze table " + name)
+		tblInfo = dom.MustGetTableInfo(t, "test", name)
+		checkNoColumnStats(tblInfo, tblInfo.Columns[0])
+		tblStats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+		require.True(t, tblStats.GetCol(tblInfo.Columns[1].ID).IsAnalyzed(), def)
+		require.True(t, tblStats.GetCol(tblInfo.Columns[2].ID).IsAnalyzed(), def)
+	}
+
+	// A global index on a stored generated column computed from a geometry column (k1) is
+	// analyzed from the samples, at table and partition level, as a global index on an
+	// ordinary column is. A global index on an expression over a geometry column (k3) is
+	// analyzed for the whole table from its own entries, as a global index on any expression is.
+	tk.MustExec("create table t7 (a int, g point, c int as (if(g is null, a, 0)) stored, " +
+		"unique key k1 (c) global, key k2 (a), key k3 ((g is null)) global) partition by hash (a) partitions 2")
+	tk.MustExec("insert into t7 (a) values (1), (2), (3), (4)")
+	tk.MustExec("analyze table t7")
+	tblInfo = dom.MustGetTableInfo(t, "test", "t7")
+	checkIndexNDVs("t7", tblInfo.ID, tblInfo, "4", "4", "1")
+	for _, def := range tblInfo.Partition.Definitions {
+		checkIndexNDVs("t7 "+def.Name.O, def.ID, tblInfo, "2", "2")
+	}
+
+	// Each generated column of t8 depends on the two before it. A search for a geometry
+	// column that did not remember the columns it has checked would take about 1.6^40
+	// steps here, since no column depends on one and every path has to be followed.
+	chain := make([]string, 0, 40)
+	prev := []string{"a", "b"}
+	for i := 1; i <= 40; i++ {
+		chain = append(chain, fmt.Sprintf("c%d int as (%s + %s) virtual", i, prev[i], prev[i-1]))
+		prev = append(prev, fmt.Sprintf("c%d", i))
+	}
+	tk.MustExec("create table t8 (a int, b int, " + strings.Join(chain, ", ") + ", key k (c40))")
+	tk.MustExec("insert into t8 (a, b) values (1, 1)")
+	tk.MustExec("analyze table t8 all columns")
+	tblInfo = dom.MustGetTableInfo(t, "test", "t8")
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id from mysql.stats_histograms where table_id = %d order by is_index, hist_id", tblInfo.ID)).Check(
+		testkit.Rows("0 1", "0 2", "1 1"))
+
+	// ANALYZE computes virtual generated columns from the samples, but reads stored ones from
+	// storage. So a stored generated column computed from a geometry column (s) is analyzed,
+	// and so are a virtual generated column computed from it (v3) and the indexes on both (k1,
+	// k3), from the samples. A virtual generated column that reaches the geometry column
+	// through virtual generated columns only (v2) is skipped, and the index on it (k2) is
+	// analyzed from its own entries. The job names the sampled columns. A virtual generated
+	// column never gets a histogram of its own.
+	tk.MustExec("create table t9 (a int, g point, s int as (if(g is null, a, 0)) stored, " +
+		"v1 int as (g is null) virtual, v2 int as (v1 + a) virtual, v3 int as (s + 1) virtual, " +
+		"key k1 (s), key k2 (v2), key k3 (v3))")
+	tblInfo = dom.MustGetTableInfo(t, "test", "t9")
+	checkT9 := func(auto, ndv string) {
+		tk.MustQuery(fmt.Sprintf("select hist_id, distinct_count from mysql.stats_histograms where table_id = %d and is_index = 0 order by hist_id", tblInfo.ID)).Check(
+			testkit.Rows(fmt.Sprintf("%d %s", tblInfo.Columns[0].ID, ndv), fmt.Sprintf("%d %s", tblInfo.Columns[2].ID, ndv)))
+		checkIndexNDVs("t9", tblInfo.ID, tblInfo, ndv, ndv, ndv)
+		tk.MustQuery("select job_info from mysql.analyze_jobs where table_name = 't9' order by job_info").Check(testkit.Rows(
+			auto+"analyze index k2",
+			auto+"analyze ndv for index k3",
+			auto+"analyze table indexes k1, k3, columns a, s, v3 with 256 buckets, 100 topn, 1 samplerate",
+		))
+	}
+	tk.MustExec("insert into t9 (a) values (1), (2), (3)")
+	tk.MustExec("analyze table t9")
+	checkWarnings("analyze table t9")
+	checkT9("", "3")
+
+	// Auto-analyze applies the same rule: after the rows of t9 change, it analyzes t9 as
+	// ANALYZE did, and then finds no index of any table above left to analyze. t2 goes
+	// first, since auto-analyze expects a table to have column records, which the DDL
+	// handler of a server writes when the table is created and this test does not.
+	tk.MustExec("drop table t2")
+	tk.MustExec("delete from mysql.analyze_jobs")
+	tk.MustExec("insert into t9 (a) values (4), (5), (6)")
+	tk.MustExec("flush stats_delta *.*")
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
+	defer func(minCnt int64) { statistics.AutoAnalyzeMinCnt = minCnt }(statistics.AutoAnalyzeMinCnt)
+	statistics.AutoAnalyzeMinCnt = 0
+	require.True(t, h.AutoAnalyze().HandleAutoAnalyze())
+	checkT9("auto ", "6")
+	require.False(t, h.AutoAnalyze().HandleAutoAnalyze())
 }

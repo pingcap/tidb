@@ -76,6 +76,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -3513,9 +3514,10 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		snapshot: startTS,
 	}
 	e := &AnalyzeIndexExec{
-		baseAnalyzeExec: base,
-		isCommonHandle:  task.TblInfo.IsCommonHandle,
-		idxInfo:         task.IndexInfo,
+		baseAnalyzeExec:   base,
+		isCommonHandle:    task.TblInfo.IsCommonHandle,
+		idxInfo:           task.IndexInfo,
+		dependsOnGeometry: handleutil.IndexDependsOnGeometry(task.IndexInfo, task.TblInfo),
 	}
 	topNSize := new(int32)
 	*topNSize = int32(opts[ast.AnalyzeOptNumTopN])

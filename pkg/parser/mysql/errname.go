@@ -967,6 +967,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrGeometryParamLongitudeOutOfRange:                      Message("A parameter of function %.192s contains a geometry with longitude %f, which is out of range. It must be within (%f, %f].", nil),
 	ErrGeometryParamLatitudeOutOfRange:                       Message("A parameter of function %.192s contains a geometry with latitude %f, which is out of range. It must be within [%f, %f].", nil),
 	ErrRoleNotGranted:                                        Message("%s is not granted to %s", nil),
+	ErrSRSNotFound:                                           Message("There's no spatial reference system with SRID %d.", nil),
 	ErrMaxExecTimeExceeded:                                   Message("Query execution was interrupted, maximum statement execution time exceeded", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
 	ErrDataTruncatedFunctionalIndex:                          Message("Data truncated for functional index '%s' at row %d", nil),
