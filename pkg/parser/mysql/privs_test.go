@@ -91,4 +91,11 @@ func TestPrivAllConsistency(t *testing.T) {
 	// ALL privilege doesn't have a column in Priv2UserCol
 	// so it's +2
 	require.Equal(t, len(Priv2UserCol)+2, len(Priv2Str))
+
+	// AllTablePrivMask is the union of AllTablePrivs.
+	var tablePrivMask PrivilegeType
+	for _, p := range AllTablePrivs {
+		tablePrivMask |= p
+	}
+	require.Equal(t, tablePrivMask, AllTablePrivMask)
 }

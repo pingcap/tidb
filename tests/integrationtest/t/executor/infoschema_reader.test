@@ -297,6 +297,7 @@ select * from information_schema.key_column_usage where table_schema = 'executor
 select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' and column_name = 'c';
 select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' and column_name = 'non_exist';
 
+set global tidb_enable_check_constraint = ON;
 CREATE TABLE tc(a INT CHECK(a > 10) NOT ENFORCED, b INT, c INT, CONSTRAINT c1 CHECK (b > c));
 --sorted_result
 select * from information_schema.table_constraints where table_name = 'tc';
@@ -308,6 +309,7 @@ select * from information_schema.table_constraints where table_schema = 'executo
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and table_name = 'non_exist';
 --sorted_result
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and CONSTRAINT_NAME = 'c1';
+set global tidb_enable_check_constraint = default;
 
 # TestTables
 select TABLE_CATALOG,TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,ENGINE,VERSION from information_schema.tables where table_name = 't';
