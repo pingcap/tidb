@@ -13,6 +13,7 @@ go_test(
         "//pkg/domain/infosync",
         "//pkg/errno",
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/resourcegroup/runaway",
@@ -22,6 +23,7 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_stretchr_testify//require",
     ],
 )

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -589,7 +591,13 @@ func TestResourceGroupRunawayFlood(t *testing.T) {
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, repeats from mysql.tidb_runaway_queries", nil,
 		nil, maxWaitDuration, tryInterval)
 
+	addCounter := metrics.RunawayFlusherAddCounter.WithLabelValues("runaway-record")
+	addedBefore := promtestutil.ToFloat64(addCounter)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/skipFlush", `return(1)`))
+	// The failpoint is process-wide; a failed assertion below must not leave it enabled for later tests.
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/skipFlush")
+	}()
 	// check thrice to make sure the runaway query be regarded as a repeated query.
 	err = tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.2) from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
@@ -597,6 +605,11 @@ func TestResourceGroupRunawayFlood(t *testing.T) {
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
 	err = tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.4) from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
+	// The records reach the flusher asynchronously, and one that arrives after the flush is resumed
+	// is written as a separate row instead of being merged.
+	require.Eventually(t, func() bool {
+		return promtestutil.ToFloat64(addCounter)-addedBefore >= 3
+	}, maxWaitDuration, 10*time.Millisecond)
 	// resume the flush to ensure an aggregated record can be queried later.
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/skipFlush"))
 	// only have one runaway query
