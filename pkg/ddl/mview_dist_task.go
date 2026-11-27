@@ -55,7 +55,7 @@ func (w *worker) prepareMViewBuildTask(ctx context.Context, job *model.Job, mvie
 		return nil, err
 	}
 	defer restore()
-	vars := sctx.GetSessionVars()
+	vars := sctx.GetSessionVars() //nolint:forbidigo
 	sql, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mviewTableInfo, vars.MViewMaintainImportThreads, vars.MViewMaintainImportDiskQuota)
 	if err != nil {
 		return nil, err
