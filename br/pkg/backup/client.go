@@ -676,6 +676,15 @@ func (bc *Client) CheckCheckpoint(hash []byte) error {
 		)
 	}
 
+	// ClusterID == 0 means legacy checkpoint metadata without this field, so only enforce the match when it is set.
+	if bc.checkpointMeta != nil && bc.checkpointMeta.ClusterID != 0 && bc.checkpointMeta.ClusterID != bc.clusterID {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "failed to backup, "+
+			"because the checkpoint mode is used, "+
+			"but the checkpoint was created by the cluster %d instead of the current cluster %d",
+			bc.checkpointMeta.ClusterID, bc.clusterID,
+		)
+	}
+
 	// first execution or not using checkpoint mode yet
 	// or using the same config can pass the check
 	return nil
@@ -720,6 +729,7 @@ func (bc *Client) StartCheckpointRunner(
 			ConfigHash:  cfgHash,
 			BackupTS:    backupTS,
 			BackupID:    backupID,
+			ClusterID:   bc.clusterID,
 		}
 
 		// sync the checkpoint meta to the external storage at first
