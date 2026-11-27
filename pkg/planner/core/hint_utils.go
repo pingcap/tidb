@@ -78,6 +78,33 @@ func GenHintsFromPhysicalPlan(p base.Plan) []*ast.TableOptimizerHint {
 	return GenHintsFromFlatPlan(flat)
 }
 
+// dropOverriddenLeadingHints removes original-statement LEADING hints that share
+// a query block with a plan-derived LEADING hint. The plan-derived order reflects
+// the actual join order, so keeping both would emit duplicate LEADING hints that
+// are rejected when the restored text is replayed.
+// See https://github.com/pingcap/tidb/issues/70238.
+func dropOverriddenLeadingHints(planHints, origHints []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
+	derived := make(map[string]struct{})
+	for _, hint := range planHints {
+		if hint.HintName.L == h.HintLeading {
+			derived[hint.QBName.L] = struct{}{}
+		}
+	}
+	if len(derived) == 0 {
+		return origHints
+	}
+	res := make([]*ast.TableOptimizerHint, 0, len(origHints))
+	for _, hint := range origHints {
+		if hint.HintName.L == h.HintLeading {
+			if _, ok := derived[hint.QBName.L]; ok {
+				continue
+			}
+		}
+		res = append(res, hint)
+	}
+	return res
+}
+
 func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
 	qbName, err := h.GenerateQBName(nodeType, p.QueryBlockOffset())
 	if err != nil {
