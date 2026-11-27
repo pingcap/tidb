@@ -3866,8 +3866,15 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	// If we have ShowPredicateExtractor, we do not buildSelection with Pattern
 	if show.Pattern != nil && buildPattern {
 		patternColumn := p.OutputNames()[0].ColName
-		if show.Tp == ast.ShowStorageClassTransitions {
+		switch show.Tp {
+		case ast.ShowStorageClassTransitions:
 			patternColumn = ast.NewCIStr("TABLE_NAME")
+		case ast.ShowMaterializedViews:
+			// The first column is mview_id, LIKE matches the name.
+			patternColumn = ast.NewCIStr("mview_name")
+		case ast.ShowMaterializedViewLogs:
+			// The first column is mlog_id, LIKE matches the name.
+			patternColumn = ast.NewCIStr("mlog_name")
 		}
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: patternColumn},
