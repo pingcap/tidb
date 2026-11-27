@@ -147,9 +147,11 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	}
 
 	p.is = is
-	err = p.sctx.GetSessionVars().SetSystemVar(vardef.TiDBSnapshot, "")
-
-	return err
+	if err := sessVars.SetSystemVar(vardef.TiDBSnapshot, ""); err != nil {
+		return err
+	}
+	p.txn = txn
+	return nil
 }
 
 func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider() error {
@@ -192,17 +194,9 @@ func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return p.txn, nil
 	}
 
-	err := p.activateStaleTxn()
-	if err != nil {
+	if err := p.activateStaleTxn(); err != nil {
 		return nil, err
 	}
-
-	txn, err := p.sctx.Txn(false)
-	if err != nil {
-		return nil, err
-	}
-
-	p.txn = txn
 
 	return p.txn, nil
 }

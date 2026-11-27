@@ -533,3 +533,71 @@ func TestInfoSchemaTableNameLikeEscape(t *testing.T) {
 		"where table_schema = 'like_escape' and table_name like 'abc%'").
 		Sort().Check(testkit.Rows("abc#x", "abc_def"))
 }
+
+func TestInfoSchemaLocalTemporaryTableShadowing(t *testing.T) {
+	for _, cacheSize := range []string{"0", "536870912"} {
+		t.Run(cacheSize, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("set global tidb_schema_cache_size = " + cacheSize)
+			t.Cleanup(func() { tk.MustExec("set global tidb_schema_cache_size = default") })
+			tk.MustExec("create database temp_shadow")
+			tk.MustExec("use temp_shadow")
+			tk.MustExec("create table t (a int primary key, b int, index idx(b)) partition by hash(a) partitions 2")
+			if v2, _ := infoschema.IsV2(dom.InfoSchema()); v2 != (cacheSize != "0") {
+				t.Fatalf("unexpected InfoSchema version for cache size %s", cacheSize)
+			}
+			id := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema='temp_shadow' and table_name='t'").Rows()[0][0]
+			cases := []struct {
+				table, columns string
+				rows           [][]any
+			}{
+				{"tables", "table_name, engine", testkit.Rows("t InnoDB")},
+				{"columns", "table_name, column_name", testkit.Rows("t a", "t b")},
+				{"partitions", "table_name, partition_name", testkit.Rows("t p0", "t p1")},
+				{"statistics", "table_name, index_name, column_name", testkit.Rows("t PRIMARY a", "t idx b")},
+				{"key_column_usage", "table_name, column_name", testkit.Rows("t a")},
+				{"table_constraints", "table_name, constraint_name", testkit.Rows("t PRIMARY")},
+				{"tidb_indexes", "table_name, key_name, column_name", testkit.Rows("t PRIMARY a", "t idx b")},
+			}
+			for _, tc := range cases {
+				tk.MustQuery("select " + tc.columns + " from information_schema." + tc.table +
+					" where table_schema='temp_shadow' and table_name='t'").Sort().Check(tc.rows)
+			}
+			tk.MustExec("create temporary table t (shadow int)")
+			tk.MustExec("insert into t values (42)")
+			tk.MustExec("create temporary table temp_only (a int)")
+			for _, tc := range cases {
+				t.Run(tc.table, func(t *testing.T) {
+					tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+					for _, predicate := range []string{"table_name='t'", "table_name in ('t','temp_only')", "concat(table_name,'')='t'"} {
+						tk.MustQuery("select " + tc.columns + " from information_schema." + tc.table +
+							" where table_schema='temp_shadow' and " + predicate).Sort().Check(tc.rows)
+					}
+					tk.MustQuery("select count(*) from information_schema." + tc.table +
+						" where table_schema='temp_shadow' and table_name='temp_only'").Check(testkit.Rows("0"))
+				})
+			}
+			tk.MustQuery("select table_name, engine from information_schema.tables where tidb_table_id=" + fmt.Sprint(id)).Check(testkit.Rows("t InnoDB"))
+			tk.MustQuery("select count(*) from information_schema.tables where table_schema='temp_shadow' and table_name='t'").Check(testkit.Rows("1"))
+			tk.MustExec("prepare stmt from 'select column_name from information_schema.columns where table_schema=? and table_name=? order by column_name'")
+			tk.MustExec("set @db='temp_shadow', @tbl='t'")
+			for range 2 {
+				tk.MustQuery("execute stmt using @db, @tbl").Check(testkit.Rows("a", "b"))
+			}
+			tk.MustExec("deallocate prepare stmt")
+			tk.MustExec("begin")
+			tk.MustExec("set @snapshot_ts = tidb_parse_tso(@@tidb_current_ts)")
+			tk.MustExec("commit")
+			for _, predicate := range []string{"concat(table_name,'')='t'", "table_name='t'"} {
+				tk.MustQuery("select column_name from information_schema.columns as of timestamp @snapshot_ts " +
+					"where table_schema='temp_shadow' and " + predicate + " order by ordinal_position").Check(testkit.Rows("a", "b"))
+			}
+			tk.MustGetErrMsg("select * from t as of timestamp @snapshot_ts", "can not stale read temporary table")
+			// Ordinary SQL must still resolve the session-local temporary table.
+			tk.MustQuery("select shadow from t").Check(testkit.Rows("42"))
+			tk.MustExec("drop temporary table t")
+			tk.MustQuery("select a, b from t").Check(testkit.Rows())
+		})
+	}
+}

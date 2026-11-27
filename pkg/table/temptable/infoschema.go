@@ -40,7 +40,7 @@ func AttachLocalTemporaryTableInfoSchema(sctx variable.SessionVarsProvider, is i
 
 // DetachLocalTemporaryTableInfoSchema detach local temporary table information schema from is
 func DetachLocalTemporaryTableInfoSchema(is infoschema.InfoSchema) infoschema.InfoSchema {
-	if attachedInfoSchema, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+	if attachedInfoSchema, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && attachedInfoSchema.LocalTemporaryTables != nil {
 		return attachedInfoSchema.DetachTemporaryTableInfoSchema()
 	}
 
