@@ -890,3 +890,29 @@ fn test_prepare_cache_with_binding_issue_57992() {
     session.run("execute stmt_issue57992").expect("execute");
     assert_eq!(matched(&mut session), "1");
 }
+
+/// Go `TestIssue68550` (8c9b48508c8): a binding that overrides the hints an
+/// EXPLAINed statement wrote warns as it does for the statement itself; no
+/// hint, or no binding, no warning.
+#[test]
+fn test_issue_68550() {
+    let mut session = Session::new();
+    session.run("create table t (a int, b int, key(a), key(b))").expect("create");
+    let expected = "Warning 1105 The system ignores the hints in the current query and uses the hints \
+                    specified in the bindSQL: SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` = 1 AND `b` = 1";
+    let warnings = |session: &mut Session| -> Vec<String> {
+        query_text(session, "show warnings").1.into_iter().map(|row| row.join(" ")).collect()
+    };
+    session
+        .run("create global binding using select /*+ use_index(t, a) */ * from t where a=1 and b=1")
+        .expect("create binding");
+    query_text(&mut session, "explain select /*+ use_index(t, b) */ * from t where a=1 and b=1");
+    assert_eq!(warnings(&mut session), [expected]);
+    query_text(&mut session, "select /*+ use_index(t, b) */ * from t where a=1 and b=1");
+    assert_eq!(warnings(&mut session), [expected]);
+    query_text(&mut session, "explain select * from t where a=1 and b=1");
+    assert!(warnings(&mut session).is_empty());
+    session.run("drop global binding for select * from t where a=1 and b=1").expect("drop");
+    query_text(&mut session, "explain select /*+ use_index(t, b) */ * from t where a=1 and b=1");
+    assert!(warnings(&mut session).is_empty());
+}
