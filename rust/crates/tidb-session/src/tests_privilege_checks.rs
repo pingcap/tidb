@@ -548,3 +548,70 @@ fn delete_join_requires_select_on_every_joined_table() {
     let (_, rows) = crate::tests_support::query_text(&mut root, "select * from delete_priv_a.t");
     assert_eq!(rows, vec![vec!["1"]]);
 }
+
+/// Go `TestInstancePlanCachePrivilegeCheck`'s cached-plan cases
+/// (032f17c27bc): a cached plan -- PointGet included, with or without a
+/// parameter -- rechecks the user's privileges on every EXECUTE, so a
+/// revoke (or an inactive role) refuses it with 1142 and a grant reuses
+/// the cache again.
+#[test]
+fn cached_point_get_plans_recheck_privileges() {
+    use crate::tests_support::{authenticated_session, err_code, row_text, session_as};
+    for instance in [0, 1] {
+        let registry = tidb_privilege::PrivilegeRegistry::default();
+        let mut tk = authenticated_session(&registry, "root", "%");
+        let run = |session: &mut Session, sql: &str| match session.run(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}")) {
+            output @ crate::StmtResult::Rows(_) => row_text(Ok(output)),
+            _ => Vec::new(),
+        };
+        run(&mut tk, &format!("set global tidb_enable_instance_plan_cache={instance}"));
+        for sql in [
+            "create table t (a int, primary key(a))",
+            "insert into t values(0)",
+            "CREATE USER 'u1'",
+            "grant select on test.t to 'u1'",
+        ] {
+            run(&mut tk, sql);
+        }
+        let mut u1 = session_as(&registry, tk.shared_catalog(), "u1", "%");
+        let cached = |u1: &mut Session| run(u1, "select @@last_plan_from_cache")[0][0].clone();
+        run(&mut u1, "prepare st from 'select a from test.t where a<1'");
+        run(&mut u1, "execute st");
+        run(&mut u1, "execute st");
+        assert_eq!(cached(&mut u1), "1", "instance={instance}");
+        run(&mut u1, "set @point_key=0");
+        run(&mut u1, "prepare point_stmt from 'select * from test.t where a=?'");
+        assert_eq!(run(&mut u1, "execute point_stmt using @point_key"), [["0"]]);
+        assert_eq!(run(&mut u1, "execute point_stmt using @point_key"), [["0"]]);
+        assert_eq!(cached(&mut u1), "1", "instance={instance}");
+        run(&mut tk, "revoke select on test.t from 'u1'");
+        assert_eq!(err_code(u1.run("execute point_stmt using @point_key")), 1142, "instance={instance}");
+        assert!(u1.run("execute st").is_err(), "instance={instance}");
+
+        run(&mut tk, "grant select on test.t to 'u1'");
+        run(&mut u1, "execute st");
+        assert_eq!(cached(&mut u1), "1", "instance={instance}");
+        assert_eq!(run(&mut u1, "execute point_stmt using @point_key"), [["0"]]);
+        assert_eq!(cached(&mut u1), "1", "instance={instance}");
+        for sql in [
+            "revoke select on test.t from 'u1'",
+            "create role 'point_reader'",
+            "grant select on test.t to 'point_reader'",
+            "grant 'point_reader' to 'u1'",
+        ] {
+            run(&mut tk, sql);
+        }
+        run(&mut u1, "set role all");
+        assert_eq!(run(&mut u1, "execute point_stmt using @point_key"), [["0"]]);
+        run(&mut u1, "set role none");
+        assert_eq!(err_code(u1.run("execute point_stmt using @point_key")), 1142, "instance={instance}");
+        run(&mut u1, "set role all");
+        assert_eq!(run(&mut u1, "execute point_stmt using @point_key"), [["0"]]);
+        // The literal point plan is checked too before its executor is reused.
+        run(&mut u1, "prepare literal_point from 'select * from test.t where a=0'");
+        assert_eq!(run(&mut u1, "execute literal_point"), [["0"]]);
+        run(&mut tk, "revoke select on test.t from 'point_reader'");
+        assert_eq!(err_code(u1.run("execute literal_point")), 1142, "instance={instance}");
+        run(&mut tk, "set global tidb_enable_instance_plan_cache=0");
+    }
+}
