@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,6 +47,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	pdgc "github.com/tikv/pd/client/clients/gc"
 )
 
 func TestRecoverTable(t *testing.T) {
@@ -919,6 +921,75 @@ func TestFlashbackRetryGetMinSafeTime(t *testing.T) {
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
+}
+
+func TestFlashbackReadOnlySchemaCompatibility(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	beforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, beforeDrop))
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+
+	tk.MustExec("create database flashback_source")
+	source, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("flashback_source"))
+	require.True(t, ok)
+	snapshot, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	require.NoError(t, err)
+	tk.MustExec("drop database flashback_source")
+	pdStore, ok := store.(kv.StorageWithPD)
+	require.True(t, ok)
+	gcStates := pdStore.GetPDClient().GetGCStatesClient(uint32(store.GetCodec().GetKeyspaceID()))
+	readOnlyRecovery := func() *model.RecoverSchemaInfo {
+		db := source.Clone()
+		db.ReadOnly = true
+		return &model.RecoverSchemaInfo{DBInfo: db, OldSchemaName: source.Name, SnapshotTS: snapshot.Ver}
+	}
+
+	const serverInfo = "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo"
+	const mixed = "return(`{\"current\":{\"schema_read_only\":true},\"old\":{}}`)"
+	for _, stage := range []string{"submission", "publication"} {
+		t.Run(stage, func(t *testing.T) {
+			if stage == "submission" {
+				testfailpoint.Enable(t, serverInfo, mixed)
+			}
+			var reachedOwner atomic.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Type != model.ActionRecoverSchema {
+					return
+				}
+				reachedOwner.Store(true)
+				if stage == "publication" && job.SchemaState == model.StateWriteOnly {
+					testfailpoint.Enable(t, serverInfo, mixed)
+				}
+			})
+			err := dom.DDLExecutor().RecoverSchema(tk.Session(), readOnlyRecovery())
+			require.ErrorContains(t, err, "do not support database read-only mode")
+			require.Equal(t, stage == "publication", reachedOwner.Load())
+			require.False(t, dom.InfoSchema().SchemaExists(source.Name))
+			enabled, err := gcutil.CheckGCEnable(tk.Session())
+			require.NoError(t, err)
+			require.True(t, enabled)
+			state, err := gcStates.GetGCState(t.Context(), pdgc.ExcludeGCBarriers(false))
+			require.NoError(t, err)
+			barriers, err := state.GetGCBarriers()
+			require.NoError(t, err)
+			require.Empty(t, barriers)
+		})
+	}
+
+	t.Run("writable schema with mixed nodes", func(t *testing.T) {
+		testfailpoint.Enable(t, serverInfo, mixed)
+		tk.MustExec("flashback database flashback_source")
+		db, ok := dom.InfoSchema().SchemaByName(source.Name)
+		require.True(t, ok)
+		require.False(t, db.ReadOnly)
+		tk.MustExec("drop database flashback_source")
+	})
+	require.NoError(t, dom.DDLExecutor().RecoverSchema(tk.Session(), readOnlyRecovery()))
+	db, ok := dom.InfoSchema().SchemaByName(source.Name)
+	require.True(t, ok)
+	require.True(t, db.ReadOnly)
 }
 
 func TestFlashbackSchema(t *testing.T) {

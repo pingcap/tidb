@@ -940,6 +940,11 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 }
 
 func (e *executor) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *model.RecoverSchemaInfo) error {
+	if recoverSchemaInfo.ReadOnly {
+		if err := checkSchemaReadOnlyCompatibility(e.ctx); err != nil {
+			return err
+		}
+	}
 	involvedSchemas := []model.InvolvingSchemaInfo{{
 		Database: recoverSchemaInfo.DBInfo.Name.L,
 		Table:    model.InvolvingAll,

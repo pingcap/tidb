@@ -687,6 +687,13 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			}
 		}
 
+		if schemaInfo.ReadOnly {
+			// Cluster membership may have changed since the job was submitted.
+			if err = checkSchemaReadOnlyCompatibility(jobCtx.stepCtx); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
+			}
+		}
 		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
 			return ver, err
 		}
