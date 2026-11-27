@@ -14,7 +14,7 @@
 ["alter table t modify column b bigint", "OK"]
 ["alter table t modify column b int", "OK"]
 ["alter table t modify column a bigint comment 'x'", "OK"]
-["alter table t modify column c varchar(20) charset latin1", "ERR 8200 Unsupported modify charset from utf8mb4 to latin1"]
+["alter table t modify column c varchar(20) charset latin1", "ERR 8200 Unsupported MODIFY COLUMN on base table with materialized view log only supports no-reorg compatible type changes for tracked columns"]
 ["alter table t modify column n bigint not null default 0", "OK"]
 ["alter table t modify column a bigint unsigned", "ERR 8200 Unsupported MODIFY COLUMN on base table with materialized view log only supports no-reorg compatible type changes for tracked columns"]
 ["alter table t modify column c varchar(30) after id", "OK"]

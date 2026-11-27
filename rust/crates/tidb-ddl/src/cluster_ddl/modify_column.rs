@@ -27,9 +27,6 @@
 //! The data work runs outside the job's transaction: a step asks for it and
 //! the owner hands the outcome to the next visit.
 
-use tidb_ddl_build::modify_column_type::{
-    get_modify_column_type, no_reorg_data_strict, ModifyColumnFacts, ModifyColumnType,
-};
 use tidb_model::job_enums::modify_type;
 
 use super::add_index::{
@@ -46,16 +43,6 @@ const MYSQL_TYPE_NULL: u8 = 6;
 /// (`SQLMode.HasStrictMode`).
 const STRICT_TRANS_TABLES: i64 = 1 << 21;
 const STRICT_ALL_TABLES: i64 = 1 << 22;
-
-fn kind_byte(kind: ModifyColumnType) -> u8 {
-    match kind {
-        ModifyColumnType::NoReorg => modify_type::NO_REORG,
-        ModifyColumnType::NoReorgWithCheck => modify_type::NO_REORG_WITH_CHECK,
-        ModifyColumnType::Precheck => modify_type::PRECHECK,
-        ModifyColumnType::IndexReorg => modify_type::INDEX_REORG,
-        ModifyColumnType::Reorg => modify_type::REORG,
-    }
-}
 
 /// Go `executor.ModifyColumn`: its typed column arguments and reorganization job.
 #[allow(unused_variables, clippy::too_many_arguments)]
@@ -159,10 +146,13 @@ pub(crate) fn modify_column_with_info<S: MetaSnapshot>(
         ),
     ])));
     // Go `initJobReorgMetaFromVariables`.
-    job.reorg_meta = Some(GoShared::new(add_index::new_ddl_reorg_meta(
+    job.reorg_meta = Some(GoShared::new(add_index::init_job_reorg_meta_from_variables(
         job_context,
         schema,
         store_count,
+        true,
+        true,
+        false,
     )?));
     Ok(Some(AddIndexSubmission::Job(
         Box::new(tidb_ddl_jobsubmit::JobSpec {
@@ -225,10 +215,13 @@ pub(crate) fn rename_column<S: MetaSnapshot>(
         ),
     ])));
     // Go `initJobReorgMetaFromVariables`.
-    job.reorg_meta = Some(GoShared::new(add_index::new_ddl_reorg_meta(
+    job.reorg_meta = Some(GoShared::new(add_index::init_job_reorg_meta_from_variables(
         job_context,
         schema,
         store_count,
+        true,
+        true,
+        false,
     )?));
     Ok(Some(AddIndexSubmission::Job(
         Box::new(tidb_ddl_jobsubmit::JobSpec {
@@ -353,18 +346,9 @@ fn get_modifiable_column_job(
     tidb_ddl_build::table_info_build::process_modify_column_options(&mut new_col, column, &metabuild)
         .map_err(DdlPlanError::Admission)?;
 
-    tidb_ddl_build::modify_column_type::check_modify_types(
-        &col.field_type,
-        &new_col.field_type,
-        col.name.lowercase(),
-        is_column_with_index(col.name.lowercase(), stored),
-    )
-    .map_err(driver_refusal)?;
-    let may_need_change_col_data = !no_reorg_data_strict(
-        &col.field_type,
-        &new_col.field_type,
-        is_column_with_index(col.name.lowercase(), stored),
-    );
+    let change = tidb_ddl_build::modify_column_change::analyze_modify_column(stored, &col, &new_col)
+        .map_err(driver_refusal)?;
+    let may_need_change_col_data = change != modify_type::NO_REORG;
     super::materialized_view::validate_materialized_view_base_modify_column(
         catalog,
         stored,
@@ -475,9 +459,11 @@ fn get_modifiable_column_job(
         &column.options,
     )?;
 
+    // Earlier DDLs can change the source type before this job runs. Reserve
+    // reorg scheduling and settings; execution selects the actual conversion.
     Ok(ModifiableColumn {
         column: new_col,
-        need_reorg: may_need_change_col_data,
+        need_reorg: true,
         new_shard_bits,
     })
 }
@@ -955,7 +941,7 @@ fn is_time_fsp_extended(old: &tidb_datatype::FieldType, new: &tidb_datatype::Fie
 fn is_enum_set_tail_append(old: &tidb_datatype::FieldType, new: &tidb_datatype::FieldType) -> bool {
     matches!(old.code(), FieldTypeCode::Enum | FieldTypeCode::Set)
         && old.code() == new.code()
-        && !tidb_ddl_build::modify_column_type::is_elems_changed_to_modify_column(
+        && !tidb_ddl_build::modify_column_change::is_elems_changed_to_modify_column(
             &old.elems_snapshot(),
             &new.elems_snapshot(),
         )
@@ -1261,43 +1247,51 @@ fn has_modify_flag(column: &tidb_model::ColumnInfo) -> bool {
 
 /// Go `isNullToNotNullChange`.
 fn is_null_to_not_null_change(old: &tidb_model::ColumnInfo, new: &tidb_model::ColumnInfo) -> bool {
-    tidb_ddl_build::modify_column_type::is_null_to_not_null_change(
-        &old.field_type,
-        &new.field_type,
-    )
+    tidb_ddl_build::modify_column_change::is_null_to_not_null_change(old, new)
 }
 
-/// Go `getModifyColumnType`.
-fn modify_column_type_of(
-    args: &tidb_model::ModifyColumnArgs,
-    info: &TableInfo,
-    old: &tidb_model::ColumnInfo,
-    new: &tidb_model::ColumnInfo,
-    sql_mode: i64,
-) -> u8 {
-    let indexed = info
-        .indices
-        .iter_deref()
-        .any(|index| index.read().has_column_in_index_columns(info, old.id));
-    if !no_reorg_data_strict(&old.field_type, &new.field_type, indexed)
-        && args.modify_column_type == MYSQL_TYPE_NULL
-    {
-        // For backward compatibility.
-        return modify_type::REORG;
+/// Go `preserveOriginDefaultValue`: `old_col`'s origin default value is
+/// kept when MODIFY COLUMN reuses existing row storage without rewriting
+/// rows.
+fn preserve_origin_default_value(new_col: &mut tidb_model::ColumnInfo, old_col: &tidb_model::ColumnInfo) {
+    new_col.origin_default_value = old_col.origin_default_value.clone();
+    new_col.origin_default_value_bit = old_col.origin_default_value_bit.clone();
+    new_col.version = old_col.version;
+    if new_col.get_origin_default_value().is_nil() || old_col.field_type == new_col.field_type {
+        return;
     }
-    kind_byte(get_modify_column_type(
-        &old.field_type,
-        &new.field_type,
-        ModifyColumnFacts {
-            column_indexed: indexed,
-            partitioned: info.partition.is_some(),
-            tiflash_replica: info
-                .tiflash_replica
-                .as_ref()
-                .is_some_and(|replica| replica.read().count > 0),
-            strict_sql_mode: sql_mode & (STRICT_TRANS_TABLES | STRICT_ALL_TABLES) != 0,
-        },
-    ))
+    // If the old origin default does not fit the narrowed target type
+    // (possible only when no row depends on it, otherwise data validation
+    // would have failed), clear it so coprocessor scans do not emit
+    // truncation warnings when encoding defaults. Go evaluates it under
+    // `newReorgExprCtx` with truncation as an error.
+    if !origin_default_fits(new_col) {
+        new_col.origin_default_value = tidb_model::GoAny::nil();
+        new_col.origin_default_value_bit = Default::default();
+    }
+}
+
+/// Go `table.GetColOriginDefaultValue` under `newReorgExprCtx`
+/// (`DefaultStmtFlags`, `ModeNone`) with truncation raised as an error:
+/// whether the column's origin default converts to its type.
+fn origin_default_fits(col: &tidb_model::ColumnInfo) -> bool {
+    let Ok(datum) = tidb_table::origin_default::materialise(col, &col.get_origin_default_value(), "", None) else {
+        return false;
+    };
+    let flags = tidb_datatype::ConversionFlags::from_bits(
+        tidb_datatype::ConversionFlags::ALLOW_NEGATIVE_TO_UNSIGNED | tidb_datatype::ConversionFlags::IGNORE_ZERO_DATE_ERR,
+    );
+    datum
+        .convert_to_in_context(
+            &col.field_type,
+            &tidb_datatype::ConversionContext::new(
+                flags,
+                tidb_datatype::ConversionLocation::UTC,
+                &tidb_context::IGNORE_CONVERSION_WARNINGS,
+            ),
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
+        .is_ok_and(|converted| converted.error.is_none())
 }
 
 /// Go `checkColumnAlreadyExists`.
@@ -1441,22 +1435,42 @@ fn plan_modify_column_step(
         check_indexes_in_modifiable_columns(&target.info, &old, &new)
             .map_err(|error| cancel_ddl_job(active, error))?;
     }
+    // For first time running this job, or the job from older version,
+    // validate and resolve ModifyColumnType from current metadata.
+    let mut resolved_modify_type = false;
     if args.modify_column_type == modify_type::NONE || args.modify_column_type == MYSQL_TYPE_NULL {
-        // Go re-checks the types: a concurrent no-reorg change may have
-        // moved the column.
-        check_modify_types_owner(&target.info, &old, &new)
-            .map_err(|error| cancel_ddl_job(active, error))?;
-        args.modify_column_type =
-            modify_column_type_of(&args, &target.info, &old, &new, active.job.sql_mode);
-        if old.field_type.code() == FieldTypeCode::Varchar
-            && new.field_type.code() == FieldTypeCode::String
-            && matches!(
+        let modify_type = if args.changing_column.is_some() {
+            // Legacy jobs that already created a changing column/indexes on an
+            // older binary must stay on the full-reorg state machine for both
+            // resume and rollback cleanup.
+            modify_type::REORG
+        } else {
+            // Check the modify types again, as the type may be changed by
+            // other no-reorg modify-column jobs (Go's comment walks two
+            // parallel MODIFYs where utf8mb4 -> utf8 becomes invalid).
+            tidb_ddl_build::modify_column_change::resolve_modify_column_type(
+                &target.info,
+                &old,
+                &new,
                 args.modify_column_type,
-                modify_type::NO_REORG_WITH_CHECK | modify_type::INDEX_REORG
+                tidb_mysql::consts::SqlMode(active.job.sql_mode),
             )
-        {
-            args.modify_column_type = modify_type::PRECHECK;
-        }
+            .map_err(|error| cancel_ddl_job(active, modify_column_analysis_error(error)))?
+        };
+        args.modify_column_type = modify_type;
+        resolved_modify_type = true;
+        tidb_ddl_logutil::ddl_logger().info(
+            "get type for modify column",
+            &[
+                tidb_log::Field::new("query", tidb_log::Value::Str(active.job.query.to_string())),
+                tidb_log::Field::new("oldColumnName", tidb_log::Value::Str(args.old_column_name.lowercase().to_owned())),
+                tidb_log::Field::new("oldColumnID", tidb_log::Value::I64(old.id)),
+                tidb_log::Field::new(
+                    "type",
+                    tidb_log::Value::Str(tidb_model::job_enums::modify_type_to_string(args.modify_column_type).to_owned()),
+                ),
+            ],
+        );
     }
 
     if active.job.is_rollingback() {
@@ -1500,8 +1514,10 @@ fn plan_modify_column_step(
         counter_writes,
     )
     .map_err(|error| cancel_ddl_job(active, error))?;
-    check_modify_types_owner(&target.info, &old, &new)
-        .map_err(|error| cancel_ddl_job(active, error))?;
+    if !resolved_modify_type {
+        tidb_ddl_build::modify_column_change::analyze_modify_column(&target.info, &old, &new)
+            .map_err(|error| cancel_ddl_job(active, modify_column_analysis_error(error)))?;
+    }
     check_column_referenced_by_partial_condition(&target.info, new.name.original())
         .map_err(|error| cancel_ddl_job(active, error))?;
     if args.changing_column.is_none() {
@@ -1608,21 +1624,9 @@ fn plan_modify_column_step(
     )
 }
 
-/// Go `checkModifyTypes(oldCol, args.Column, isColumnWithIndex(...))`.
-fn check_modify_types_owner(
-    info: &TableInfo,
-    old: &tidb_model::ColumnInfo,
-    new: &tidb_model::ColumnInfo,
-) -> Result<(), DdlPlanError> {
-    tidb_ddl_build::modify_column_type::check_modify_types(
-        &old.field_type,
-        &new.field_type,
-        old.name.lowercase(),
-        is_column_with_index(old.name.original(), info),
-    )
-    .map_err(|error| {
-        DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
-    })
+/// A `validateModifyColumn` refusal, as the job's error.
+fn modify_column_analysis_error(error: tidb_terror::MysqlError) -> DdlPlanError {
+    DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
 }
 
 /// Go `onModifyColumn`'s first-visit check: `getReplacedColumns`, then
@@ -1850,6 +1854,7 @@ fn adjust_table_info_after_modify_column(
     let mut new = new.clone_like_go();
     new.offset = old_offset;
     new.state = old_state;
+    preserve_origin_default_value(&mut new, &old.read());
     let table_name = info.name.original().to_owned();
     if let tidb_ast::ColumnPosition::After(anchor) = position {
         if anchor.go_to_lower() == old_name.lowercase() {
@@ -2198,13 +2203,16 @@ fn mark_modifying(
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let database_id = active.job.schema_id;
-    let indexed = is_column_with_index(target.old.read().name.original(), &target.info);
+    let meta_only = {
+        let old = target.old.read();
+        tidb_ddl_build::modify_column_change::is_meta_only_change(&target.info, &old, new)
+    };
     {
         let mut old = target.old.write();
         if is_null_to_not_null_change(&old, new) {
             old.add_flag(u64::from(FieldTypeFlags::PREVENT_NULL_INSERT));
         }
-        if !no_reorg_data_strict(&old.field_type, &new.field_type, indexed) {
+        if !meta_only {
             old.changing_field_type = Some(GoShared::new(new.field_type.clone()));
         }
     }
@@ -2233,11 +2241,10 @@ fn do_modify_column_with_check(
     if !has_modify_flag(&old) {
         return mark_modifying(txn, active, target, args, new, start_ts);
     }
-    let indexed = is_column_with_index(old.name.original(), &target.info);
     match checked_outcome(active, outcome) {
         None => {
             let check_value_range =
-                !no_reorg_data_strict(&old.field_type, &new.field_type, indexed);
+                !tidb_ddl_build::modify_column_change::is_meta_only_change(&target.info, &old, new);
             let step = check_request(active, target, new, check_value_range);
             Ok(with_args(active, args, step))
         }
@@ -2283,8 +2290,25 @@ fn precheck_for_varchar_to_char(
         }
         Some(None) => {
             // Go: the rows fit; the kind is decided again, the marks kept.
-            args.modify_column_type =
-                modify_column_type_of(args, &target.info, &old, new, active.job.sql_mode);
+            args.modify_column_type = tidb_ddl_build::modify_column_change::resolve_modify_column_type_after_precheck(
+                &target.info,
+                &old,
+                new,
+                args.modify_column_type,
+                tidb_mysql::consts::SqlMode(active.job.sql_mode),
+            );
+            tidb_ddl_logutil::ddl_logger().info(
+                "precheck done, change modify type",
+                &[
+                    tidb_log::Field::new("query", tidb_log::Value::Str(active.job.query.to_string())),
+                    tidb_log::Field::new("oldColumnName", tidb_log::Value::Str(args.old_column_name.lowercase().to_owned())),
+                    tidb_log::Field::new("oldColumnID", tidb_log::Value::I64(old.id)),
+                    tidb_log::Field::new(
+                        "type",
+                        tidb_log::Value::Str(tidb_model::job_enums::modify_type_to_string(args.modify_column_type).to_owned()),
+                    ),
+                ],
+            );
             Ok(with_args(
                 active,
                 args,
@@ -2503,6 +2527,7 @@ fn init_for_reorg_indexes(job: &Job, indexes: &[GoShared<IndexInfo>]) -> Result<
     if indexes.is_empty() {
         return Ok(());
     }
+    add_index::check_dist_reorg_is_fast_reorg(job)?;
     add_index::load_cloud_storage_uri(job);
     add_index::check_next_gen_local_sort(job)?;
     let reorg_type = add_index::pick_backfill_type(job)?;
@@ -2937,6 +2962,7 @@ fn do_modify_column_index_reorg(
                 (old.field_type.clone(), old.name.clone(), old.id, old.offset)
             };
             let mut replaced = new.clone_like_go();
+            preserve_origin_default_value(&mut replaced, &target.old.read());
             replaced.changing_field_type = Some(GoShared::new(old_type));
             replaced.offset = old_offset;
             replaced.id = old_id;
@@ -3592,23 +3618,25 @@ fn build_check_sql_from_modify_column(
     let old_tp = old_col.field_type.code();
     let changing_tp = changing_col.field_type.code();
     let mut conditions = Vec::new();
-    let check_col_name = format!("`{}`", old_col.name.original());
-    let table_name = format!("`{db_name}`.`{tbl_name}`");
+    let check_col_name = tidb_sqlescape::must_escape_sql_text(
+        "%n",
+        &[tidb_sqlescape::SqlArg::String(old_col.name.original().as_bytes())],
+    );
+    let table_name = tidb_sqlescape::must_escape_sql_text(
+        "%n.%n",
+        &[tidb_sqlescape::SqlArg::String(db_name.as_bytes()), tidb_sqlescape::SqlArg::String(tbl_name.as_bytes())],
+    );
     if check_value_range {
         if old_tp.is_integer_type() && changing_tp.is_integer_type() {
             conditions.push(build_check_range_for_integer_types(old_col, changing_col));
         } else {
-            // Go: a char change to a non-binary type counts characters, so a
-            // multi-byte value is not refused for its byte length.
-            let len_fn = if tidb_ddl_build::modify_column_type::is_char_change(&old_col.field_type, &changing_col.field_type)
-                && !changing_col.field_type.is_binary_string()
-            {
-                "CHAR_LENGTH"
-            } else {
+            let length_func = if tidb_ddl_build::modify_column_change::string_length_in_bytes(changing_col) {
                 "LENGTH"
+            } else {
+                "CHAR_LENGTH"
             };
             conditions.push(format!(
-                "{len_fn}({check_col_name}) > {}",
+                "{length_func}({check_col_name}) > {}",
                 changing_col.field_type.flen()
             ));
             if old_tp == FieldTypeCode::Varchar && changing_tp == FieldTypeCode::String {
@@ -3621,7 +3649,7 @@ fn build_check_sql_from_modify_column(
         && changing_col.field_type.has_flag(FieldTypeFlags::NOT_NULL)
         && !(old_tp != FieldTypeCode::Timestamp && changing_tp == FieldTypeCode::Timestamp)
     {
-        conditions.push(format!("`{}` IS NULL", old_col.name.original()));
+        conditions.push(format!("{check_col_name} IS NULL"));
     }
     if conditions.is_empty() {
         return String::new();
@@ -3638,7 +3666,10 @@ fn build_check_range_for_integer_types(
     changing_col: &tidb_model::ColumnInfo,
 ) -> String {
     let changing_tp = changing_col.field_type.code();
-    let column_name = format!("`{}`", old_col.name.original());
+    let column_name = tidb_sqlescape::must_escape_sql_text(
+        "%n",
+        &[tidb_sqlescape::SqlArg::String(old_col.name.original().as_bytes())],
+    );
     if changing_col.field_type.has_flag(FieldTypeFlags::UNSIGNED) {
         let upper_bound = tidb_datatype::integer_unsigned_upper_bound(changing_tp);
         return format!("({column_name} < 0 OR {column_name} > {upper_bound})");

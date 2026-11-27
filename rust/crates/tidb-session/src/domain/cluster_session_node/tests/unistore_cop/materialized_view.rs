@@ -357,7 +357,8 @@ fn alter_table_on_a_log_and_its_base_answers_as_go_master() {
 /// (`testdata/mview_modify_column_go.jsonl`): a tracked column's no-reorg
 /// change retypes the log's column (keeping the log's own key flags), and
 /// Go's refusals (renaming, NULL to NOT NULL, a reorganizing change of a
-/// tracked column) in Go's order.
+/// tracked column) in Go's order. 307fb3d6ead admits utf8mb4 -> latin1 as
+/// a reorganizing change, so that answer is now the log's no-reorg refusal.
 #[test]
 fn modify_column_of_a_logged_base_answers_as_go_master() {
     let (stack, _session) = replay_go_master(include_str!("../../../../../testdata/mview_modify_column_go.jsonl"));

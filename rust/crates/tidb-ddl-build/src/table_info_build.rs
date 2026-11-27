@@ -2857,9 +2857,13 @@ fn stamp_origin_default(
     } else {
         None
     };
-    if let Some(origin) = origin {
-        info.set_origin_default_value(ColumnDefaultValue::str(&origin))
-            .map_err(|error| DdlAdmissionError::plain(error.to_string()))?;
+    match origin {
+        Some(origin) => info
+            .set_origin_default_value(ColumnDefaultValue::str(&origin))
+            .map_err(|error| DdlAdmissionError::plain(error.to_string()))?,
+        // Go `SetOriginDefaultValue(nil)`: a MODIFY that copied the old
+        // column's origin default clears it.
+        None => info.origin_default_value = GoAny::nil(),
     }
     Ok(())
 }

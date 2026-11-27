@@ -371,10 +371,9 @@ fn validate_materialized_view_log_column_type_for_modify_column(
     new: &tidb_model::ColumnInfo,
 ) -> Result<tidb_datatype::FieldType, tidb_terror::MysqlError> {
     let field_type = field_type_for_mv_related_column(mlog_column, new);
-    let indexed = mlog.indices.iter_deref().any(|index| {
-        index.read().columns.iter_deref().any(|part| part.read().name.lowercase() == mlog_column.name.lowercase())
-    });
-    if !tidb_ddl_build::modify_column_type::no_reorg_data_strict(&mlog_column.field_type, &field_type, indexed) {
+    let mut mlog_new_column = mlog_column.clone();
+    mlog_new_column.field_type = field_type.clone();
+    if !tidb_ddl_build::modify_column_change::is_meta_only_change(mlog, mlog_column, &mlog_new_column) {
         return Err(unsupported(format!(
             "{op} on base table with materialized view log only supports no-reorg compatible type changes"
         )));
@@ -453,7 +452,7 @@ fn visit_materialized_view_related_tables(
         let (schema_id, mlog) = related.load(mlog_id, "materialized view log")?;
         validate_materialized_view_log_info_for_modify_column(base, &mlog)?;
         if let Some(mlog_column) = tracked_materialized_view_log_column_for_modify_column(&mlog, old.name.lowercase())? {
-            if tidb_ddl_build::modify_column_type::is_null_to_not_null_change(&old.field_type, &new.field_type) {
+            if tidb_ddl_build::modify_column_change::is_null_to_not_null_change(old, new) {
                 return Err(unsupported(format!(
                     "{op} on base table with materialized view log does not support changing tracked columns from NULL to NOT NULL"
                 )));
@@ -543,11 +542,9 @@ fn validate_dependent_materialized_view_modify_column(
     }
     for &offset in &usage.direct_output_offsets {
         let mview_old = mview.columns.get(offset).expect("checked the output count").read().clone();
-        let field_type = field_type_for_mv_related_column(&mview_old, new);
-        let indexed = mview.indices.iter_deref().any(|index| {
-            index.read().columns.iter_deref().any(|part| part.read().name.lowercase() == mview_old.name.lowercase())
-        });
-        if !tidb_ddl_build::modify_column_type::no_reorg_data_strict(&mview_old.field_type, &field_type, indexed) {
+        let mut mview_new = mview_old.clone();
+        mview_new.field_type = field_type_for_mv_related_column(&mview_old, new);
+        if !tidb_ddl_build::modify_column_change::is_meta_only_change(mview, &mview_old, &mview_new) {
             return Err(unsupported(format!(
                 "{op} on base table with materialized view dependencies only supports no-reorg compatible type changes for direct output columns"
             )));
@@ -732,7 +729,7 @@ pub(crate) fn validate_materialized_view_base_modify_column(
         }
         return Ok(());
     }
-    if tracked && tidb_ddl_build::modify_column_type::is_null_to_not_null_change(&old.field_type, &new.field_type) {
+    if tracked && tidb_ddl_build::modify_column_change::is_null_to_not_null_change(old, new) {
         return Err(unsupported(format!(
             "{op} on base table with materialized view log does not support changing tracked columns from NULL to NOT NULL"
         )));

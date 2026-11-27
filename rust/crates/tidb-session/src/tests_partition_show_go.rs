@@ -120,25 +120,23 @@ fn partition_metadata_and_prefix_keys_follow_go() {
     );
 }
 
-/// Go `checkModifyCharsetAndCollation` with the column's index membership:
-/// an indexed column cannot change to an incompatible collation unless the
-/// type change reorganizes the column anyway.
+/// Go master `ddl/serial.test` (307fb3d6ead): an indexed column's
+/// collation change reorganizes its index, while CONVERT TO CHARSET still
+/// refuses an indexed column whose collation is incompatible.
 #[test]
 fn an_indexed_column_keeps_a_compatible_collation() {
     let mut session = Session::new();
     session
         .run("create table t (b varchar(10) collate utf8_bin, c varchar(10) collate utf8_general_ci, index (b), index (c)) collate utf8_bin")
         .unwrap();
-    assert_eq!(
-        code(
-            &mut session,
-            "alter table t modify b varchar(10) collate utf8_general_ci"
-        ),
-        (
-            8200,
-            "Unsupported modifying collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.".to_owned()
-        )
-    );
+    for sql in [
+        "alter table t modify b varchar(10) collate utf8_general_ci",
+        "alter table t modify c varchar(10) collate utf8_bin",
+        "alter table t modify c varchar(10) collate utf8_unicode_ci",
+        "admin check table t",
+    ] {
+        session.run(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
     assert_eq!(
         code(
             &mut session,
@@ -146,7 +144,7 @@ fn an_indexed_column_keeps_a_compatible_collation() {
         ),
         (
             8200,
-            "Unsupported converting collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.".to_owned()
+            "Unsupported converting collation of column 'c' from 'utf8_unicode_ci' to 'utf8_general_ci' when index is defined on it.".to_owned()
         )
     );
     session

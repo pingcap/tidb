@@ -28,6 +28,7 @@ pub mod check_constraint;
 pub mod constraint_names;
 pub mod split_region;
 pub mod storage_class;
+pub mod modify_column_change;
 pub mod modify_column_type;
 pub mod partition_interval;
 pub mod table_partition_range;

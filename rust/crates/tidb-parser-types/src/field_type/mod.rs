@@ -487,16 +487,6 @@ impl FieldTypeCode {
             _ => (-1, -1),
         }
     }
-
-    /// Go `types.ConvertBetweenCharAndVarchar` (`field_type.go:1609`). The
-    /// `char -> varchar` half is gated on new collations, which this port
-    /// runs enabled (the bootstrap freezes
-    /// `new_collations_enabled_on_first_bootstrap` true), so the gate is a
-    /// constant here and named rather than threaded.
-    pub const fn convert_between_char_and_varchar(self, to: Self) -> bool {
-        (self.is_type_varchar() && matches!(to, Self::String))
-            || (matches!(self, Self::String) && to.is_type_varchar())
-    }
 }
 
 /// The source-backed `FieldType` metadata required to choose binary versus

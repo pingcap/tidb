@@ -113,6 +113,9 @@ pub(super) fn build_multi_schema_job(
             ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY
         ) || (sub.type_ == ActionType::ACTION_MODIFY_COLUMN && sub.need_reorg)
     });
+    let validate_dist_task_at_submit = sub_jobs
+        .iter()
+        .any(|sub| matches!(sub.type_, ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY));
     info.sub_jobs = GoSharedPointerSlice::from_handles(
         sub_jobs.into_iter().map(GoShared::new).map(Some).collect(),
     );
@@ -152,6 +155,7 @@ pub(super) fn build_multi_schema_job(
             store_count,
             set_reorg_param,
             set_dist_task_param,
+            validate_dist_task_at_submit,
         )?,
     ));
     let vars = job_context.ddl_reorg_vars();

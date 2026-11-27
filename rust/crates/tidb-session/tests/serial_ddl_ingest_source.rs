@@ -591,8 +591,11 @@ fn test_index_change_with_modify_column() {
     );
     tk.must_exec("alter table t add index idx(c);");
     handle.lock().unwrap().take().expect("the modify column ran").join().unwrap();
-    let error = check_err.lock().unwrap().take().expect("the modify column fails");
-    assert!(error.to_string().contains("when index is defined"), "{error}");
+    // Go master 307fb3d6ead: the indexed collation change reorganizes.
+    if let Some(error) = check_err.lock().unwrap().take() {
+        panic!("the modify column fails: {error}");
+    }
+    tk.must_query("select c from t force index (idx) where c = 'AA'").check(["aa"]);
     tk.must_exec("admin check table t");
     tk.must_exec("delete from t;");
 }

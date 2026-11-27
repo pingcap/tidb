@@ -813,35 +813,28 @@ fn alter_table_collate_refusal_names_the_collations_like_go() {
     assert_eq!(column(&tk, "test", "t", "a").read().field_type.collation_name(), "gbk_chinese_ci");
 }
 
-/// Go `checkModifyTypes` always applies `checkModifyCharsetAndCollation`.
-/// A binary-charset `VARCHAR` renders as `VARBINARY`; accepting a later text
-/// charset would reinterpret its bytes and mutate the schema even though Go
-/// refuses each conversion with 8200.
+/// Go master `TestCheckConvertToCharacter` (`ddl/column_modify.test`,
+/// 307fb3d6ead): a binary-charset `VARCHAR` converts to a text charset by
+/// rewriting its rows, so the value survives each conversion.
 #[test]
-fn modify_column_refuses_binary_charset_conversion_without_mutation() {
+fn test_check_convert_to_character() {
     let mut tk = TestKit::new();
     tk.must_exec("create table binary_column (a varchar(10) character set binary)");
-
+    tk.must_exec("insert into binary_column values ('abc')");
     for (charset, collation) in [
         ("utf8", "utf8_bin"),
         ("utf8mb4", "utf8mb4_bin"),
         ("latin1", "latin1_bin"),
     ] {
-        let sql = format!(
+        tk.must_exec(&format!(
             "alter table binary_column modify column a varchar(10) character set {charset} collate {collation}"
-        );
-        // Go refuses a binary-to-text charset conversion.
-        let error = tk.must_get_err_code(&sql, 8200);
-        assert_eq!(
-            error.message,
-            format!("Unsupported modify charset from binary to {charset}"),
-            "{sql}"
-        );
-
+        ));
         let stored = column(&tk, "test", "binary_column", "a");
-        assert_eq!(stored.read().field_type.charset_name(), "binary", "{sql}");
-        assert_eq!(stored.read().field_type.collation_name(), "binary", "{sql}");
+        assert_eq!(stored.read().field_type.charset_name(), charset);
+        assert_eq!(stored.read().field_type.collation_name(), collation);
     }
+    tk.must_query("select * from binary_column").check(["abc"]);
+    tk.must_exec("admin check table binary_column");
 
     // The adjacent widening Go permits remains admitted.
     tk.must_exec("create table latin1_column (a varchar(10) character set latin1)");

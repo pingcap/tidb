@@ -432,7 +432,6 @@ fn column_names(tk: &TestKit, table: &str) -> Vec<String> {
 fn modify_column_cross_charset_requires_reorg() {
     const ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD: u16 = 1366;
     const WARN_DATA_TRUNCATED: u16 = 1265;
-    const ERR_UNSUPPORTED_DDL_OPERATION: u16 = 8200;
     let mut tk = TestKit::new();
     tk.must_exec("use test");
 
@@ -465,14 +464,203 @@ fn modify_column_cross_charset_requires_reorg() {
         .check(["0"]);
     tk.must_exec("admin check table t5");
 
+    // Both length-preserving and narrowing conversions reject four-byte
+    // UTF-8 data during reorg (Go master 307fb3d6ead).
     tk.must_exec("create table t6 (id int primary key, c varchar(10) character set utf8mb4 collate utf8mb4_bin)");
     tk.must_exec("insert into t6 values (1, '🐱')");
     tk.must_get_err_code(
         "alter table t6 modify column c varchar(10) character set utf8 collate utf8_bin",
-        ERR_UNSUPPORTED_DDL_OPERATION,
+        ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD,
     );
     tk.must_get_err_code(
         "alter table t6 modify column c varchar(5) character set utf8 collate utf8_bin",
         ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD,
     );
+    tk.must_exec("update t6 set c = 'é'");
+    tk.must_exec("alter table t6 modify column c varchar(10) character set utf8 collate utf8_bin");
+    tk.must_query("select c from t6").check(["é"]);
+}
+
+/// Go master `TestModifyColumnCharsetClassification`
+/// (`pkg/ddl/column_modify_test.go`, 307fb3d6ead): a charset change that
+/// needs a rewrite refuses invalid data and leaves the rows as they were; a
+/// character limit that cannot guarantee a byte limit is validated, not
+/// rewritten; utf8 -> utf8mb4, an ENUM/SET charset change, TEXT -> BLOB and
+/// an indexed collation change all succeed.
+#[test]
+fn test_modify_column_charset_classification() {
+    const WARN_DATA_TRUNCATED: u16 = 1265;
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("set sql_mode = 'STRICT_ALL_TABLES'");
+    for (name, old_type, new_type, value) in [
+        ("binary", "binary(2)", "varchar(10) character set utf8mb4", "x'FFFE'"),
+        ("utf8", "char(4) character set utf8mb4 collate utf8mb4_bin", "varchar(10) character set utf8 collate utf8_bin", "'😀'"),
+        ("ascii", "char(4) character set utf8mb4", "varchar(10) character set ascii", "'é'"),
+        ("bytes", "char(4) character set utf8mb4", "varbinary(4)", "'éééé'"),
+    ] {
+        tk.must_exec("drop table if exists t");
+        tk.must_exec(&format!("create table t (c {old_type})"));
+        tk.must_exec(&format!("insert into t values ({value})"));
+        let before = tk.must_query("select hex(c) from t").rows().to_vec();
+        tk.must_exec_to_err(&format!("alter table t modify c {new_type}"));
+        assert_eq!(tk.must_query("select hex(c) from t").rows().to_vec(), before, "{name}");
+    }
+
+    // textByteLimit
+    tk.must_exec("drop table if exists t");
+    tk.must_exec("create table t (c varchar(255) collate utf8mb4_bin)");
+    tk.must_exec("insert into t values (repeat(convert(x'C385' using utf8mb4), 128))");
+    tk.must_get_err_code("alter table t modify c tinytext collate utf8mb4_bin", WARN_DATA_TRUNCATED);
+    tk.must_query("select data_type from information_schema.columns where table_schema = 'test' and table_name = 't'")
+        .check(["varchar"]);
+    tk.must_query("select char_length(c), length(c) from t").check(["128 256"]);
+    let column_id = column_ids(&tk, "t")[0];
+    tk.must_exec("delete from t");
+    tk.must_exec("insert into t values (concat(repeat(convert(x'C385' using utf8mb4), 127), 'x'))");
+    tk.must_exec("alter table t modify c tinytext collate utf8mb4_bin");
+    tk.must_query("select length(c) from t").check(["255"]);
+    assert_eq!(column_ids(&tk, "t")[0], column_id);
+
+    tk.must_exec("drop table t");
+    tk.must_exec("create table t (c varchar(5) character set utf8 collate utf8_bin primary key)");
+    tk.must_exec("insert into t values ('éééé')");
+    tk.must_exec("alter table t modify c varchar(5) character set utf8mb4 collate utf8mb4_bin");
+    tk.must_exec("drop table t");
+    tk.must_exec("create table t (c varchar(5) character set utf8mb4 collate utf8mb4_bin)");
+    tk.must_exec("insert into t values ('éééé')");
+    tk.must_exec("alter table t modify c varchar(4) character set utf8mb4 collate utf8mb4_bin");
+    tk.must_query("select c from t").check(["éééé"]);
+    tk.must_exec("admin check table t");
+    tk.must_exec("drop table t");
+    tk.must_exec("create table t (c set('', 'a') character set utf8 collate utf8_bin)");
+    tk.must_exec("insert into t values (1)");
+    tk.must_exec("alter table t modify c set('', 'a') character set utf8mb4 collate utf8mb4_bin");
+    tk.must_query("select c+0 from t").check(["1"]);
+    tk.must_exec("drop table t");
+    tk.must_exec("create table t (c text character set utf8mb4)");
+    tk.must_exec("insert into t values ('hello')");
+    tk.must_exec("alter table t modify c blob");
+    tk.must_query("select cast(c as char) from t").check(["hello"]);
+    tk.must_exec("admin check table t");
+    tk.must_exec("drop table t");
+    tk.must_exec("create table t (c varchar(10) collate utf8_bin, index idx(c))");
+    tk.must_exec("insert into t values ('a'), ('B')");
+    tk.must_exec("alter table t modify c varchar(10) collate utf8_general_ci");
+    tk.must_query("select c from t where c = 'A'").check(["a"]);
+    tk.must_exec("admin check table t");
+    // Go's `SetNewCollationEnabledForTest(false)` tail has no counterpart:
+    // this port always runs the new collation framework.
+}
+
+/// Go master `TestModifyColumnPreserveOriginDefault`
+/// (`pkg/ddl/modify_column_test.go`, 307fb3d6ead): a MODIFY that keeps the
+/// row storage keeps the column's origin default, so rows written before
+/// the column existed still read it; on an empty table an origin default
+/// the narrowed type cannot hold is cleared.
+#[test]
+fn test_modify_column_preserve_origin_default() {
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+
+    // varcharToTinyTextValidationOnly
+    tk.must_exec("create table t (id int)");
+    tk.must_exec("insert into t values (1)");
+    tk.must_exec("alter table t add column c varchar(255) default 'saved'");
+    let column_id = column_ids(&tk, "t")[1];
+    tk.must_exec("alter table t modify column c tinytext");
+    assert_eq!(column_ids(&tk, "t")[1], column_id);
+    tk.must_exec("insert into t (id) values (2)");
+    tk.must_query("select id, c from t order by id").check(["1 saved", "2 <nil>"]);
+    tk.must_exec("admin check table t");
+
+    // varcharNarrowingKeepsNullAndValueOriginDefault
+    tk.must_exec("drop table t");
+    tk.must_exec("create table t (id int)");
+    tk.must_exec("insert into t values (1)");
+    tk.must_exec("alter table t add column c1 varchar(255) default 'saved'");
+    tk.must_exec("alter table t add column c2 varchar(255)");
+    tk.must_exec("alter table t modify column c1 varchar(100)");
+    tk.must_exec("alter table t modify column c2 varchar(100) default 'new'");
+    tk.must_exec("insert into t (id) values (2)");
+    tk.must_query("select id, c1, c2 from t order by id").check(["1 saved <nil>", "2 <nil> new"]);
+    tk.must_exec("admin check table t");
+
+    // indexReorgPreservesOriginDefault
+    tk.must_exec("drop table t");
+    tk.must_exec("create table t (id int)");
+    tk.must_exec("insert into t values (1)");
+    tk.must_exec("alter table t add column c char(10) collate utf8mb4_bin default 'saved'");
+    tk.must_exec("alter table t add index idx(c)");
+    tk.must_exec("alter table t modify column c varchar(20) collate utf8mb4_bin");
+    tk.must_exec("insert into t (id) values (2)");
+    tk.must_query("select id, c from t order by id").check(["1 saved", "2 <nil>"]);
+    tk.must_exec("admin check table t");
+
+    // emptyTableClearsOutOfRangeOriginDefault
+    tk.must_exec("drop table t");
+    tk.must_exec("create table t (id int)");
+    tk.must_exec("alter table t add column c int default 1000");
+    tk.must_exec("alter table t modify column c tinyint");
+    assert!(column_of(&tk, "t", "c").read().get_origin_default_value().is_nil());
+    tk.must_query("select * from t").check(Vec::<&str>::new());
+    tk.must_query("show warnings").check(Vec::<&str>::new());
+}
+
+/// Go master `TestModifyColumnCheckQuotedIdentifiers`
+/// (`pkg/ddl/modify_column_test.go`, 307fb3d6ead): the data check of a
+/// validation-only MODIFY quotes identifiers holding backquotes.
+#[test]
+fn test_modify_column_check_quoted_identifiers() {
+    let mut tk = TestKit::new();
+    tk.must_exec("drop database if exists `db``1`");
+    tk.must_exec("create database `db``1`");
+    tk.must_exec("use `db``1`");
+
+    // varcharToTinyText
+    tk.must_exec("create table `t``1` (`c``1` varchar(255) charset utf8mb4)");
+    tk.must_exec("insert into `t``1` values ('ok')");
+    tk.must_exec("alter table `t``1` modify column `c``1` tinytext charset utf8mb4");
+    tk.must_query("select `c``1` from `t``1`").check(["ok"]);
+    tk.must_exec("admin check table `t``1`");
+    // Values exceeding TINYTEXT's 255-byte limit are refused on quoted
+    // identifiers too.
+    tk.must_exec("create table `t``2` (`c``2` varchar(255) charset utf8mb4)");
+    tk.must_exec(&format!("insert into `t``2` values ('{}')", "é".repeat(128)));
+    let error = tk.must_exec_to_err("alter table `t``2` modify column `c``2` tinytext charset utf8mb4");
+    assert!(error.message.contains("Data truncated"), "{}", error.message);
+
+    // integerNarrowingAndNotNull
+    tk.must_exec("create table `t``int` (`c``int` int)");
+    tk.must_exec("insert into `t``int` values (42)");
+    tk.must_exec("alter table `t``int` modify column `c``int` tinyint not null");
+    tk.must_query("select `c``int` from `t``int`").check(["42"]);
+    tk.must_exec("admin check table `t``int`");
+    tk.must_exec("drop database if exists `db``1`");
+}
+
+/// Go master `TestModifyColumnReorgScheduling`'s metadata cases
+/// (`pkg/ddl/modify_column_test.go`, 307fb3d6ead): MODIFY COLUMN reserves
+/// reorg scheduling at submission and defers the distributed-reorg check to
+/// its index reorg, so a metadata-only change succeeds with distributed
+/// tasks on and fast reorg off, alone or in a multi-schema change.
+#[test]
+fn test_modify_column_reorg_scheduling_metadata_without_fast_reorg() {
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("set global tidb_enable_dist_task = on");
+    tk.must_exec("set global tidb_ddl_enable_fast_reorg = off");
+    for (sql, row) in [
+        ("alter table t modify column a decimal(10,2) comment 'new'", "1.23"),
+        ("alter table t modify column a decimal(10,2) comment 'new', add column b int", "1.23 <nil>"),
+    ] {
+        tk.must_exec("drop table if exists t");
+        tk.must_exec("create table t (a decimal(10,2), key(a))");
+        tk.must_exec("insert into t values (1.23)");
+        tk.must_exec(sql);
+        tk.must_query("select * from t").check([row]);
+        tk.must_exec("admin check table t");
+    }
+    tk.must_exec("set global tidb_ddl_enable_fast_reorg = on");
+    tk.must_exec("set global tidb_enable_dist_task = off");
 }

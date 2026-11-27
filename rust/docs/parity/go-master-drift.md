@@ -102,7 +102,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - 72c1e55f5d8 2026-11-05 1/1 test: stabilize flaky TestDumpStatsDeltaMergeKeepsEarliestInitTime (#68710)
 - b98174386ec 2026-11-07 2/2 statistics: defer auto analyze until materialized views are ready (#72678)
 - 93855ad9651 2026-11-10 1/1 expression: use a UniqueID set in GetUsedList for wide schemas (#72824)
-- 2f3a0667362 2026-11-10 4/4 planner: only remove MVIndex-covered JSON predicate recheck when ranges are exact (#72621)
 - ac53e23b5a2 2026-11-10 3/3 table: speed up MV index consistency check with per-row sorted elemen… (#72574)
 - 5cf03a50bc2 2026-11-10 2/2 session: allow `recommend index return result for` statement in diagnostic mode tidb (#727
 - 40c5806c3f6 2026-11-16 1/1 planner: reuse plan cache after unrelated schema changes under RR isolation (#72856)
@@ -200,7 +199,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - 7fa5afdeb84 2026-10-26 1/2 build: upgrade Go to 1.27.3 (#72180)
 - da76b94491e 2026-10-26 1/2 statistics: build auto-analyze jobs during the table scan (#72229)
 - 23184f3f3f6 2026-11-02 1/2 server: share statement retry and TiFlash fallback execution (#72589)
-- 8626dd78607 2026-11-11 3/6 planner, expression: index field names when building wide projections (#72825)
 - 8c05d01e496 2026-11-17 1/2 bindinfo: preserve binding snapshots and optimize cache updates (#73245)
 - dbbbaf900ca 2026-11-17 2/4 planner: bind duplicate expression indexes to one hidden generated column (#70715)
 

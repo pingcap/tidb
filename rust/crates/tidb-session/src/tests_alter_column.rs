@@ -435,37 +435,26 @@ fn modify_column_rechecks_the_full_affected_index_key_length() {
     );
 }
 
-/// `checkTypeChangeSupported` (Go `pkg/types/field_type.go:1569-1603`, called
-/// from `CheckModifyTypeCompatible` at `:1515-1518`): five type-pair MODIFYs
-/// Go refuses OUTRIGHT, at statement-build time, before any row is read. The
-/// bug this closes: the only gate this tier had before was the per-row
-/// `convert_to` call of the in-process column rewrite, which never ran on zero
-/// rows -- so on an EMPTY table every one of these five refusals used to be
-/// silently ACCEPTED. Each rule below is pinned three ways: refused on an
-/// EMPTY table (the proof the check moved earlier, not just "still errors
-/// somehow"), a same-rule-shaped LEGAL conversion as a control, and refused
-/// on a table that already has an offending ROW (proving the statement was
-/// always going to fail -- the table check just makes it fail before the
-/// scan rather than during it).
+/// Go master `isCrossTypeChangeSupported` (`pkg/ddl/modify_column_change.go`,
+/// called from `validateModifyColumn`): five type-pair MODIFYs Go refuses
+/// OUTRIGHT, at statement-build time, before any row is read. The bug this
+/// closes: the only gate this tier had before was the per-row `convert_to`
+/// call of the in-process column rewrite, which never ran on zero rows -- so
+/// on an EMPTY table every one of these five refusals used to be silently
+/// ACCEPTED. Each rule below is pinned three ways: refused on an EMPTY table
+/// (the proof the check moved earlier, not just "still errors somehow"), a
+/// same-rule-shaped LEGAL conversion as a control, and refused on a table
+/// that already has an offending ROW (proving the statement was always going
+/// to fail -- the table check just makes it fail before the scan rather than
+/// during it).
 ///
-/// MUTATION PROBE: comment out the `check_type_change_supported` call in
-/// `tidb-ddl-build`'s `check_modify_types` (`modify_column_type.rs`), which
-/// `tidb-exec`'s `get_modifiable_column_job` asks, and only
-/// the five `*_on_empty_table_is_refused` assertions below flip from `Err`
-/// to `Ok`; the five `_control_conversion_is_accepted` and
-/// `_on_populated_table_is_also_refused` assertions are unaffected, because
-/// the row loop still catches the populated cases and nothing here refuses a
-/// legal conversion.
+/// MUTATION PROBE: make `is_cross_type_change_supported` in `tidb-ddl-build`'s
+/// `modify_column_change.rs` answer `true`, and only the five
+/// `*_on_empty_table_is_refused` assertions below flip from `Err` to `Ok`.
 ///
-/// Captured errno: TiDB 8200 (`ErrUnsupportedDDLOperation`), double-wrapped
-/// as `Unsupported modify column: Unsupported modify column: change from
-/// original type <from> to <to> is currently unsupported yet` -- Go's
-/// `CheckModifyTypeCompatible` (`field_type.go:1515-1518`) builds the INNER
-/// `ErrUnsupportedModifyColumn`, then its caller `checkModifyTypes`
-/// (`pkg/ddl/modify_column.go:2262-2273`) wraps that error's `.Error()` text
-/// in a SECOND `ErrUnsupportedModifyColumn`. This tier's
-/// `DriverError::UnsupportedModifyColumnType` renders only the inner wrap;
-/// the difftest oracle compares REFUSED-vs-ACCEPTED, not this exact text.
+/// Captured errno: TiDB 8200 (`ErrUnsupportedDDLOperation`), `Unsupported
+/// modify column: change from original type <from> to <to> is currently
+/// unsupported yet` -- since 307fb3d6ead Go wraps the message once.
 #[test]
 fn modify_column_type_pair_gate_rule_1_time_like_to_bit() {
     let mut session = Session::new();

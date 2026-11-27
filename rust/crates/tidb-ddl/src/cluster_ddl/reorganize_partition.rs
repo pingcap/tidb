@@ -318,6 +318,7 @@ pub(crate) fn reorganize_partitions_job<S: MetaSnapshot>(
             store_count,
             true,
             false,
+            false,
         )?,
     ));
     let args = tidb_model::TablePartitionArgs {

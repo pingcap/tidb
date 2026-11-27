@@ -784,18 +784,22 @@ pub(super) fn new_ddl_reorg_meta(
     schema: &str,
     store_count: usize,
 ) -> Result<tidb_model::DDLReorgMeta, DdlPlanError> {
-    init_job_reorg_meta_from_variables(context, schema, store_count, true, true)
+    init_job_reorg_meta_from_variables(context, schema, store_count, true, true, true)
 }
 
 /// Go `initJobReorgMetaFromVariables`: the session's reorganization
 /// settings when the job may reorganize (`setReorgParam`), and its
 /// distributed-task settings when it may run as one (`setDistTaskParam`).
+/// `validate_dist_task_at_submit` refuses a distributed reorg without fast
+/// reorg now (ADD INDEX / ADD PRIMARY KEY); MODIFY COLUMN checks it when its
+/// index reorg starts (`initForReorgIndexes`).
 pub(super) fn init_job_reorg_meta_from_variables(
     context: &dyn DdlSessionContext,
     schema: &str,
     store_count: usize,
     set_reorg_param: bool,
     set_dist_task_param: bool,
+    validate_dist_task_at_submit: bool,
 ) -> Result<tidb_model::DDLReorgMeta, DdlPlanError> {
     let vars = context.ddl_reorg_vars();
     let mut meta = tidb_model::DDLReorgMeta::new(
@@ -822,7 +826,10 @@ pub(super) fn init_job_reorg_meta_from_variables(
             meta.is_dist_reorg = false;
             meta.is_fast_reorg = false;
         }
-        if meta.is_dist_reorg && !meta.is_fast_reorg {
+        // MODIFY/CHANGE COLUMN reserves NeedReorg=true before execution
+        // classifies the conversion; defer its dist-reorg check until index
+        // reorg starts.
+        if validate_dist_task_at_submit && meta.is_dist_reorg && !meta.is_fast_reorg {
             return Err(DdlPlanError::Admission(
                 tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
                     &tidb_dbterror::ERR_UNSUPPORTED_DIST_TASK.gen_with_stack_by_args(&[]),
@@ -920,6 +927,22 @@ pub(super) fn load_cloud_storage_uri(job: &Job) {
     drop(meta);
     let mut job = job.clone();
     tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterLoadCloudStorageURI", &mut job);
+}
+
+/// Go `initForReorgIndexes`' first check: a distributed reorg needs fast
+/// reorg (`ErrUnsupportedDistTask`).
+pub(super) fn check_dist_reorg_is_fast_reorg(job: &Job) -> Result<(), DdlPlanError> {
+    if job.reorg_meta.as_ref().is_some_and(|meta| {
+        let meta = meta.read();
+        meta.is_dist_reorg && !meta.is_fast_reorg
+    }) {
+        return Err(DdlPlanError::Admission(
+            tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
+                &tidb_dbterror::ERR_UNSUPPORTED_DIST_TASK.gen_with_stack_by_args(&[]),
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Go `initForReorgIndexes`' NextGen guard: global sort is the product
@@ -1355,6 +1378,9 @@ pub(super) fn plan_persisted_add_index_job_step(
     match original_state {
         SchemaState::NONE => {
             // Go `initForReorgIndexes`.
+            if let Err(error) = check_dist_reorg_is_fast_reorg(&active.job) {
+                return Err(cancel_ddl_job(active, error));
+            }
             load_cloud_storage_uri(&active.job);
             if let Err(error) = check_next_gen_local_sort(&active.job) {
                 return Err(cancel_ddl_job(active, error));
