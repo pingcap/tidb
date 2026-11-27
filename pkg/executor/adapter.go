@@ -408,6 +408,8 @@ type ExecStmt struct {
 	statementRUOwner *statementRUOwner
 
 	StmtNode ast.StmtNode
+	// preparedSensitiveStmt is the inner statement when EXECUTE wraps sensitive SQL.
+	preparedSensitiveStmt ast.SensitiveStmtNode
 
 	Ctx sessionctx.Context
 
@@ -901,6 +903,14 @@ func (a *ExecStmt) inheritContextFromExecuteStmt() {
 	}
 }
 
+func (a *ExecStmt) sensitiveStmt() ast.SensitiveStmtNode {
+	if a.preparedSensitiveStmt != nil {
+		return a.preparedSensitiveStmt
+	}
+	stmt, _ := a.StmtNode.(ast.SensitiveStmtNode)
+	return stmt
+}
+
 func (a *ExecStmt) getSQLForProcessInfo() string {
 	sql := a.Text()
 	if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
@@ -908,7 +918,7 @@ func (a *ExecStmt) getSQLForProcessInfo() string {
 			// Use SecureText to avoid leak password information.
 			sql = ss.SecureText()
 		}
-	} else if sn, ok2 := a.StmtNode.(ast.SensitiveStmtNode); ok2 {
+	} else if sn := a.sensitiveStmt(); sn != nil {
 		// such as import into statement
 		sql = sn.SecureText()
 	}
@@ -2448,7 +2458,7 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	stmtExecInfo.Charset = charset
 	stmtExecInfo.Collation = collation
 	stmtExecInfo.NormalizedSQL = normalizedSQL
-	stmtExecInfo.SensitiveStmt, _ = a.StmtNode.(ast.SensitiveStmtNode)
+	stmtExecInfo.SensitiveStmt = a.sensitiveStmt()
 	stmtExecInfo.SampleParams = sessVars.PlanCacheParams
 	stmtExecInfo.Digest = digest.String()
 	stmtExecInfo.PrevSQL = prevSQL
@@ -2545,7 +2555,7 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 		} else {
 			sql, _ = sessVars.StmtCtx.SQLDigest()
 		}
-	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+	} else if sensitiveStmt := a.sensitiveStmt(); sensitiveStmt != nil {
 		sql = sensitiveStmt.SecureText()
 	} else {
 		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
@@ -2590,7 +2600,7 @@ func (a *ExecStmt) getLazyStmtText() (s variable.LazyStmtText) {
 	if rmode == errors.RedactLogEnable {
 		sql, _ := sessVars.StmtCtx.SQLDigest()
 		s.SetText(sql)
-	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+	} else if sensitiveStmt := a.sensitiveStmt(); sensitiveStmt != nil {
 		sql := sensitiveStmt.SecureText()
 		s.SetText(sql)
 	} else {
@@ -2611,7 +2621,7 @@ func (a *ExecStmt) updatePrevStmt() {
 	if rmode == errors.RedactLogEnable {
 		sql, _ := sessVars.StmtCtx.SQLDigest()
 		sessVars.PrevStmt.SetText(sql)
-	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+	} else if sensitiveStmt := a.sensitiveStmt(); sensitiveStmt != nil {
 		sql := sensitiveStmt.SecureText()
 		sessVars.PrevStmt.SetText(sql)
 	} else {
