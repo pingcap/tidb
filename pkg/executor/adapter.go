@@ -419,6 +419,8 @@ type ExecStmt struct {
 	isSelectForUpdate bool
 	retryCount        uint
 	retryStartTime    time.Time
+	// userVarsBeforeExec holds the user vars before the executor runs, a pessimistic retry restores them.
+	userVarsBeforeExec *variable.UserVars
 
 	// Phase durations are splited into two parts: 1. trying to lock keys (but
 	// failed); 2. the final iteration of the retry loop. Here we use
@@ -827,6 +829,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (rs sqlexec.RecordSet, err error) {
 	}
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
+	a.userVarsBeforeExec = nil
+	if sessVars := sctx.GetSessionVars(); sessVars.TxnCtx.IsPessimistic && sessVars.StmtCtx.HasUserVarAssignment {
+		a.userVarsBeforeExec = sessVars.UserVars.Clone().(*variable.UserVars)
+	}
 	if err = a.openExecutor(ctx, e); err != nil {
 		terror.Log(exec.Close(e))
 		return nil, err
@@ -1570,6 +1576,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 
 	a.resetPhaseDurations()
 
+	if a.userVarsBeforeExec != nil {
+		a.Ctx.GetSessionVars().UserVars.Restore(a.userVarsBeforeExec)
+	}
 	a.inheritContextFromExecuteStmt()
 	e, err := a.buildExecutor(ctx)
 	if err != nil {
