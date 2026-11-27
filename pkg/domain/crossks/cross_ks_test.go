@@ -339,7 +339,7 @@ func TestManager(t *testing.T) {
 		sysTK.MustQuery("select count(1) from mysql.tidb_import_jobs").Check(testkit.Rows("0"))
 	})
 
-	t.Run("check cross keyspace session are recorded in coordinator and contains related tables", func(t *testing.T) {
+	t.Run("check cross keyspace session are recorded in coordinator and take mdl for non-ddl system tables", func(t *testing.T) {
 		storeMap := make(map[string]kv.Storage, 2)
 		storeMap[keyspace.System] = sysKSStore
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeGetStore",
@@ -395,13 +395,22 @@ func TestManager(t *testing.T) {
 			exec := se.GetSQLExecutor()
 			_, err2 := sqlexec.ExecSQL(ctx, exec, "select count(1) from mysql.tidb_import_jobs")
 			require.NoError(t, err2)
-			var tableIDCount int
-			se.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value any) bool {
-				require.Equal(t, metadef.TiDBImportJobsTableID, key.(int64))
-				tableIDCount++
-				return true
-			})
-			require.EqualValues(t, 1, tableIDCount)
+			// Non-pessimistic read-only statements in internal explicit transactions skip MDL.
+			_, ok := se.GetSessionVars().GetRelatedTableForMDL().Load(metadef.TiDBImportJobsTableID)
+			require.False(t, ok)
+
+			// Non-readonly accesses to non-DDL system tables take MDL so SYSTEM-keyspace DDL
+			// coordinates with cross-keyspace transactions, whereas DDL framework tables skip MDL.
+			_, err2 = sqlexec.ExecSQL(ctx, exec, "delete from mysql.tidb_import_jobs where id = -1")
+			require.NoError(t, err2)
+			_, ok = se.GetSessionVars().GetRelatedTableForMDL().Load(metadef.TiDBImportJobsTableID)
+			require.True(t, ok)
+
+			_, err2 = sqlexec.ExecSQL(ctx, exec, "delete from mysql.tidb_ddl_job where job_id = -1")
+			require.NoError(t, err2)
+			_, ok = se.GetSessionVars().GetRelatedTableForMDL().Load(metadef.TiDBDDLJobTableID)
+			require.False(t, ok)
+
 			require.True(t, coordinator.ContainsInternalSession(se))
 			// Other background tasks might also use a session, so >= 1.
 			require.GreaterOrEqual(t, coordinator.InternalSessionCount(), 1)

@@ -92,6 +92,12 @@ func isOptimisticTxnRetryable(
 		return true
 	}
 
+	// Internal explicit transactions that served read-only statements without MDL
+	// cannot safely transparently replay only write statements with caller-derived values.
+	if sessVars.HasReadOnlySkippedMDL() {
+		return false
+	}
+
 	// The internal transaction could always retry.
 	if sessVars.InRestrictedSQL {
 		return true

@@ -18,9 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
@@ -69,4 +71,32 @@ func TestSchemaCheckerSimple(t *testing.T) {
 	nowTS := uint64(time.Now().UnixNano())
 	_, result := checker.Validator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs, true)
 	require.Equal(t, validatorapi.ResultUnknown, result)
+
+	t.Run("delta check IDs and MDL disable fallback", func(t *testing.T) {
+		origMDL := vardef.IsMDLEnabled()
+		t.Cleanup(func() {
+			vardef.SetEnableMDL(origMDL)
+		})
+
+		v := isvalidator.New(time.Second)
+		vts := uint64(time.Now().UnixNano())
+		// Seed an older delta at version 10 so schemaVer 10 stays within the retained delta window.
+		v.Update(vts, 0, 10, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{99}, ActionTypes: []uint64{1}})
+		// Table 20 changed between schemaVer 10 -> 12; table 10 (system-related) did not.
+		v.Update(vts, 10, 12, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{20}, ActionTypes: []uint64{1}})
+
+		// Constructed while MDL is enabled: checks only skippedMDLTableIDs ({10}), ignoring MDL-locked {20}.
+		vardef.SetEnableMDL(true)
+		sc := NewSchemaCheckerWithSkippedMDL(v, 10, []int64{10, 20}, []int64{10})
+		_, checkErr := sc.Check(vts)
+		require.NoError(t, checkErr)
+
+		// In nextgen kernel, MDL is permanently enabled and IsMDLEnabled always returns true.
+		if kerneltype.IsClassic() {
+			// If MDL is disabled before Check runs, it falls back to relatedTableIDs ({10, 20}) and catches table 20.
+			vardef.SetEnableMDL(false)
+			_, checkErr = sc.Check(vts)
+			require.True(t, terror.ErrorEqual(checkErr, ErrInfoSchemaChanged))
+		}
+	})
 }

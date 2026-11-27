@@ -18,16 +18,20 @@ import (
 	"context"
 	"reflect"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestTiDBOptOn(t *testing.T) {
@@ -863,4 +867,84 @@ func TestAssertionLevel(t *testing.T) {
 	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel(vardef.AssertionOffStr))
 	require.Equal(t, AssertionLevelFast, tidbOptAssertionLevel(vardef.AssertionFastStr))
 	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel("bogus"))
+}
+
+// TestRemoveLockDDLJobsForInternalSession verifies that transactions on internal
+// sessions participate in MDL. Before the fix RemoveLockDDLJobs returned early for
+// `InRestrictedSQL` sessions, so such transactions never blocked a DDL job.
+func TestRemoveLockDDLJobsForInternalSession(t *testing.T) {
+	sv := NewSessionVars(nil)
+	sv.TxnCtx.StartTS = oracle.GoTimeToTS(time.Now())
+	sv.InRestrictedSQL = true
+	sv.TxnCtx.SetRequestSource(true, kv.InternalTxnTTL)
+
+	newJobs := func() map[int64]*mdldef.JobMDL {
+		return map[int64]*mdldef.JobMDL{
+			1: {Ver: 20, TableIDs: map[int64]struct{}{100: {}}},
+		}
+	}
+
+	sv.GetRelatedTableForMDL().Store(int64(100), int64(10))
+	jobs := newJobs()
+	RemoveLockDDLJobs(sv, jobs, false)
+	require.Empty(t, jobs, "an internal session holding an older schema version must block the DDL job")
+
+	sv.ClearRelatedTableForMDL()
+	sv.GetRelatedTableForMDL().Store(int64(100), int64(30))
+	jobs = newJobs()
+	RemoveLockDDLJobs(sv, jobs, false)
+	require.Len(t, jobs, 1, "a newer schema version must not block the DDL job")
+
+	t.Run("concurrent RemoveLockDDLJobs and Cleanup", func(t *testing.T) {
+		const iterations = 200
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				RemoveLockDDLJobs(sv, newJobs(), false)
+			}
+		}()
+		for range iterations {
+			sv.TxnCtx.SetRequestSource(true, kv.InternalTxnTTL)
+			sv.GetRelatedTableForMDL().Store(int64(100), int64(10))
+			sv.TxnCtx.Cleanup()
+		}
+		wg.Wait()
+	})
+}
+
+func TestSchemaDeltaCheckTableIDs(t *testing.T) {
+	sv := NewSessionVars(nil)
+	require.Nil(t, sv.GetSkippedMDLTableIDs())
+
+	sv.TxnCtx.CouldRetry = true
+	sv.RecordSkippedMDL(&model.TableInfo{
+		ID: 10,
+		Partition: &model.PartitionInfo{
+			Enable: true,
+			Definitions: []model.PartitionDefinition{
+				{ID: 11},
+				{ID: 12},
+			},
+		},
+	}, false)
+	require.ElementsMatch(t, []int64{10, 11, 12}, sv.GetSkippedMDLTableIDs())
+	require.False(t, sv.HasReadOnlySkippedMDL())
+	require.True(t, sv.TxnCtx.CouldRetry)
+
+	sv.TxnCtx.SetRequestSource(true, kv.InternalTxnTTL)
+	sv.RecordSkippedMDL(&model.TableInfo{ID: 10}, true)
+	// A subsequent non-readonly record must keep the read-only marker sticky.
+	sv.RecordSkippedMDL(&model.TableInfo{ID: 10}, false)
+	require.True(t, sv.HasReadOnlySkippedMDL())
+	require.False(t, sv.TxnCtx.CouldRetry)
+
+	sv.TxnCtxMu.Lock()
+	sv.TxnCtx.Cleanup()
+	require.Nil(t, sv.GetSkippedMDLTableIDs())
+	require.False(t, sv.HasReadOnlySkippedMDL())
+	sv.TxnCtxMu.Unlock()
+	require.False(t, sv.TxnCtx.mdlRequestSource.RequestSourceInternal)
+	require.Empty(t, sv.TxnCtx.mdlRequestSource.RequestSourceType)
 }

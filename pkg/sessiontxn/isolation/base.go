@@ -127,6 +127,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 			TxnScope:   sessVars.CheckAndGetTxnScope(),
 		},
 	}
+	txnCtx.SetRequestSource(sessVars.InRestrictedSQL, sessVars.RequestSourceType)
 	if p.onInitializeTxnCtx != nil {
 		p.onInitializeTxnCtx(txnCtx)
 	}
@@ -608,31 +609,64 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	// Get accessed temporary tables in the transaction.
 	temporaryTables := sessVars.TxnCtx.TemporaryTables
 	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
+	seen := make(map[int64]struct{}, len(relatedPhysicalTables))
 	for id := range relatedPhysicalTables {
 		// Schema change on global temporary tables doesn't affect transactions.
 		if _, ok := temporaryTables[id]; ok {
 			continue
 		}
 		physicalTableIDs = append(physicalTableIDs, id)
+		seen[id] = struct{}{}
 	}
-	needCheckSchemaByDelta := true
-	// Set this option for 2 phase commit to validate schema lease.
+	var nonTempSkippedIDs []int64
 	if sessVars.TxnCtx != nil {
-		needCheckSchemaByDelta = !sessVars.TxnCtx.EnableMDL
+		if skippedIDs := sessVars.GetSkippedMDLTableIDs(); len(skippedIDs) > 0 {
+			nonTempSkippedIDs = make([]int64, 0, len(skippedIDs))
+			for _, id := range skippedIDs {
+				if _, ok := temporaryTables[id]; ok {
+					continue
+				}
+				nonTempSkippedIDs = append(nonTempSkippedIDs, id)
+				if _, ok := seen[id]; !ok {
+					physicalTableIDs = append(physicalTableIDs, id)
+					seen[id] = struct{}{}
+				}
+			}
+		}
+	}
+	// Set this option for 2 phase commit to validate schema lease. When MDL is active,
+	// only tables that intentionally skipped MDL (DDL system tables for internal sessions,
+	// or non-pessimistic internal read-only accesses in a transaction that later writes) are
+	// checked via schema delta so MDL-locked tables are not falsely invalidated, while
+	// retaining all written/skipped IDs in case MDL is disabled before commit validation runs.
+	var checker *domain.SchemaChecker
+	if sessVars.TxnCtx != nil && sessVars.TxnCtx.EnableMDL && vardef.IsMDLEnabled() {
+		checker = domain.NewSchemaCheckerWithSkippedMDL(
+			p.sctx.GetSchemaValidator(),
+			p.GetTxnInfoSchema().SchemaMetaVersion(),
+			physicalTableIDs,
+			nonTempSkippedIDs,
+		)
+	} else {
+		checker = domain.NewSchemaChecker(
+			p.sctx.GetSchemaValidator(),
+			p.GetTxnInfoSchema().SchemaMetaVersion(),
+			physicalTableIDs,
+			true,
+		)
 	}
 
 	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
 	// The pipelined txn will may be flushed in background, not touch the options to avoid races.
 	// to avoid session set overlap the txn set.
-	txn.SetOption(
-		kv.SchemaChecker,
-		domain.NewSchemaChecker(
-			p.sctx.GetSchemaValidator(),
-			p.GetTxnInfoSchema().SchemaMetaVersion(),
-			physicalTableIDs,
-			needCheckSchemaByDelta,
-		),
-	)
+	txn.SetOption(kv.SchemaChecker, checker)
+	if len(nonTempSkippedIDs) > 0 {
+		// DDL skips delayForAsyncCommit while global MDL is enabled, so transactions that
+		// skipped MDL on any table must use standard 2PC to re-validate schema at commitTS
+		// after prewrite instead of finishing via 1PC or async commit.
+		txn.SetOption(kv.EnableAsyncCommit, false)
+		txn.SetOption(kv.Enable1PC, false)
+	}
 
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.

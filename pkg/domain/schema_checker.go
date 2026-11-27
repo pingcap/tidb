@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	atomicutil "go.uber.org/atomic"
@@ -27,8 +28,14 @@ import (
 // SchemaChecker is used for checking schema-validity.
 type SchemaChecker struct {
 	validatorapi.Validator
-	schemaVer              int64
-	relatedTableIDs        []int64
+	schemaVer int64
+	// relatedTableIDs holds all non-temporary written and MDL-skipped physical IDs,
+	// used when MDL is off or toggled off before commit validation runs.
+	relatedTableIDs []int64
+	// skippedMDLTableIDs is the subset of physical IDs whose MDL lock was skipped and
+	// therefore still require commit-time schema-delta validation while MDL is enabled.
+	skippedMDLTableIDs     []int64
+	hasSkippedMDLTableIDs  bool
 	needCheckSchemaByDelta bool
 }
 
@@ -55,6 +62,21 @@ func NewSchemaChecker(validator validatorapi.Validator, schemaVer int64, related
 	}
 }
 
+// NewSchemaCheckerWithSkippedMDL creates a schema checker that validates only
+// skippedMDLTableIDs while MDL is enabled, while retaining relatedTableIDs as the
+// fallback set if MDL is disabled before the commit check runs.
+func NewSchemaCheckerWithSkippedMDL(validator validatorapi.Validator, schemaVer int64, relatedTableIDs, skippedMDLTableIDs []int64) *SchemaChecker {
+	hasSkipped := len(skippedMDLTableIDs) > 0
+	return &SchemaChecker{
+		Validator:              validator,
+		schemaVer:              schemaVer,
+		relatedTableIDs:        relatedTableIDs,
+		skippedMDLTableIDs:     skippedMDLTableIDs,
+		hasSkippedMDLTableIDs:  hasSkipped,
+		needCheckSchemaByDelta: hasSkipped,
+	}
+}
+
 // Check checks the validity of the schema version.
 func (s *SchemaChecker) Check(txnTS uint64) (*transaction.RelatedSchemaChange, error) {
 	return s.CheckBySchemaVer(txnTS, intSchemaVer(s.schemaVer))
@@ -65,7 +87,11 @@ func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.Schem
 	schemaOutOfDateRetryInterval := SchemaOutOfDateRetryInterval.Load()
 	schemaOutOfDateRetryTimes := int(SchemaOutOfDateRetryTimes.Load())
 	for range schemaOutOfDateRetryTimes {
-		relatedChange, checkResult := s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, s.needCheckSchemaByDelta)
+		checkIDs := s.relatedTableIDs
+		if s.hasSkippedMDLTableIDs && vardef.IsMDLEnabled() {
+			checkIDs = s.skippedMDLTableIDs
+		}
+		relatedChange, checkResult := s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), checkIDs, s.needCheckSchemaByDelta)
 		switch checkResult {
 		case validatorapi.ResultSucc:
 			return nil, nil

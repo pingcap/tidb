@@ -528,6 +528,33 @@ func TestPanicOnRollbackKilledTxn(t *testing.T) {
 		tracker.Killer.Reset()
 		tk.MustQuery("select count(*) from t").Check(testkit.Rows("64"))
 	})
+	t.Run("commit and rollback under TxnCtxMu", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t_mu(id int)")
+
+		sv := tk.Session().GetSessionVars()
+		sv.InRestrictedSQL = true
+		internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+		tk.MustExecWithContext(internalCtx, "begin optimistic")
+		tk.MustQueryWithContext(internalCtx, "select * from t_mu").Check(testkit.Rows())
+		require.True(t, sv.HasReadOnlySkippedMDL())
+		tk.MustExecWithContext(internalCtx, "insert into t_mu values (1)")
+		sv.TxnCtxMu.Lock()
+		err := tk.Session().CommitTxn(internalCtx)
+		sv.TxnCtxMu.Unlock()
+		require.NoError(t, err)
+		require.False(t, sv.HasReadOnlySkippedMDL())
+		sv.InRestrictedSQL = false
+
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into t_mu values (2)")
+		sv.TxnCtxMu.Lock()
+		tk.Session().RollbackTxn(context.Background())
+		sv.TxnCtxMu.Unlock()
+		tk.MustQuery("select count(*) from t_mu").Check(testkit.Rows("1"))
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

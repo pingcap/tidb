@@ -6079,6 +6079,11 @@ func (s *session) DecodeStates(ctx context.Context,
 }
 
 func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNode ast.StmtNode) {
+	updateTxnCtxSource := func(isInternal bool, sourceType string) {
+		if s.sessionVars.TxnCtx != nil {
+			s.sessionVars.TxnCtx.SetRequestSource(isInternal, sourceType)
+		}
+	}
 	if !s.isInternal() {
 		if txn, _ := s.Txn(false); txn != nil && txn.Valid() {
 			if txn.IsPipelined() {
@@ -6087,12 +6092,14 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 			txn.SetOption(kv.RequestSourceType, stmtLabel)
 		}
 		s.sessionVars.RequestSourceType = stmtLabel
+		updateTxnCtxSource(false, stmtLabel)
 		return
 	}
 	if source := ctx.Value(kv.RequestSourceKey); source != nil {
 		requestSource := source.(kv.RequestSource)
 		if requestSource.RequestSourceType != "" {
 			s.sessionVars.RequestSourceType = requestSource.RequestSourceType
+			updateTxnCtxSource(true, requestSource.RequestSourceType)
 			return
 		}
 	}
