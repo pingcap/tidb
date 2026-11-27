@@ -2557,6 +2557,30 @@ order by o.label limit 10`
 	tk.MustQuery(q2).Check(testkit.Rows("o2 zenith", "o3 zenith", "o5 zenith", "o6 zenith two"))
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash,tidb'")
 
+	// obj has a composite clustered primary key (a common handle), whose TiFlash
+	// table path carries PRIMARY as its index. Without enforcing MPP, the filter
+	// on the virtual column still runs in TiFlash and the correlated EXISTS
+	// becomes an MPP semi join (see https://github.com/pingcap/tidb/issues/73897).
+	tk.MustExec("set @@session.tidb_enforce_mpp=0, @@session.tidb_allow_mpp=1, @@session.tidb_allow_tiflash_cop=0")
+	existsQuery := `select o.id from obj o
+where o.k = 't' and o.t8_lower = 'acmecorp'
+  and exists (select 1 from rel r where r.src = o.id)
+order by o.id limit 10`
+	existsRows := tk.MustQuery("explain format='brief' " + existsQuery).Rows()
+	require.True(t, tiflashRowContains(existsRows, `eq(lower(test.obj.t8), "acmecorp")`), "%v", existsRows)
+	var hasMPPSemiJoin bool
+	for _, row := range existsRows {
+		op := strings.TrimLeft(row[0].(string), "└─│├ ")
+		require.False(t, strings.HasPrefix(op, "Apply"), "%v", existsRows)
+		require.False(t, row[2].(string) == "root" && strings.HasPrefix(op, "Selection"), "%v", existsRows)
+		if strings.HasPrefix(op, "HashJoin") && strings.HasPrefix(row[2].(string), "mpp[tiflash]") && strings.Contains(row[4].(string), "semi join") {
+			hasMPPSemiJoin = true
+		}
+	}
+	require.True(t, hasMPPSemiJoin, "%v", existsRows)
+	tk.MustQuery(existsQuery).Check(testkit.Rows("o1", "o4", "o5"))
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
+
 	// left(lower(t24), 3) is typed longer than varchar(3), so t24_short is not
 	// computed in TiFlash and TiDB fills it; t24_lower from the same scan still
 	// is computed in TiFlash, and the base column t24 must reach TiDB for t24_short.
