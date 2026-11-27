@@ -813,3 +813,130 @@ func BenchmarkIntersectSortedRanges(b *testing.B) {
 		}
 	}
 }
+
+func newIntRange(low, high int64, lowExclude, highExclude bool) *ranger.Range {
+	bc := collate.GetBinaryCollator()
+	return &ranger.Range{
+		LowVal:      []types.Datum{types.NewIntDatum(low)},
+		HighVal:     []types.Datum{types.NewIntDatum(high)},
+		Collators:   []collate.Collator{bc},
+		LowExclude:  lowExclude,
+		HighExclude: highExclude,
+	}
+}
+
+func TestRangesIsSubsetOf(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	rctx := ctx.GetRangerCtx()
+
+	// f fully contained within a single p range.
+	p := ranger.Ranges{newIntRange(10, 30, false, false)}
+	f := ranger.Ranges{newIntRange(15, 25, false, false)}
+	got, err := f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.True(t, got)
+
+	// f extends below p's lower bound.
+	f = ranger.Ranges{newIntRange(5, 20, false, false)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.False(t, got)
+
+	// f extends above p's upper bound.
+	f = ranger.Ranges{newIntRange(20, 40, false, false)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.False(t, got)
+
+	// p is two adjacent ranges [1,5] and [5,10] whose union is [1,10]; f equals that union.
+	p = ranger.Ranges{newIntRange(1, 5, false, false), newIntRange(5, 10, false, false)}
+	f = ranger.Ranges{newIntRange(1, 10, false, false)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.True(t, got)
+
+	// p has a gap (5,7); f spanning the gap is not a subset.
+	p = ranger.Ranges{newIntRange(1, 5, false, false), newIntRange(7, 10, false, false)}
+	f = ranger.Ranges{newIntRange(1, 10, false, false)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.False(t, got)
+
+	// Empty f is a subset of any non-empty p.
+	p = ranger.Ranges{newIntRange(1, 5, false, false)}
+	f = ranger.Ranges{}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.True(t, got)
+
+	// Non-empty f is not a subset of empty p.
+	p = ranger.Ranges{}
+	f = ranger.Ranges{newIntRange(1, 5, false, false)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.False(t, got)
+
+	// Multiple disjoint f ranges, all within p.
+	p = ranger.Ranges{newIntRange(0, 100, false, false)}
+	f = ranger.Ranges{newIntRange(10, 20, false, false), newIntRange(30, 40, false, false)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.True(t, got)
+
+	// One of f's ranges extends past p's upper bound.
+	p = ranger.Ranges{newIntRange(10, 20, false, false)}
+	f = ranger.Ranges{newIntRange(12, 15, false, false), newIntRange(18, 25, false, false)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.False(t, got)
+
+	// Degenerate (point) ranges: equal points are subsets.
+	p = ranger.Ranges{newIntRange(5, 5, false, false)}
+	f = ranger.Ranges{newIntRange(5, 5, false, false)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.True(t, got)
+
+	// Different point ranges are not subsets.
+	f = ranger.Ranges{newIntRange(6, 6, false, false)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.False(t, got)
+
+	// p lower-open and f lower-open: f is still contained.
+	p = ranger.Ranges{newIntRange(10, 30, true, false)}
+	f = ranger.Ranges{newIntRange(15, 25, true, false)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.True(t, got)
+
+	// p upper-open (excludes 20) but f includes 20: not a subset.
+	p = ranger.Ranges{newIntRange(10, 20, false, true)}
+	f = ranger.Ranges{newIntRange(10, 20, false, false)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.False(t, got)
+
+	// p lower-open (excludes 10) but f includes 10: not a subset.
+	p = ranger.Ranges{newIntRange(10, 20, true, false)}
+	f = ranger.Ranges{newIntRange(10, 20, false, false)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.False(t, got)
+
+	// Both-open p and f with f strictly inside.
+	p = ranger.Ranges{newIntRange(10, 30, true, true)}
+	f = ranger.Ranges{newIntRange(15, 25, true, true)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.True(t, got)
+
+	// f upper-open is a subset of p which includes that endpoint.
+	p = ranger.Ranges{newIntRange(10, 20, false, false)}
+	f = ranger.Ranges{newIntRange(10, 20, false, true)}
+	got, err = f.IsSubsetOf(rctx, p)
+	require.NoError(t, err)
+	require.True(t, got)
+
+	domain.GetDomain(ctx).StatsHandle().Close()
+}
