@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -222,7 +223,7 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
 		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONLength, ast.JSONMergePatch,
-		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf, ast.JSONArrayAppend,
+		ast.JSONUnquote, ast.JSONValid, ast.JSONMemberOf, ast.JSONArrayAppend,
 
 		// vector functions.
 		ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText,
@@ -285,8 +286,26 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 			return false
 		}
 		return true
+	case ast.JSONContains:
+		// TiKV still unwraps a nested array of the candidate (see #73502), so only push down a
+		// candidate known to have none, which both sides evaluate the same way.
+		return !mayHaveNestedJSONArray(ctx, sf.GetArgs()[1])
 	}
 	return false
+}
+
+// mayHaveNestedJSONArray reports whether the JSON_CONTAINS candidate expr may have an array nested
+// in an array. Only a strict constant is checked; anything else may have one.
+func mayHaveNestedJSONArray(ctx EvalContext, expr Expression) bool {
+	if expr.ConstLevel() != ConstStrict {
+		return true
+	}
+	j, isNull, err := expr.EvalJSON(ctx, chunk.Row{})
+	if err != nil || isNull {
+		// Root and TiKV return the same NULL or error for it.
+		return false
+	}
+	return j.HasNestedArray()
 }
 
 func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool {

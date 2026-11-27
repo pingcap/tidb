@@ -2237,3 +2237,30 @@ func TestProjectionColumn2Pb(t *testing.T) {
 	_, err = ProjectionExpressionsToPBList(ctx, colExprs, client)
 	require.NoError(t, err)
 }
+
+func TestJSONContainsNestedCandidatePushDownToTiKV(t *testing.T) {
+	ctx := mock.NewContext()
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), new(mock.Client))
+	jsonColumn := genColumn(mysql.TypeJSON, 1)
+
+	// TiKV still unwraps a nested candidate array (#73502), so such a candidate stays at root.
+	tests := []struct {
+		candidate Expression
+		pushed    bool
+	}{
+		{NewStrConst(`[1,2]`), true},
+		{NewStrConst(`{"a":[1,2]}`), true},
+		{NewStrConst(`1`), true},
+		{NewStrConst(`[[1]]`), false},
+		{NewStrConst(`[1,[2,3]]`), false},
+		{NewStrConst(`{"a":[[1]]}`), false},
+		{NewStrConst(`[{"a":[[1]]}]`), false},
+		// A candidate only known at execution time may have a nested array.
+		{jsonColumn, false},
+	}
+	for i, tt := range tests {
+		function, err := NewFunction(ctx, ast.JSONContains, types.NewFieldType(mysql.TypeLonglong), jsonColumn, tt.candidate)
+		require.NoError(t, err)
+		require.Equal(t, tt.pushed, CanExprsPushDown(pushDownCtx, []Expression{function}, kv.TiKV), "case %d", i)
+	}
+}

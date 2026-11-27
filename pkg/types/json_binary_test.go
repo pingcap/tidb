@@ -415,6 +415,26 @@ func BenchmarkBinaryMarshal(b *testing.B) {
 	}
 }
 
+func TestBinaryJSONHasNestedArray(t *testing.T) {
+	tests := []struct {
+		in     string
+		nested bool
+	}{
+		{`1`, false},
+		{`[]`, false},
+		{`[1,2]`, false},
+		{`{"a":[1,2]}`, false},
+		{`[{"a":[1]}]`, false},
+		{`[[]]`, true},
+		{`[1,[2]]`, true},
+		{`{"a":[[1]]}`, true},
+		{`[{"a":[1,[2]]}]`, true},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.nested, mustParseBinaryFromString(t, tt.in).HasNestedArray(), tt.in)
+	}
+}
+
 func TestBinaryJSONContains(t *testing.T) {
 	var tests = []struct {
 		input    string
@@ -437,6 +457,19 @@ func TestBinaryJSONContains(t *testing.T) {
 		{`[{"a":1}]`, `{"a":1}`, true},
 		{`[{"a":1,"b":2}]`, `{"a":1}`, true},
 		{`[{"a":{"a":1},"b":2}]`, `{"a":1}`, false},
+		// issue #73502: a nested candidate array is only contained in an array element.
+		{`[1,2]`, `[[1]]`, false},
+		{`[1,[2,3]]`, `[[1,2]]`, false},
+		{`[1,[2,3]]`, `[[2]]`, true},
+		{`[1,[2,3]]`, `[1,[3]]`, true},
+		{`[1,[2,[3]]]`, `[[[3]]]`, true},
+		{`[1,[2,[3]]]`, `[[3]]`, true},
+		{`{"a":[1,2]}`, `{"a":[[1]]}`, false},
+		{`{"a":[1,[2]]}`, `{"a":[[2]]}`, true},
+		{`[1,2]`, `[[]]`, false},
+		{`[1,[]]`, `[[]]`, true},
+		{`[1,2]`, `[]`, true},
+		{`[[1]]`, `[1]`, true},
 	}
 
 	for _, test := range tests {
