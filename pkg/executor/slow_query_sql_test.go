@@ -168,9 +168,9 @@ func TestSlowQueryInMemoryOriginalQuery(t *testing.T) {
 		tk.MustExec("set @@global.tidb_redact_log=off")
 	})
 
-	tk.MustQuery("select count(*) from information_schema.columns where table_name in ('slow_query', 'cluster_slow_query') and binary column_name = 'In_memory_original_query'").
+	tk.MustQuery("select count(*) from information_schema.columns where table_name in ('SLOW_QUERY', 'CLUSTER_SLOW_QUERY') and binary column_name = 'In_memory_original_query'").
 		Check(testkit.Rows("2"))
-	tk.MustQuery("select count(*) from information_schema.columns where table_name in ('slow_query', 'cluster_slow_query') and lower(column_name) = 'unredacted_query'").
+	tk.MustQuery("select count(*) from information_schema.columns where table_name in ('SLOW_QUERY', 'CLUSTER_SLOW_QUERY') and lower(column_name) = 'unredacted_query'").
 		Check(testkit.Rows("0"))
 
 	tk.MustExec("prepare no_cache from 'select 246813579 + 1'")

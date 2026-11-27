@@ -10,16 +10,12 @@ select TABLE_NAME from information_schema.columns where table_schema = 'PLANNER_
 TABLE_NAME
 select TABLE_NAME from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like 'id';
 TABLE_NAME
-t
 select column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and (column_name like 'i%' or column_name like '%d');
 column_name
-id
 select column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and (column_name like 'abc%' and column_name like '%time');
 column_name
-abctime
 select TABLE_NAME, column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like '%time';
 TABLE_NAME	column_name
-t	abctime
 describe t;
 Field	Type	Null	Key	Default	Extra
 id	int	YES		NULL	

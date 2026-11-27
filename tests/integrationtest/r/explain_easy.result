@@ -120,10 +120,12 @@ id	task	access object	operator info
 MemTableScan	root	table:COLUMNS	
 explain format = 'plan_tree' select * from information_schema.columns where table_name = 'T1';
 id	task	access object	operator info
-MemTableScan	root	table:COLUMNS	table_name:["t1"]
+Selection	root		eq(Column, "T1")
+└─MemTableScan	root	table:COLUMNS	table_name:["t1"]
 explain format = 'plan_tree' select * from information_schema.columns where table_schema = 'TEST' and table_name = 'T1' and column_name = 'c1';
 id	task	access object	operator info
-MemTableScan	root	table:COLUMNS	column_name:["c1"], table_name:["t1"], table_schema:["test"]
+Selection	root		eq(Column, "T1"), eq(Column, "TEST"), eq(Column, "c1")
+└─MemTableScan	root	table:COLUMNS	column_name:["c1"], table_name:["t1"], table_schema:["test"]
 explain format = 'plan_tree' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	task	access object	operator info
 Projection	root		eq(explain_easy.t1.c2, explain_easy.t2.c2)->Column

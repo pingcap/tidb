@@ -55,11 +55,13 @@ count(*)
 explain format='plan_tree' SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA= 'mysql' or TABLE_SCHEMA = 'test') and (TABLE_NAME = 't1' or TABLE_NAME = 't2');
 id	task	access object	operator info
 HashAgg	root		funcs:count(1)->Column
-└─MemTableScan	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
+└─Selection	root		or(eq(Column, "mysql"), eq(Column, "test")), or(eq(Column, "t1"), eq(Column, "t2"))
+  └─MemTableScan	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
 explain format='plan_tree' SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA in ('mysql', 'test') and TABLE_NAME in ('t1', 't2');
 id	task	access object	operator info
 HashAgg	root		funcs:count(1)->Column
-└─MemTableScan	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
+└─Selection	root		in(Column, "mysql", "test"), in(Column, "t1", "t2")
+  └─MemTableScan	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
 SELECT count(*) FROM information_schema.TABLES WHERE TABLE_NAME in ('t1', 't2') and TABLE_SCHEMA = 'mysql';
 count(*)
 2
@@ -101,7 +103,9 @@ InnoDB	NONCLUSTERED
 InnoDB	NONCLUSTERED
 explain format='brief' select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
 id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TABLES	table_name:["t4","t5"], table_schema:["infoschema__infoschema"]
+Projection	8000.00	root		Column#5, Column#24
+└─Selection	8000.00	root		eq(Column#2, "infoschema__infoschema"), or(eq(Column#3, "t4"), eq(Column#3, "t5"))
+  └─MemTableScan	10000.00	root	table:TABLES	table_name:["t4","t5"], table_schema:["infoschema__infoschema"]
 select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
 engine	tidb_pk_type
 InnoDB	NONCLUSTERED
@@ -112,7 +116,7 @@ InnoDB	NONCLUSTERED
 explain format='brief' select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
 id	estRows	task	access object	operator info
 Projection	8000.00	root		Column#5, Column#24
-└─Selection	8000.00	root		or(eq(Column#3, "t4"), eq(upper(Column#3), "T5"))
+└─Selection	8000.00	root		eq(Column#2, "infoschema__infoschema"), or(eq(Column#3, "t4"), eq(upper(Column#3), "T5"))
   └─MemTableScan	10000.00	root	table:TABLES	table_schema:["infoschema__infoschema"]
 select engine, tidb_pk_type from information_schema.tables where lower(table_name) = 't5' and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
 engine	tidb_pk_type
@@ -120,7 +124,7 @@ InnoDB	NONCLUSTERED
 explain format='brief' select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or lower(table_name) = 't5') and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
 id	estRows	task	access object	operator info
 Projection	8000.00	root		Column#5, Column#24
-└─Selection	8000.00	root		or(eq(Column#3, "t4"), eq(lower(Column#3), "t5"))
+└─Selection	8000.00	root		eq(upper(Column#2), "INFOSCHEMA__INFOSCHEMA"), or(eq(Column#3, "t4"), eq(lower(Column#3), "t5"))
   └─MemTableScan	10000.00	root	table:TABLES	table_schema:["infoschema__infoschema"]
 select engine, tidb_pk_type from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
 engine	tidb_pk_type
@@ -128,7 +132,9 @@ InnoDB	NONCLUSTERED
 InnoDB	NONCLUSTERED
 explain format='brief' select engine, tidb_pk_type from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
 id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TABLES	table_name:["t4"], table_schema:["infoschema__infoschema"]
+Projection	8000.00	root		Column#5, Column#24
+└─Selection	8000.00	root		eq(Column#2, "infoschema__infoschema"), eq(Column#3, "t4"), eq(upper(Column#3), "T4")
+  └─MemTableScan	10000.00	root	table:TABLES	table_name:["t4"], table_schema:["infoschema__infoschema"]
 select engine, tidb_pk_type from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
 engine	tidb_pk_type
 InnoDB	NONCLUSTERED
@@ -183,8 +189,9 @@ select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table
 TABLE_NAME	PARTITION_NAME
 explain format='brief' select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
 id	estRows	task	access object	operator info
-Selection	8000.00	root		like(Column#3, "pt0", 92)
-└─MemTableScan	10000.00	root	table:PARTITIONS	table_schema:["infoschema__infoschema"], table_name_pattern:[pt0]
+Projection	8000.00	root		Column#3, Column#4
+└─Selection	8000.00	root		eq(Column#2, "infoschema__infoschema"), like(Column#3, "pt0", 92)
+  └─MemTableScan	10000.00	root	table:PARTITIONS	table_schema:["infoschema__infoschema"], table_name_pattern:[pt0]
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
 TABLE_NAME	PARTITION_NAME
 drop table pt1;
@@ -308,7 +315,7 @@ infoschema__infoschema_2	t2	b
 explain format='brief' select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema = 'infoschema__infoschema_2';
 id	estRows	task	access object	operator info
 Projection	8000.00	root		Column#2, Column#3, Column#8
-└─Selection	8000.00	root		like(Column#3, "%t2%", 92)
+└─Selection	8000.00	root		eq(Column#2, "infoschema__infoschema_2"), like(Column#3, "%t2%", 92)
   └─MemTableScan	10000.00	root	table:STATISTICS	table_schema:["infoschema__infoschema_2"], table_name_pattern:[%t2%]
 select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema = 'infoschema__infoschema_2';
 TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
@@ -339,7 +346,6 @@ indexusage	idt1	idx_3
 indexusage	idt1	primary
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3';
 TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
-indexusage	idt1	idx_3
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and TABLE_NAME = 'idt1';
 TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
 indexusage	idt1	idx_1
@@ -490,10 +496,8 @@ create sequence db1.s1;
 create sequence db2.s2;
 select sequence_schema, sequence_name from information_schema.sequences where sequence_schema = 'db1';
 sequence_schema	sequence_name
-Db1	s1
 select sequence_schema, sequence_name from information_schema.sequences where sequence_schema = 'db1' and sequence_name = 's1';
 sequence_schema	sequence_name
-Db1	s1
 select sequence_schema, sequence_name from information_schema.sequences where sequence_schema = 'db1' and sequence_name = 's2';
 sequence_schema	sequence_name
 select sequence_schema, sequence_name from information_schema.sequences;

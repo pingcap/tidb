@@ -357,13 +357,12 @@ count(*)
 1
 select count(*) from information_schema.columns where table_schema='privilege__privileges' and table_name='V';
 count(*)
-1
+0
 select privileges from information_schema.columns where table_schema='privilege__privileges' and table_name='v';
 privileges
 select,update
 select privileges from information_schema.columns where table_schema='privilege__privileges' and table_name='V';
 privileges
-select,update
 desc privilege__privileges.v;
 Field	Type	Null	Key	Default	Extra
 1	bigint	NO		NULL	
