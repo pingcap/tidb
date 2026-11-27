@@ -28,6 +28,9 @@ func TestIssue73843(t *testing.T) {
 	tk.MustExec("create table binary_agg (id int primary key, a int not null, key ia(a, id))")
 	tk.MustExec("insert into binary_agg (id, a) values (1, 1), (2, 1), (3, 2)")
 
+	tk.MustQuery("select b'101010' = x'00002A', hex(b'101010'), hex(x'00002A')").
+		Check(testkit.Rows("0 2A 00002A"))
+
 	tk.MustQuery("select hex(min(b'101010')), hex(max(b'101010')) from binary_agg").
 		Check(testkit.Rows("2A 2A"))
 	tk.MustQuery("select hex(min(x'00002A')), hex(max(x'00002A')) from binary_agg").
@@ -43,4 +46,8 @@ func TestIssue73843(t *testing.T) {
 
 	tk.MustQuery("select hex(min(cast(b'101010' as binary))), hex(min(cast(x'00002A' as binary))) from binary_agg").
 		Check(testkit.Rows("2A 00002A"))
+
+	tk.MustQuery("select id, hex(min(b'101010')), hex(min(x'00002A')) " +
+		"from (select * from binary_agg order by id limit 3) as t group by id order by id").
+		Check(testkit.Rows("1 2A 00002A", "2 2A 00002A", "3 2A 00002A"))
 }
