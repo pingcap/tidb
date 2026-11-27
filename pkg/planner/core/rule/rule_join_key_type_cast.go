@@ -139,6 +139,9 @@ func rewriteJoinEqConds(join *logicalop.LogicalJoin) bool {
 		preservedChildIdx = 0
 	case base.RightOuterJoin:
 		preservedChildIdx = 1
+	case base.FullOuterJoin:
+		// Both children are preserved, so neither can have a guard filter.
+		return false
 	}
 
 	for eqIdx := 0; eqIdx < len(join.EqualConditions); eqIdx++ {
