@@ -89,6 +89,151 @@ pub(crate) fn case_convert_with_type(
     }))
 }
 
+/// Go `soundexMinLen`: the minimum length of a SOUNDEX result; shorter codes
+/// are padded with '0'.
+const SOUNDEX_MIN_LEN: usize = 4;
+
+/// Go `soundexCodes`: maps 'A'..'Z' to their SOUNDEX code. MySQL gives H and
+/// W the code '0' of the vowels.
+const SOUNDEX_CODES: &[u8; 26] = b"01230120022455012623010202";
+
+/// Go `soundexMode`: how SOUNDEX reads its argument.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SoundexMode {
+    /// Go `soundexModeRunes`: reads UTF-8 characters; a byte that is not
+    /// valid UTF-8 is a single-byte character.
+    Runes,
+    /// Go `soundexModeLatin1`: reads every byte as a Latin-1 character.
+    Latin1,
+    /// Go `soundexModeBinary`: reads every byte, and only ASCII letters are
+    /// letters.
+    Binary,
+}
+
+/// Go `soundexModeOf`.
+pub(crate) fn soundex_mode_of(tp: &tidb_datatype::FieldType) -> SoundexMode {
+    if crate::builtin_control::is_binary_str(tp) {
+        SoundexMode::Binary
+    } else if tp.charset_name() == "latin1" {
+        SoundexMode::Latin1
+    } else {
+        SoundexMode::Runes
+    }
+}
+
+/// Go `soundex`: the MySQL SOUNDEX string of `s`. Characters that are not
+/// letters are ignored. The first letter is kept (upper cased if it is an
+/// ASCII letter) and every later letter adds its code, unless the code is
+/// '0' or the same as the last added one; a vowel does not separate two
+/// equal codes. The result is padded with '0' to at least four characters,
+/// and is empty when `s` has no letter.
+pub(crate) fn soundex(s: &[u8], mode: SoundexMode) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut n = 0;
+    let mut last = 0u8;
+    // `add` takes one character: `r` is its code point and `b` the byte that
+    // stands for it when it is a single byte of the input (None for a
+    // multibyte UTF-8 character).
+    let mut add = |r: u32, b: Option<u8>| {
+        if !is_soundex_letter(r, mode) {
+            return;
+        }
+        let code = soundex_code(r);
+        if n == 0 {
+            match b {
+                Some(b) => buf.push(b.to_ascii_uppercase()),
+                None => {
+                    let c = char::from_u32(r).expect("a decoded UTF-8 character");
+                    buf.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+                }
+            }
+            n += 1;
+            last = code;
+        } else if code != b'0' && code != last {
+            buf.push(code);
+            n += 1;
+            last = code;
+        }
+    };
+    if mode == SoundexMode::Runes {
+        let mut i = 0;
+        while i < s.len() {
+            let rest = &s[i..];
+            let window = &rest[..rest.len().min(4)];
+            let valid = match std::str::from_utf8(window) {
+                Ok(text) => text,
+                Err(error) => std::str::from_utf8(&window[..error.valid_up_to()]).expect("a valid prefix"),
+            };
+            match valid.chars().next() {
+                // Not valid UTF-8: the byte is a character of its own and is
+                // kept as it is.
+                None => {
+                    add(u32::from(s[i]), Some(s[i]));
+                    i += 1;
+                }
+                Some(c) if c.len_utf8() == 1 => {
+                    add(u32::from(c), Some(s[i]));
+                    i += 1;
+                }
+                Some(c) => {
+                    add(u32::from(c), None);
+                    i += c.len_utf8();
+                }
+            }
+        }
+    } else {
+        for &b in s {
+            add(u32::from(b), Some(b));
+        }
+    }
+    if n == 0 {
+        return Vec::new();
+    }
+    if n < SOUNDEX_MIN_LEN {
+        buf.resize(buf.len() + SOUNDEX_MIN_LEN - n, b'0');
+    }
+    buf
+}
+
+/// Go `isSoundexLetter`: for a UTF-8 string MySQL 8.0 takes every non-ASCII
+/// character from U+00C0 up as a letter (including U+00D7 and U+00F7) and
+/// none below it. For a Latin-1 string it classifies each byte with the
+/// character set's own table ([`is_latin1_letter`]). A byte of a binary
+/// string is a letter only when it is an ASCII letter.
+fn is_soundex_letter(r: u32, mode: SoundexMode) -> bool {
+    if u8::try_from(r).is_ok_and(|b| b.is_ascii_alphabetic()) {
+        return true;
+    }
+    match mode {
+        SoundexMode::Binary => false,
+        SoundexMode::Latin1 => is_latin1_letter(r as u8),
+        SoundexMode::Runes => r >= 0xC0,
+    }
+}
+
+/// Go `isLatin1Letter`: whether `b` is a letter in MySQL's latin1 (cp1252)
+/// character class table, strings/ctype-latin1.cc: the ASCII letters, the
+/// letters 0x83, 0x8A, 0x8C, 0x8E, 0x9A, 0x9C, 0x9E and 0x9F of the 0x80 to
+/// 0x9F block, and 0xC0 to 0xFF except the signs 0xD7 and 0xF7.
+fn is_latin1_letter(b: u8) -> bool {
+    if b.is_ascii_alphabetic() {
+        return true;
+    }
+    if b >= 0xC0 {
+        return b != 0xD7 && b != 0xF7;
+    }
+    matches!(b, 0x83 | 0x8A | 0x8C | 0x8E | 0x9A | 0x9C | 0x9E | 0x9F)
+}
+
+/// Go `soundexCode`.
+fn soundex_code(r: u32) -> u8 {
+    match u8::try_from(r) {
+        Ok(b @ b'a'..=b'z') => SOUNDEX_CODES[usize::from(b - b'a')],
+        Ok(b @ b'A'..=b'Z') => SOUNDEX_CODES[usize::from(b - b'A')],
+        _ => b'0',
+    }
+}
+
 #[cfg(test)]
 mod case_convert_tests {
     use crate::tests::builtin;

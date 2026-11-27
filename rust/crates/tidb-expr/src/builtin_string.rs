@@ -222,6 +222,18 @@ string_class!(
     }
 );
 
+function_class!(
+    /// Go `soundexFunctionClass`.
+    SoundexFunctionClass, String, [String], Unspecified => crate::scalar_function::Kernel::Method(crate::scalar_function::class_kernels::soundex), |bf, _ctx| {
+        let arg_tp = type_of(&bf.args[0]);
+        // The result has at least four characters.
+        if arg_tp.flen() != tidb_datatype::UNSPECIFIED_LENGTH {
+            bf.tp.set_flen(arg_tp.flen().max(4));
+        }
+        set_bin_flag_or_bin_str(&arg_tp, &mut bf.tp);
+    }
+);
+
 string_class!(
     /// Go `reverseFunctionClass`.
     ReverseFunctionClass, |func_name, ctx, args| {

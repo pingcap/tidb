@@ -200,6 +200,7 @@ const NULL_REJECT_NULL_PRESERVING_FUNCTIONS: &[&str] = &[
     "right",
     "rpad",
     "rtrim",
+    "soundex",
     "space",
     "substr",
     "substring",
@@ -1025,6 +1026,9 @@ mod tests {
             tidb_goruntime::go_hex::encode_to_string(&Sha256::digest(joined.as_bytes())),
             "729f5252bcd91efe1a4bbf0c383a36c5a2e52ed2d90d7aab0a3e0b450322294c"
         );
+        // Builtins Go master registers after this branch's Go source was
+        // cut, each ported with its Go master commit: SOUNDEX (7844a33138d).
+        names.extend(["soundex".to_owned()]);
         for name in NULL_REJECT_NULL_PRESERVING_FUNCTIONS {
             assert!(
                 *name == "cast" || names.contains(*name),

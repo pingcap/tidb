@@ -639,3 +639,66 @@ fn a_compare_as_time_extremum_casts_and_warns_like_go() {
         );
     }
 }
+
+/// Go `expression/integration_test` `TestSoundex` (7844a33138d).
+#[test]
+fn test_soundex() {
+    let mut tk = Session::new();
+    let rows = |tk: &mut Session, sql: &str| row_text(tk.run(sql));
+    assert_eq!(
+        rows(&mut tk, "select soundex('Hello'), soundex('Quadratically'), soundex('Tymczak'), soundex('a'), soundex('')"),
+        [["H400", "Q36324", "T520", "A000", ""]]
+    );
+    assert_eq!(rows(&mut tk, "select soundex(null), soundex(12345), soundex('日本語')"), [["NULL", "", "日000"]]);
+    assert_eq!(rows(&mut tk, "select soundex(_binary 'Hello'), hex(soundex(_binary 0xE9616263))"), [["H400", "41313230"]]);
+    assert_eq!(rows(&mut tk, "select charset(soundex('a')), charset(soundex(_binary 'a'))"), [["utf8mb4", "binary"]]);
+
+    // A Latin-1 argument is read byte by byte and its letters are kept as
+    // they are, as MySQL 8.0.46 does.
+    assert_eq!(
+        rows(&mut tk, "select hex(soundex(_latin1 0xE9616263)), hex(soundex(_latin1 0xC3A9616263)), hex(soundex(_latin1 0x61E9626364))"),
+        [["E9313230", "C3313230", "41313233"]]
+    );
+    tk.run("create table l (a varchar(10) character set latin1)").unwrap();
+    tk.run("insert into l values (0xE9616263), (0xC3A9616263), (0x61E9626364), ('abc')").unwrap();
+    assert_eq!(
+        rows(&mut tk, "select hex(soundex(a)) from l order by a"),
+        [["41313230"], ["41313233"], ["C3313230"], ["E9313230"]]
+    );
+
+    // MySQL classifies Latin-1 bytes with its own table: 0xD7 and 0xF7 are
+    // signs, not letters, and 0x8A and 0x9F are letters.
+    assert_eq!(
+        rows(&mut tk, "select hex(soundex(_latin1 0xD7616263)), hex(soundex(_latin1 0xF7616263)), hex(soundex(_latin1 0x8A616263)), hex(soundex(_latin1 0x9F616263)), hex(soundex(_latin1 0x80616263))"),
+        [["41313230", "41313230", "8A313230", "9F313230", "41313230"]]
+    );
+    tk.run("create table l2 (id int primary key, a varchar(10) character set latin1)").unwrap();
+    tk.run("insert into l2 values (1, 0xD7616263), (2, 0xF7616263), (3, 0x8A616263), (4, 0x9F616263), (5, 0xD8616263)").unwrap();
+    assert_eq!(
+        rows(&mut tk, "select id, hex(soundex(a)) from l2 order by id"),
+        [["1", "41313230"], ["2", "41313230"], ["3", "8A313230"], ["4", "9F313230"], ["5", "D8313230"]]
+    );
+
+    // The collation of the result comes from the argument.
+    assert_eq!(
+        rows(&mut tk, "select collation(soundex(_utf8mb4'abc' collate utf8mb4_unicode_ci)), coercibility(soundex(_utf8mb4'abc' collate utf8mb4_unicode_ci))"),
+        [["utf8mb4_unicode_ci", "0"]]
+    );
+    assert_eq!(
+        rows(&mut tk, "select collation(soundex(_latin1'abc')), charset(soundex(_latin1'abc'))"),
+        [["latin1_bin", "latin1"]]
+    );
+
+    tk.run("create table t (id int primary key, a varchar(100) character set utf8 collate utf8_unicode_ci)").unwrap();
+    tk.run("insert into t values (1, 'Test'), (2, 'Text'), (3, 'Other'), (4, null)").unwrap();
+    assert_eq!(rows(&mut tk, "select id from t where soundex(a) = soundex('Test') order by id"), [["1"], ["2"]]);
+    assert_eq!(
+        rows(&mut tk, "select id, soundex(a) from t order by id"),
+        [["1", "T230"], ["2", "T230"], ["3", "O360"], ["4", "NULL"]]
+    );
+    assert_eq!(rows(&mut tk, "select collation(soundex(a)), coercibility(soundex(a)) from t limit 1"), [["utf8_unicode_ci", "2"]]);
+
+    // ErrWrongParamcountToNativeFct.
+    assert_eq!(code(&mut tk, "select soundex()").0, 1582);
+    assert_eq!(code(&mut tk, "select soundex('a', 'b')").0, 1582);
+}

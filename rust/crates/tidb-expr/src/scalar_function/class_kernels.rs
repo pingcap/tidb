@@ -689,3 +689,20 @@ pub(crate) fn password(_function: &ScalarFunction, values: &[Datum], ctx: &dyn C
 pub(crate) fn last_day(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     super::pb_builtin::temporal_of_ret_type(function, crate::time_fn::last_day(values, ctx)?, ctx)
 }
+
+/// Go `builtinSoundexSig.evalString`, reading the argument as Go's
+/// `soundexModeOf` selects from its type.
+pub(crate) fn soundex(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let arg_type = function.args[0].static_type();
+    let value = crate::cast::cast_arg_as_string(&values[0], arg_type, ctx)?;
+    let Some(bytes) = crate::arg_eval_type::eval_string_bytes(&value)? else {
+        return Ok(Datum::Null);
+    };
+    let mode = arg_type.map_or(crate::string_fn::SoundexMode::Runes, crate::string_fn::soundex_mode_of);
+    let code = crate::string_fn::soundex(bytes, mode);
+    Ok(if mode == crate::string_fn::SoundexMode::Binary {
+        Datum::new_bytes_datum(code)
+    } else {
+        Datum::new_string_datum(code)
+    })
+}

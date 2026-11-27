@@ -293,6 +293,7 @@ static FUNCTION_CLASSES: &[(&str, usize, Option<usize>)] = &[
     ("sin", 1, Some(1)),
     ("sleep", 1, Some(1)),
     ("sm3", 1, Some(1)),
+    ("soundex", 1, Some(1)),
     ("space", 1, Some(1)),
     ("sqrt", 1, Some(1)),
     ("str_to_date", 2, Some(2)),

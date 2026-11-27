@@ -566,7 +566,7 @@ pub(crate) fn derive_collation_with_arg_tps(
     match func_name {
         // Aggregate over ALL arguments, string in / string out.
         "concat" | "concat_ws" | "lower" | "lcase" | "reverse" | "upper" | "ucase" | "quote"
-        | "coalesce" | "greatest" | "least" => {
+        | "soundex" | "coalesce" | "greatest" | "least" => {
             check_and_derive_collation_from_exprs_with_connection(
                 func_name, ret_type, args, connection,
             )

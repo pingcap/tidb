@@ -2619,3 +2619,83 @@ fn hex_and_bit_literals_are_binary_literals_in_a_numeric_context() {
     assert_eq!(e("-0x1A"), "FLOAT:-26");
     assert_eq!(chunk_e("-0x1A"), "FLOAT:-26");
 }
+
+/// `pkg/expression/builtin_string_test.go` `TestSoundex` (7844a33138d). The
+/// expected values are what MySQL 8.0.46 returns.
+#[test]
+fn test_soundex() {
+    use string_fn::{soundex, SoundexMode};
+    assert_eq!(e("soundex(null)"), "NULL");
+    assert_eq!(e("soundex('Hello')"), "STR:H400");
+    assert_eq!(e("soundex(12345)"), "STR:");
+    let text = |s: &str| String::from_utf8(soundex(s.as_bytes(), SoundexMode::Runes)).unwrap();
+    for (input, expect) in [
+        ("Hello", "H400"),
+        ("Quadratically", "Q36324"),
+        ("Ashcraft", "A2613"),
+        ("Tymczak", "T520"),
+        ("Pfister", "P236"),
+        ("Robert", "R163"),
+        ("Rupert", "R163"),
+        ("Wright", "W623"),
+        ("Rodgers", "R3262"),
+        ("Jackson", "J500"),
+        ("Supercalifragilisticexpialidocious", "S162416242321432"),
+        // a vowel, H or W does not separate equal codes
+        ("Bab", "B000"),
+        ("Bbb", "B000"),
+        ("Ahw", "A000"),
+        // a result has at least four characters
+        ("a", "A000"),
+        ("b", "B000"),
+        ("Abcd", "A123"),
+        ("Abcdefg", "A12312"),
+        // characters that are not letters are skipped, the first letter is upper cased
+        ("", ""),
+        ("12345", ""),
+        ("-", ""),
+        ("  1-ab", "A100"),
+        ("0abc", "A120"),
+        ("a b c", "A120"),
+        ("a-", "A000"),
+        ("Jack Daniels", "J3542"),
+        ("hëllo wörld", "H4643"),
+        // non ASCII letters keep their case, characters above U+00FF are all letters
+        ("Ünïcode", "Ü523"),
+        ("éa", "é000"),
+        ("aé", "A000"),
+        ("ßa", "ß000"),
+        ("日本語", "日000"),
+        ("€abc", "€120"),
+        ("\u{1F600}abc", "\u{1F600}120"),
+        ("١abc", "١120"),
+        ("²abc", "A120"),
+        // U+00C0 is the boundary: U+00D7 and U+00F7 are letters, U+00AA, U+00B5 and U+00BA are not
+        ("×abc", "×120"),
+        ("÷abc", "÷120"),
+        ("ÿabc", "ÿ120"),
+        ("ªabc", "A120"),
+        ("µabc", "A120"),
+        ("ºabc", "A120"),
+    ] {
+        assert_eq!(text(input), expect, "{input}");
+    }
+    // only the ASCII letters of a binary string are letters
+    for (input, expect) in [
+        (&b"Hello"[..], &b"H400"[..]),
+        (&[0xC3, 0xA9, b'a', b'b', b'c'], b"A120"),
+        (&[0xE9, b'a', b'b', b'c'], b"A120"),
+        (&[0x80], b""),
+    ] {
+        assert_eq!(soundex(input, SoundexMode::Binary), expect, "{input:?}");
+    }
+
+    // A Latin-1 string is classified byte by byte with MySQL 8.0.46's latin1
+    // table (strings/ctype-latin1.cc). A letter is kept as it is and has
+    // code '0'; any other byte is skipped, so "abc" gives A120.
+    let latin1_letter = |b: u8| matches!(b, 0x83 | 0x8A | 0x8C | 0x8E | 0x9A | 0x9C | 0x9E | 0x9F) || (b >= 0xC0 && b != 0xD7 && b != 0xF7);
+    for b in 0x80..=0xFFu8 {
+        let expect = if latin1_letter(b) { vec![b, b'1', b'2', b'0'] } else { b"A120".to_vec() };
+        assert_eq!(soundex(&[b, b'a', b'b', b'c'], SoundexMode::Latin1), expect, "latin1 byte {b:#x}");
+    }
+}

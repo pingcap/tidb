@@ -374,6 +374,7 @@ pub fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
         "replace" => &s::ReplaceFunctionClass { func_name: "replace" },
         "reverse" => &s::ReverseFunctionClass { func_name: "reverse" },
         "right" => &s::RightFunctionClass { func_name: "right" },
+        "soundex" => &s::SoundexFunctionClass { func_name: "soundex" },
         "rtrim" => &s::RTrimFunctionClass { func_name: "rtrim" },
         "rpad" => &s::RpadFunctionClass { func_name: "rpad" },
         "space" => &s::SpaceFunctionClass { func_name: "space" },
