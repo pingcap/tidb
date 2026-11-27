@@ -68,9 +68,14 @@ go_test(
     srcs = ["info_test.go"],
     embed = [":infosync"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 3,
+=======
+    shard_count = 10,
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
     deps = [
         "//pkg/ddl/placement",
+        "//pkg/domain/affinity",
         "//pkg/domain/serverinfo",
         "//pkg/keyspace",
         "//pkg/meta/model",
@@ -78,6 +83,12 @@ go_test(
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+<<<<<<< HEAD
+=======
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//servicediscovery",
+>>>>>>> 727915525b9 (*: fix affinity group creation and SHOW AFFINITY (#73804))
         "@org_uber_go_goleak//:goleak",
     ],
 )

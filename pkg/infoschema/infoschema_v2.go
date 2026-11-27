@@ -1746,44 +1746,30 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 
 func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter infoschemacontext.SpecialAttributeFilter) []infoschemacontext.TableInfoResult {
 	ret := make([]infoschemacontext.TableInfoResult, 0, 10)
-	var currDB string
+	var lastDB string
 	var lastTableID int64
-	var res infoschemacontext.TableInfoResult
 	is.Data.tableInfoResident.Load().Descend(func(item tableInfoItem) bool {
 		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
-			// Skip the versions that we are not looking for.
 			return true
 		}
-		// Dedup the same record of different versions.
-		if lastTableID != 0 && lastTableID == item.tableID {
+		// The old database's tombstone after a cross-database rename
+		// only hides earlier versions in that database.
+		if lastTableID == item.tableID && lastDB == item.dbName.L {
 			return true
 		}
-		lastTableID = item.tableID
+		lastDB, lastTableID = item.dbName.L, item.tableID
 
-		if item.tomb {
-			return true
-		}
-
-		if !filter(item.tableInfo) {
+		if item.tomb || !filter(item.tableInfo) {
 			return true
 		}
 
-		if currDB == "" {
-			currDB = item.dbName.L
-			res = infoschemacontext.TableInfoResult{DBName: item.dbName}
-			res.TableInfos = append(res.TableInfos, item.tableInfo)
-		} else if currDB == item.dbName.L {
-			res.TableInfos = append(res.TableInfos, item.tableInfo)
-		} else {
-			ret = append(ret, res)
-			res = infoschemacontext.TableInfoResult{DBName: item.dbName}
-			res.TableInfos = append(res.TableInfos, item.tableInfo)
+		if len(ret) == 0 || ret[len(ret)-1].DBName.L != item.dbName.L {
+			ret = append(ret, infoschemacontext.TableInfoResult{DBName: item.dbName})
 		}
+		result := &ret[len(ret)-1]
+		result.TableInfos = append(result.TableInfos, item.tableInfo)
 		return true
 	})
-	if len(res.TableInfos) > 0 {
-		ret = append(ret, res)
-	}
 	return ret
 }
 
