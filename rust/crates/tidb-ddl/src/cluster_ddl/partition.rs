@@ -1191,7 +1191,9 @@ pub(super) fn on_truncate_table_partition(
             DdlPlanError::Encode("len(oldIDs) must be the same as len(newIDs)".to_owned()),
         ));
     }
-    let info = checked_job_table(txn, active, true)?.read().clone_like_go();
+    // Go `GetTableInfoAndCancelFaultJob`: the decoded table itself, not a
+    // `Clone` (which would turn its nil definition lists into empty ones).
+    let info = checked_job_table(txn, active, true)?.read().clone();
     let Some(partition) = info.partition.clone() else {
         return Err(fault(
             active,
@@ -1201,14 +1203,48 @@ pub(super) fn on_truncate_table_partition(
             )),
         ));
     };
+    if active.job.is_rollingback() {
+        return convert_truncate_table_partition_job2_rollback_job(
+            txn,
+            active,
+            &info,
+            start_ts,
+            cancelled_ddl_job_error(),
+        );
+    }
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/truncatePartCancel1").is_some_and(|val| val.bool()) {
+        return Err(cancel_ddl_job(
+            active,
+            DdlPlanError::Encode("Injected error by truncatePartCancel1".to_owned()),
+        ));
+    }
     let database_id = active.job.schema_id;
     let schema = active.job.schema_name.to_string();
     match active.job.schema_state {
         SchemaState::PUBLIC => {
-            // Global-index reads skip entries of the new partitions.
+            // A queued job can still reference partitions a previous DDL has
+            // replaced.
+            let mut definitions = partition.read().definitions.snapshot();
+            let (_, replacements) = replace_truncate_partitions(&mut definitions, &old_ids, &new_ids);
+            // Prepare the replacement groups while cancellation is still
+            // safe: publishing new partition ids before this succeeds can
+            // lose data if a later PD failure cancels the job instead of
+            // finishing the truncate.
+            if info.affinity.is_some() && !replacements.is_empty() {
+                if let Err(error) = crate::ddl_affinity::create_table_affinity_groups_in_pd(&info, &replacements) {
+                    return convert_truncate_table_partition_job2_rollback_job(
+                        txn,
+                        active,
+                        &info,
+                        start_ts,
+                        pd_step_error(None, error),
+                    );
+                }
+            }
+            // `IDsInDDLToIgnore` uses these ids to filter global index entries.
             {
                 let mut partition = partition.write();
-                partition.new_partition_ids = new_ids.into();
+                partition.new_partition_ids = get_partition_ids_from_definitions(&replacements).into();
                 partition.ddl_action = ActionType::ACTION_TRUNCATE_TABLE_PARTITION;
                 partition.ddl_state = SchemaState::WRITE_ONLY;
             }
@@ -1217,57 +1253,45 @@ pub(super) fn on_truncate_table_partition(
             Ok(action_step(write))
         }
         SchemaState::WRITE_ONLY => {
+            // Still reversible: nothing writes to the new partitions yet.
             let before = info.clone_like_go();
-            // `replaceTruncatePartitions`: the partitions take their new ids.
-            let mut old_definitions = Vec::new();
-            let mut new_definitions = Vec::new();
-            {
+            let (old_definitions, new_definitions) = {
                 let partition = partition.read();
-                for (old_id, new_id) in old_ids.iter().zip(&new_ids) {
-                    if let Some(position) = partition
-                        .definitions
-                        .snapshot()
-                        .iter()
-                        .position(|definition| definition.id == *old_id)
-                    {
-                        let mut new_definition = None;
-                        partition.definitions.update(position, |definition| {
-                            old_definitions.push(definition.clone_like_go());
-                            definition.id = *new_id;
-                            new_definition = Some(definition.clone_like_go());
-                        });
-                        new_definitions.extend(new_definition);
-                    }
+                let mut definitions = partition.definitions.snapshot();
+                let replaced = replace_truncate_partitions(&mut definitions, &old_ids, &new_ids);
+                for (ordinal, definition) in definitions.into_iter().enumerate() {
+                    partition.definitions.update(ordinal, |current| current.id = definition.id);
                 }
-            }
-            // `clearTruncatePartitionTiflashStatus`: the new partitions'
-            // TiFlash PD rules first; a refusal fails the step.
-            if let Some((count, labels)) = tiflash_replica_spec(&info) {
-                configure_tiflash_pd_for_partitions(true, &new_definitions, count, &labels, info.id)?;
-            }
-            if let Some(replica) = &info.tiflash_replica {
-                replica.write().available = false;
-                remove_tiflash_available_partition_ids(&info, &old_ids);
-            }
-            // `updateTruncatePartitionLabelRules`.
-            let policies = load_policies(txn)?;
-            let mut bundles =
-                tidb_placement::new_partition_list_bundles(&policies, &new_definitions)
-                    .map_err(bundle_error)?;
-            bundles.extend(table_bundle(txn, &info)?);
-            bundles.extend(dropped_partition_bundles(
-                txn,
-                &info,
-                &old_definitions,
-            )?);
+                replaced
+            };
+            let mut bundles = Vec::new();
             let mut label_rules = LabelRuleSteps::new();
-            label_rules.partition(
-                &schema,
-                &before,
-                &info,
-                label_rules::PartitionLabelJob::Truncate,
-            )?;
-            // Global-index reads skip entries of the old partitions now.
+            if !new_definitions.is_empty() {
+                clear_truncate_partition_tiflash_status(
+                    &info,
+                    &new_definitions,
+                    &get_partition_ids_from_definitions(&old_definitions),
+                )?;
+                // `publishTruncatePartitionPlacementBundles`.
+                let policies = load_policies(txn)?;
+                bundles = tidb_placement::new_partition_list_bundles(&policies, &new_definitions)
+                    .map_err(bundle_error)?;
+                bundles.extend(table_bundle(txn, &info)?);
+                bundles.extend(dropped_partition_bundles(txn, &info, &old_definitions)?);
+                // `updateTruncatePartitionLabelRules`.
+                label_rules.partition(
+                    &schema,
+                    &before,
+                    &info,
+                    label_rules::PartitionLabelJob::Truncate,
+                )?;
+            }
+            if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/truncatePartFail1").is_some_and(|val| val.bool()) {
+                active.job.error_count += tidb_vardef::ddl_error_count_limit() / 2;
+                return Err(DdlPlanError::Encode("Injected error by truncatePartFail1".to_owned()));
+            }
+            // Global-index reads skip entries of the old partitions now; the
+            // new ones no longer need filtering.
             {
                 let mut partition = partition.write();
                 partition.dropping_definitions = old_definitions.into();
@@ -1286,22 +1310,35 @@ pub(super) fn on_truncate_table_partition(
             Ok(action_step(write))
         }
         SchemaState::DELETE_REORGANIZATION => {
-            if let Some(step) = clean_global_index_entries_from_dropped_partitions(
-                txn,
-                active,
-                &table_info_with_dropping_partitions(&info),
-                &old_ids,
-                reorg_outcome,
-            )? {
-                return Ok(step);
-            }
+            // The old partitions are no longer accessible but still referenced
+            // by the global indexes: clear them.
             let old_definitions = partition.read().dropping_definitions.snapshot();
+            let dropped_ids = get_partition_ids_from_definitions(&old_definitions);
+            if !dropped_ids.is_empty() {
+                if let Some(step) = clean_global_index_entries_from_dropped_partitions(
+                    txn,
+                    active,
+                    &table_info_with_dropping_partitions(&info),
+                    &dropped_ids,
+                    reorg_outcome,
+                )? {
+                    return Ok(step);
+                }
+            }
+            if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/truncatePartFail2").is_some_and(|val| val.bool()) {
+                active.job.error_count += tidb_vardef::ddl_error_count_limit() / 2;
+                return Err(DdlPlanError::Encode("Injected error by truncatePartFail2".to_owned()));
+            }
+            // The dropping definitions hold only the partitions replaced at
+            // write-only; their replacements are found by old id, because
+            // the queued ids can be stale.
+            let new_id_by_old_id: std::collections::HashMap<i64, i64> =
+                old_ids.iter().copied().zip(new_ids.iter().copied()).collect();
             let new_definitions = old_definitions
                 .iter()
-                .zip(&new_ids)
-                .map(|(definition, new_id)| {
+                .map(|definition| {
                     let mut definition = definition.clone_like_go();
-                    definition.id = *new_id;
+                    definition.id = new_id_by_old_id.get(&definition.id).copied().unwrap_or_default();
                     definition
                 })
                 .collect::<Vec<_>>();
@@ -1312,19 +1349,39 @@ pub(super) fn on_truncate_table_partition(
                 partition.ddl_state = SchemaState::NONE;
                 partition.ddl_action = ActionType::ACTION_NONE;
             }
-            // The new partitions' affinity groups first (critical), then the
-            // old ones', best effort.
-            let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
+            // Also prepare the groups for jobs an older version started. The
+            // replacement is already visible, so a failure retries rather
+            // than cancels and leaves the partition metadata unfinished.
             if info.affinity.is_some() {
-                affinity_groups
-                    .create_table_affinity_groups_in_pd(&info)
-                    .map_err(|error| cancel_ddl_job(active, pd_step_error(None, error)))?;
-                affinity_groups.delete_table_affinity_groups_in_pd(&info, Some(&old_definitions));
+                crate::ddl_affinity::create_table_affinity_groups_in_pd(&info, &[])
+                    .map_err(|error| pd_step_error(None, error))?;
+            }
+            // The old groups, best effort.
+            if info.affinity.is_some() && !old_definitions.is_empty() {
+                if let Err(error) =
+                    crate::ddl_affinity::delete_table_affinity_groups_in_pd(&info, Some(&old_definitions))
+                {
+                    tidb_ddl_logutil::ddl_logger().error(
+                        "failed to delete old partition affinity groups from PD",
+                        &[
+                            tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+                            tidb_log::Field::new("tableID", tidb_log::Value::I64(info.id)),
+                        ],
+                    );
+                }
+            }
+            if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/truncatePartFail3").is_some_and(|val| val.bool()) {
+                active.job.error_count += tidb_vardef::ddl_error_count_limit() / 2;
+                return Err(DdlPlanError::Encode("Injected error by truncatePartFail3".to_owned()));
             }
             active.job.schema_state = SchemaState::NONE;
             // `SetSchemaDiffForTruncateTablePartition` with
-            // `ShouldUpdateAffectedPartitions`.
-            let affects = build_placement_affects(&old_ids, &new_ids);
+            // `ShouldUpdateAffectedPartitions`, over the matched pairs; the
+            // queued arguments stay for retries.
+            let affects = build_placement_affects(
+                &dropped_ids,
+                &get_partition_ids_from_definitions(&new_definitions),
+            );
             let mut write = table_step_with_diff(txn,
                 active,
                 database_id,
@@ -1354,14 +1411,157 @@ pub(super) fn on_truncate_table_partition(
             active
                 .job
                 .fill_finished_args(Some(GoShared::new(tidb_model::TruncateTableArgs {
-                    old_partition_ids: GoField::new(GoSharedSlice::from_vec(old_ids)),
+                    old_partition_ids: GoField::new(GoSharedSlice::from_vec(dropped_ids)),
                     ..tidb_model::TruncateTableArgs::default()
                 })));
-            write.affinity_groups = affinity_groups;
             Ok(action_step(write))
         }
         state => Err(invalid_partition_state(state)),
     }
+}
+
+/// Go `replaceTruncatePartitions`: each old id's definition takes its new
+/// id; returns the replaced definitions as they were and as they are.
+fn replace_truncate_partitions(
+    definitions: &mut [tidb_model::PartitionDefinition],
+    old_ids: &[i64],
+    new_ids: &[i64],
+) -> (Vec<tidb_model::PartitionDefinition>, Vec<tidb_model::PartitionDefinition>) {
+    let mut old_definitions = Vec::with_capacity(old_ids.len());
+    let mut new_definitions = Vec::with_capacity(old_ids.len());
+    for (old_id, new_id) in old_ids.iter().zip(new_ids) {
+        if let Some(definition) = definitions.iter_mut().find(|definition| definition.id == *old_id) {
+            old_definitions.push(definition.clone_like_go());
+            definition.id = *new_id;
+            new_definitions.push(definition.clone_like_go());
+        }
+    }
+    (old_definitions, new_definitions)
+}
+
+/// Go `getPartitionIDsFromDefinitions`.
+fn get_partition_ids_from_definitions(definitions: &[tidb_model::PartitionDefinition]) -> Vec<i64> {
+    definitions.iter().map(|definition| definition.id).collect()
+}
+
+/// Go `clearTruncatePartitionTiflashStatus`: the new partitions' TiFlash PD
+/// rules first, a refusal failing the step; then the replica is not
+/// available and the old partitions leave its available list.
+fn clear_truncate_partition_tiflash_status(
+    info: &TableInfo,
+    new_partitions: &[tidb_model::PartitionDefinition],
+    old_ids: &[i64],
+) -> Result<(), DdlPlanError> {
+    let Some((count, labels)) = tiflash_replica_spec(info) else {
+        return Ok(());
+    };
+    let mut result = configure_tiflash_pd_for_partitions(true, new_partitions, count, &labels, info.id);
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/FailTiFlashTruncatePartition").is_some() {
+        result = Err(DdlPlanError::Encode("enforced error".to_owned()));
+    }
+    if let Err(error) = result {
+        tidb_ddl_logutil::ddl_logger().error(
+            "ConfigureTiFlashPDForPartitions fails",
+            &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
+        );
+        return Err(error);
+    }
+    if let Some(replica) = &info.tiflash_replica {
+        replica.write().available = false;
+    }
+    // Set partition replica become unavailable.
+    remove_tiflash_available_partition_ids(info, old_ids);
+    Ok(())
+}
+
+/// Go `rollingbackTruncateTablePartition`.
+pub(super) fn rollingback_truncate_table_partition(
+    txn: &mut JobTxn<'_>,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    // Go `GetTableInfoAndCancelFaultJob`, without a `Clone`.
+    let info = checked_job_table(txn, active, true)?.read().clone();
+    if info.partition.is_none() {
+        return Err(cancelled_ddl_job(active));
+    }
+    convert_truncate_table_partition_job2_rollback_job(txn, active, &info, start_ts, cancelled_ddl_job_error())
+}
+
+/// Go `convertTruncateTablePartitionJob2RollbackJob`.
+fn convert_truncate_table_partition_job2_rollback_job(
+    txn: &mut JobTxn<'_>,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    info: &TableInfo,
+    start_ts: u64,
+    otherwise_err: DdlPlanError,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    // Past write-only the new partitions may hold rows, which a rollback
+    // would lose: roll on.
+    if !active.job.is_rollbackable() {
+        active.job.state = JobState::RUNNING;
+        return Ok(job_control_step(&active.job));
+    }
+    let partition = info.partition.clone().expect("a partitioned table");
+    if info
+        .affinity
+        .as_ref()
+        .is_some_and(|affinity| affinity.read().level == "partition")
+    {
+        // PD may have created groups before the replacement ids reached the
+        // table metadata.
+        let delete_err = match tidb_model::get_truncate_table_args(&mut active.job) {
+            Ok(Some(args)) => {
+                let new_ids = args.read().new_partition_ids.get().snapshot();
+                if new_ids.is_empty() {
+                    None
+                } else {
+                    crate::ddl_affinity::delete_table_affinity_groups_with_timeout(
+                        info,
+                        Some(&crate::ddl_affinity::partition_definitions_from_ids(&new_ids)),
+                    )
+                    .err()
+                }
+            }
+            Ok(None) => None,
+            Err(error) => Some(error.to_string()),
+        };
+        if let Some(error) = delete_err {
+            tidb_ddl_logutil::ddl_logger().warn(
+                "failed to delete replacement partition affinity groups during rollback",
+                &[
+                    tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+                    tidb_log::Field::new("tableID", tidb_log::Value::I64(info.id)),
+                ],
+            );
+        }
+    }
+    let changed = {
+        let partition = partition.read();
+        partition.new_partition_ids.len() != 0
+            || partition.ddl_action != ActionType::ACTION_NONE
+            || partition.ddl_state != SchemaState::NONE
+    };
+    if changed {
+        // Only metadata to undo, since no new partition was used yet.
+        {
+            let mut partition = partition.write();
+            partition.new_partition_ids = Vec::new().into();
+            partition.ddl_action = ActionType::ACTION_NONE;
+            partition.ddl_state = SchemaState::NONE;
+        }
+        let write = update_version_and_table_info(txn, active, active.job.schema_id, info, true, start_ts)?;
+        return Ok(action_step(write));
+    }
+    // No change yet: cancel the job.
+    Err(cancel_ddl_job(active, otherwise_err))
+}
+
+/// Go `dbterror.ErrCancelledDDLJob`.
+fn cancelled_ddl_job_error() -> DdlPlanError {
+    DdlPlanError::from(
+        tidb_dbterror::ERR_CANCELLED_DDL_JOB.generate(tidb_errno::errname::ErrCancelledDDLJob.raw),
+    )
 }
 
 /// Go `tiflashCheckTiDBHTTPAPIHalfInterval`.
@@ -1497,8 +1697,7 @@ fn convert_add_table_partition_job2_rollback_job(
     })
 }
 
-/// Go `rollingbackAddTablePartition`, `rollingbackDropTablePartition` and
-/// `rollingbackTruncateTablePartition` (`convertTruncateTablePartitionJob2RollbackJob`).
+/// Go `rollingbackAddTablePartition` and `rollingbackDropTablePartition`.
 pub(super) fn rollingback_add_table_partition(
     txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
@@ -1536,37 +1735,8 @@ pub(super) fn rollingback_add_table_partition(
             active.job.state = JobState::RUNNING;
             Ok(job_control_step(&active.job))
         }
-        _ => {
-            // Past write-only the new partitions may hold rows: roll on.
-            if !matches!(
-                active.job.schema_state,
-                SchemaState::PUBLIC | SchemaState::WRITE_ONLY
-            ) {
-                active.job.state = JobState::RUNNING;
-                return Ok(job_control_step(&active.job));
-            }
-            let Some(partition) = info.partition.clone() else {
-                return Err(cancelled_ddl_job(active));
-            };
-            let changed = {
-                let partition = partition.read();
-                partition.new_partition_ids.len() != 0
-                    || partition.ddl_action != ActionType::ACTION_NONE
-                    || partition.ddl_state != SchemaState::NONE
-            };
-            if !changed {
-                return Err(cancelled_ddl_job(active));
-            }
-            // Only metadata to undo: no new partition was used yet. The job
-            // stays cancelling and is cancelled at its next visit.
-            {
-                let mut partition = partition.write();
-                partition.new_partition_ids = Vec::new().into();
-                partition.ddl_action = ActionType::ACTION_NONE;
-                partition.ddl_state = SchemaState::NONE;
-            }
-            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
-            Ok(action_step(write))
-        }
+        // Go `rollingbackTruncateTablePartition`; the job stays cancelling
+        // after a metadata undo and is cancelled at its next visit.
+        action => unreachable!("{action} is not an add or drop partition job"),
     }
 }

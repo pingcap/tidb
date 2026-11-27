@@ -1083,7 +1083,11 @@ pub(super) fn table_step_with_diff(
                 | ActionType::ACTION_RENAME_TABLES
                 | ActionType::ACTION_EXCHANGE_TABLE_PARTITION
         );
-    let mut info = info.clone_like_go();
+    // Go `updateTable` stores the handler's table itself; a Go `Clone` here
+    // would persist its nil definition lists as empty ones. Only the
+    // top-level `UpdateTS` and `Revision` change, so a shallow copy keeps the
+    // caller's table as it was.
+    let mut info = info.clone();
     if need_update_ts {
         info.update_ts = start_ts;
     }

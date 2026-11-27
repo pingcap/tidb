@@ -103,6 +103,7 @@ mod mpp_to_pb;
 mod mpp_execution;
 mod transaction_tests;
 mod ddl_tests;
+mod affinity_tests;
 mod index_tests;
 mod plan_tests;
 mod statistics_tests;

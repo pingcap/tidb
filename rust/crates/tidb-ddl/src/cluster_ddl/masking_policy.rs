@@ -292,6 +292,9 @@ fn insert_masking_policy_into_sys_table(
     txn: &JobTxn<'_>,
     policy: &mut MaskingPolicyInfo,
 ) -> Result<(), MysqlError> {
+    // Go: the internal SQL can flush earlier step writes; any later error
+    // discards the whole step.
+    txn.set_must_rollback_txn_on_error();
     const INSERT_SQL: &str = "INSERT INTO mysql.tidb_masking_policy \
         (policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by) \
         VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)";
@@ -333,6 +336,9 @@ fn update_masking_policy_in_sys_table(
     txn: &JobTxn<'_>,
     policy: &MaskingPolicyInfo,
 ) -> Result<(), MysqlError> {
+    // Go: the internal SQL can flush earlier step writes; any later error
+    // discards the whole step.
+    txn.set_must_rollback_txn_on_error();
     const UPDATE_SQL: &str = "UPDATE mysql.tidb_masking_policy \
         SET policy_name = %?, db_name = %?, table_name = %?, table_id = %?, column_name = %?, column_id = %?, \
         expression = %?, status = %?, masking_type = %?, restrict_on = %?, updated_at = %? \
@@ -372,6 +378,9 @@ pub fn masking_policy_restrict_ops_to_string(ops: MaskingPolicyRestrictOps) -> S
 
 /// Go `deleteMaskingPolicyFromSysTable`.
 fn delete_masking_policy_from_sys_table(txn: &JobTxn<'_>, policy_id: i64) -> Result<(), MysqlError> {
+    // Go: the internal SQL can flush earlier step writes; any later error
+    // discards the whole step.
+    txn.set_must_rollback_txn_on_error();
     execute(
         txn,
         "DELETE FROM mysql.tidb_masking_policy WHERE policy_id = %?",
@@ -429,6 +438,9 @@ pub(super) fn drop_masking_policies_by_db_name(
     txn: &JobTxn<'_>,
     db_name: &str,
 ) -> Result<(), MysqlError> {
+    // Go: the internal SQL can flush earlier step writes; any later error
+    // discards the whole step.
+    txn.set_must_rollback_txn_on_error();
     match txn.execute(
         "DELETE FROM mysql.tidb_masking_policy WHERE db_name = %?",
         "drop-masking-policies-by-db",
@@ -445,6 +457,9 @@ pub(super) fn update_masking_policy_table_id_after_truncate(
     old_table_id: i64,
     new_table_id: i64,
 ) -> Result<(), DdlPlanError> {
+    // Go master: internal SQL can flush the old table's deletion into the DDL
+    // transaction; any later error, including cancellation, discards the step.
+    txn.set_must_rollback_txn_on_error();
     let Some(policies) = policies_of_hook(txn, |txn| {
         get_masking_policies_by_table_id_from_sys_table(txn, old_table_id)
     })?
@@ -513,6 +528,8 @@ pub(super) fn update_masking_policy_names_after_rename(
         {
             continue;
         }
+        // Go `updateMaskingPolicyNamesInSysTable`.
+        txn.set_must_rollback_txn_on_error();
         execute(
             txn,
             UPDATE_SQL,

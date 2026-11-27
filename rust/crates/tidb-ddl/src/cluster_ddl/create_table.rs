@@ -118,7 +118,6 @@ pub(super) fn create_table(
     fk_check: bool,
     start_ts: u64,
     placement_bundles: &mut Vec<tidb_placement::Bundle>,
-    affinity_groups: &mut crate::ddl_affinity::AffinityGroupUpdate,
 ) -> Result<(), DdlPlanError> {
     let database_id = database.read().id;
     let schema = database.read().name.original().to_owned();
@@ -181,7 +180,7 @@ pub(super) fn create_table(
         }
     }
     info.state = SchemaState::PUBLIC;
-    apply_create_table(txn, database_id, info, start_ts, placement_bundles, affinity_groups)
+    apply_create_table(txn, database_id, info, start_ts, placement_bundles)
         .map_err(|error| cancel_ddl_job(active, error))
 }
 
@@ -229,7 +228,6 @@ pub(super) fn on_create_table(
     let has_foreign_keys = !info.foreign_keys.is_empty();
     let mut mutations = Vec::new();
     let mut placement_bundles = Vec::new();
-    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     let finished = match info.state {
         SchemaState::NONE | SchemaState::PUBLIC => {
             create_table(
@@ -241,7 +239,6 @@ pub(super) fn on_create_table(
                 fk_check,
                 start_ts,
                 &mut placement_bundles,
-                &mut affinity_groups,
             )?;
             // Go `createTableWithForeignKeys`: the table goes delete-only
             // first (`updateVersionAndTableInfo`, whose version is the one
@@ -304,7 +301,6 @@ pub(super) fn on_create_table(
     write.diff = diff;
     write.created_id = Some(info.id);
     write.placement_bundles = placement_bundles;
-    write.affinity_groups = affinity_groups;
     Ok(PersistedDdlActionStep {
         write,
         update_raw_args: true,

@@ -457,7 +457,36 @@ pub fn create_groups_if_not_exists(groups: &AffinityGroups) -> Result<(), PdHttp
     if groups.is_empty() {
         return Ok(());
     }
-    manager().create_affinity_groups_if_not_exists(groups)
+    retry_transient_error(
+        || manager().create_affinity_groups_if_not_exists(groups),
+        is_retryable_error,
+    )
+}
+
+/// Go `retryTransientError`: retries an idempotent PD request on a
+/// retryable error; `MAX_RETRY_TIMES` counts retries after the first
+/// request. Go's context checks have no counterpart: these PD calls take
+/// none.
+fn retry_transient_error(
+    mut operation: impl FnMut() -> Result<(), PdHttpError>,
+    is_retryable: impl Fn(&PdHttpError) -> bool,
+) -> Result<(), PdHttpError> {
+    let mut attempt = 0;
+    loop {
+        match operation() {
+            Ok(()) => return Ok(()),
+            Err(error) if !is_retryable(&error) || attempt == MAX_RETRY_TIMES => return Err(error),
+            Err(_) => {
+                std::thread::sleep(RETRY_INTERVAL);
+                attempt += 1;
+            }
+        }
+    }
+}
+
+/// Go `isRetryableError`: an error without an HTTP status, or a 5xx.
+fn is_retryable_error(error: &PdHttpError) -> bool {
+    extract_pd_http_status_code(error).is_none_or(|code| code >= 500)
 }
 
 /// Go `DeleteGroups`: removes the groups with `force=true`.
@@ -865,5 +894,67 @@ mod tests {
     #[test]
     fn query_escape_matches_go() {
         assert_eq!(query_escape("a b/c~d_e.f-g"), "a+b%2Fc~d_e.f-g");
+    }
+
+    /// Go `interface_test.go`'s `retryAffinityManager`: every create and
+    /// delete answers the next scripted error, then success.
+    struct RetryAffinityManager {
+        errs: Vec<PdHttpError>,
+        calls: Mutex<usize>,
+    }
+
+    impl Manager for RetryAffinityManager {
+        fn create_affinity_groups_if_not_exists(&self, _: &AffinityGroups) -> Result<(), PdHttpError> {
+            self.delete_affinity_groups(&[])
+        }
+        fn delete_affinity_groups(&self, _: &[String]) -> Result<(), PdHttpError> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            match self.errs.get(*calls - 1) {
+                Some(error) => Err(error.clone()),
+                None => Ok(()),
+            }
+        }
+        fn get_affinity_groups(&self, _: &[String]) -> Result<AffinityGroupStates, PdHttpError> {
+            Ok(AffinityGroupStates::new())
+        }
+    }
+
+    /// Go `TestAffinityRetryNilContext`.
+    #[test]
+    fn test_affinity_retry_nil_context() {
+        init_manager(None);
+        create_groups_if_not_exists(&groups(&[("g1", range("a", "b"))])).unwrap();
+        delete_groups_with_retry(&["g1".to_owned()]).unwrap();
+    }
+
+    /// Go `TestAffinityCreateRetry`.
+    #[test]
+    fn test_affinity_create_retry() {
+        let first = groups(&[("g1", range("a", "b"))]);
+        for (name, errs, expected_calls) in [
+            ("503_then_success", vec![pd_status_err(503, "Service Unavailable")], 2),
+            ("network_then_success", vec![PdHttpError::Message("connection reset".to_owned())], 2),
+            ("client_error", vec![pd_status_err(400, "Bad Request")], 1),
+            ("retry_limit", vec![pd_status_err(503, "Service Unavailable"); 4], MAX_RETRY_TIMES + 1),
+        ] {
+            let manager = Arc::new(RetryAffinityManager {
+                errs: errs.clone(),
+                calls: Mutex::new(0),
+            });
+            *STATE.lock().unwrap() = Some(PackageState {
+                manager: Arc::clone(&manager) as Arc<dyn Manager>,
+                pd_client: None,
+            });
+            let result = create_groups_if_not_exists(&first);
+            init_manager(None);
+            let calls = *manager.calls.lock().unwrap();
+            if expected_calls > errs.len() {
+                assert!(result.is_ok(), "{name}: {result:?}");
+            } else {
+                assert_eq!(result, Err(errs[expected_calls - 1].clone()), "{name}");
+            }
+            assert_eq!(calls, expected_calls, "{name}");
+        }
     }
 }

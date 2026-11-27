@@ -1779,16 +1779,6 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
             ));
         }
     };
-    // Go `createTableAffinityGroupsInPD`, as in the single-phase path.
-    if let Err(error) = write.affinity_groups.apply_create() {
-        let _ = transaction.rollback();
-        return Err(compensate_external_delivery(
-            ClusterDdlError::NotCommitted(error),
-            placement_receipt.as_ref(),
-            label_receipt.as_ref(),
-            timeout,
-        ));
-    }
     if let Some(update) = &write.resource_group_update {
         if let Err(error) = update.apply() {
             let _ = transaction.rollback();
@@ -1832,8 +1822,6 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
     let planned_version = write.schema_version;
     match transaction.commit_with(&buffer, write.mutations) {
         Ok(_) => {
-            // Go `deleteTableAffinityGroupsInPD`: best-effort, once durable.
-            write.affinity_groups.apply_delete();
             if planned_version != 0 {
                 if phase.schema_state.mdl_enabled {
                     if let Some(notifier) = notifier {

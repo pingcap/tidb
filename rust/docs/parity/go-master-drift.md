@@ -14,7 +14,9 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - COM_CHANGE_USER is unimplemented (answers 1047), so 6c869bc1432, 1bcfcd48663, e5efa812b7c, f1be26c3f1c have nothing to land on.
 - 25050b53f84: needs storage constructors that may fill or clear the backend's credentials (`SendCredentials`).
 - 6775607e08c: a parser grammar change the Rust parser takes from the Go hparser branch.
-- 896fc427b36: TRUNCATE atomicity and affinity-group consistency on failure.
+- ab7355f7981 (rest; its affinity cleanup, job-step state restore, flashback order and multi-schema diff are ported): Rust has no `handleUpdateJobError`, so a job row too large to write (`kv.ErrEntryTooLarge`) neither cancels the job nor cleans up its affinity groups; the `afterAsyncNotifyEvent` failpoint and the storage-class half of `checkpointStorageClassTransitionStep` have no Rust site.
+- Placement bundles and label rules are sent to PD at commit time (`real_tikv_ddl` delivery), so a PD refusal retries the step where Go's `onCreateTable` / `onTruncateTable` cancel the job.
+- TRUNCATE TABLE does no `preSplitAndScatterTable` (Rust pre-splits only at CREATE TABLE, in the executor).
 - c09f6278deb: needs hypothetical expression indexes, which Rust refuses.
 - c767f6fd8c0: the storage-class transition manager is unported, and with it 56ee5bb2684's transition-completion half and 64e8c4c05ec.
 - 03148cd4adf: the lightning config messages are unchecked (the objstore half is ported).
@@ -115,7 +117,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - 0b505ecc58b 2026-09-22 57/60 executor: add adaptive admission control for ordered LIMIT scans (#70252)
 - 46e92282380 2026-08-14 18/19 executor: report provisional statement RU v3 metrics for simple SELECT (#70422)
 - 9453792437d 2026-10-26 14/15 ddl: improve readability of partition reorganization (#72213)
-- ab7355f7981 2026-11-24 14/15 ddl: clean up affinity groups of cancelled CREATE and ALTER jobs (#72867)
 - 51a1a4abfc1 2026-09-30 41/44 client: guard PD and TiKV RPCs in diagnostic mode (#71676)
 - 415c3464629 2026-09-15 11/12 ddl: account RU for add index jobs (#71029)
 - d2d8d42b916 2026-11-23 11/12 ddl: set PD GC barrier and delete gc_delete_range inside txn during RECOVER (#73526)

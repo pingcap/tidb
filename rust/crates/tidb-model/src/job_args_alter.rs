@@ -1184,6 +1184,10 @@ pub struct AlterTableAffinityArgs {
     /// The table's new affinity.
     #[serde(rename = "affinity", default, skip_serializing_if = "Option::is_none")]
     pub affinity: Option<GoShared<crate::table::TableAffinityInfo>>,
+    /// The affinity the table had before the job, set when the job finishes
+    /// so the old level's groups can be deleted after the job commits.
+    #[serde(rename = "old_affinity", default, skip_serializing_if = "Option::is_none")]
+    pub old_affinity: Option<GoShared<crate::table::TableAffinityInfo>>,
 }
 
 impl JobArgs for AlterTableAffinityArgs {

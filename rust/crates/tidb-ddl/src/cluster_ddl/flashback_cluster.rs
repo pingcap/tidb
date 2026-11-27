@@ -505,7 +505,8 @@ fn flashback_schema_version_step(
         action_type: active.job.type_,
         schema_id: active.job.schema_id,
         table_id: -1,
-        regenerate_schema_map: active.job.schema_state == SchemaState::PUBLIC,
+        // The final flashback step writes its diff before moving to public.
+        regenerate_schema_map: active.job.schema_state == SchemaState::WRITE_REORGANIZATION,
         ..SchemaDiff::default()
     };
     let (schema_version, diff) = update_schema_version(&meta, active, diff)?;
@@ -614,8 +615,9 @@ pub(super) fn on_flashback_cluster(
         SchemaState::WRITE_ONLY => {
             // TODO: Support flashback in unistore.
             if in_flashback_test {
+                let step = flashback_schema_version_step(txn, active, Vec::new())?;
                 active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
-                return flashback_schema_version_step(txn, active, Vec::new());
+                return Ok(step);
             }
             let (flashback_ts, start_ts, key_ranges) = flashback_rpc_args(&args.read());
             // Split region by keyRanges, make sure no unrelated key ranges be locked.
@@ -660,9 +662,10 @@ pub(super) fn on_flashback_cluster(
                     .map_err(unknown)?;
             }
             append_schema_change_mutations(txn, active.job.id, &[(-1, SchemaChangeEvent::flashback_cluster())])?;
+            let step = flashback_schema_version_step(txn, active, mutations)?;
             active.job.state = JobState::DONE;
             active.job.schema_state = SchemaState::PUBLIC;
-            flashback_schema_version_step(txn, active, mutations)
+            Ok(step)
         }
         _ => Ok(args_step(job_only_write(active.job.id, Vec::new()))),
     }

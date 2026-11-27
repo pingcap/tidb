@@ -2605,6 +2605,7 @@ pub mod resource_group;
 pub mod table_lock;
 pub mod table_mode;
 pub mod truncate;
+mod rollingback;
 pub(crate) mod recover_table;
 pub use recover_table::{
     get_drop_or_truncate_table_info_from_jobs_by_store, get_gc_safe_point, get_recover_snapshot_ts, DdlStepWorker,
@@ -3168,10 +3169,19 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         JobState::DONE | JobState::ROLLBACK_DONE | JobState::CANCELLED
     ) {
         // Go `transitOneJobStep`'s done branch, after `checkBeforeCommit`.
-        if active.job.state == JobState::DONE
-            && active.job.type_ == ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER
-        {
-            materialized_view::cleanup_mview_out_of_place_cutover_after_commit(&active.job, &session, start_ts);
+        if active.job.state == JobState::DONE {
+            match active.job.type_ {
+                ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER => {
+                    materialized_view::cleanup_mview_out_of_place_cutover_after_commit(&active.job, &session, start_ts);
+                }
+                ActionType::ACTION_TRUNCATE_TABLE => {
+                    truncate::cleanup_truncate_table_affinity_groups_after_commit(&mut active.job);
+                }
+                ActionType::ACTION_ALTER_TABLE_AFFINITY => {
+                    alter_table::cleanup_alter_table_affinity_groups_after_commit(&mut active.job);
+                }
+                _ => {}
+            }
         }
         // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema` /
         // `finishFlashbackCluster`.
@@ -3212,6 +3222,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     let cancelling = active.job.is_cancelling();
     let was_rollingback = active.job.is_rollingback();
     let previous_schema_version = active.job.last_schema_version;
+    let step_state = snapshot_job_step_state(&active.job);
     let outcome = recover_ddl_action(|| {
         if cancelling {
             run_in_job_txn(snapshot, start_ts, &schema_state.worker, |txn| {
@@ -3270,6 +3281,17 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     {
         step.write = job_only_write(ddl_job_id, Vec::new());
         schema_state.worker.step_buffer.reset();
+        if active.job.state == JobState::CANCELLED
+            || active.job.is_rollingback()
+            || active.job.is_rollback_done()
+        {
+            // Preserve the sub-job states selected for cancellation or
+            // rollback.
+            step_state.restore_kv(&mut active.job);
+        } else {
+            step_state.restore_all(&mut active.job, step.run_error.as_ref());
+            step.update_raw_args = false;
+        }
         tidb_failpoint::inject_call(
             "github.com/pingcap/tidb/pkg/ddl/afterRollbackTxnForMustRollbackTxnOnError",
             &mut active.job,
@@ -3278,6 +3300,14 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     // Go resets the action's transaction before handleJobDone on cancellation.
     // This also covers rollback handlers that cancel without a fresh error.
     if active.job.state == JobState::CANCELLED {
+        // Go: the PD groups go before the cancellation commits; if the commit
+        // fails, the job runs again and repeats this idempotent cleanup. The
+        // step's own writes are discarded, so this reads the metadata the
+        // cancellation persists.
+        rollingback::delete_affinity_groups_of_cancelled_job(
+            &mut JobTxn::new(snapshot, start_ts, step_session(&schema_state.worker)),
+            &mut active.job,
+        );
         // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema` /
         // `finishFlashbackCluster`.
         recover_table::finish_recover(&mut active.job, &schema_state.worker)?;
@@ -3295,6 +3325,9 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         step.write = job_only_write(ddl_job_id, Vec::new());
         // The statements the failed handler ran on `w.sess` go too.
         schema_state.worker.step_buffer.reset();
+        // The job's in-memory progress must match the discarded step.
+        step_state.restore_all(&mut active.job, step.run_error.as_ref());
+        step.update_raw_args = false;
     }
     let mut update_err = update_ddl_job_2_table(&session, start_ts, &mut active.job, step.update_raw_args).err();
     tidb_failpoint::inject_call_ref::<AfterUpdateJobToTable>(
@@ -3323,6 +3356,82 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
 }
 
 pub(crate) use tidb_ddl_jobsubmit::wrap_key_2_string;
+
+/// Go `snapshotJobStepState`: the job's metadata progress, which must match
+/// the transaction the step's outcome persists.
+struct JobStepState {
+    state: JobState,
+    schema_state: SchemaState,
+    binlog_info: Option<GoShared<tidb_model::HistoryInfo>>,
+    resume_reason: Option<GoShared<tidb_model::JobResumeReason>>,
+    sub_jobs: Option<Vec<Option<tidb_model::SubJob>>>,
+}
+
+fn snapshot_job_step_state(job: &Job) -> JobStepState {
+    JobStepState {
+        state: job.state,
+        schema_state: job.schema_state,
+        binlog_info: job
+            .binlog_info
+            .as_ref()
+            .map(|binlog| GoShared::new(binlog.read().clone())),
+        resume_reason: job.resume_reason.clone(),
+        sub_jobs: job.multi_schema_info.as_ref().map(|info| {
+            info.read()
+                .sub_jobs
+                .handles()
+                .into_iter()
+                .map(|sub| sub.map(|sub| sub.read().clone_without_args()))
+                .collect()
+        }),
+    }
+}
+
+impl JobStepState {
+    /// Go `restoreKV`: leaves the sub-job cancellation decisions intact.
+    fn restore_kv(&self, job: &mut Job) {
+        // ALTER SCHEMA READ ONLY records the attempted change in its schema
+        // state so cancellation can run the rollback even after a failed
+        // step.
+        if job.type_ != ActionType::ACTION_MODIFY_SCHEMA_READ_ONLY {
+            job.schema_state = self.schema_state;
+        }
+        job.binlog_info = self.binlog_info.clone();
+        job.resume_reason = self.resume_reason.clone();
+        job.last_schema_version = 0;
+    }
+
+    /// Go `restoreAll`: also restores completion and sub-job progress so
+    /// the step can be retried.
+    fn restore_all(&self, job: &mut Job, run_error: Option<&DdlPlanError>) {
+        self.restore_kv(job);
+        if self.state == JobState::RUNNING && job.is_done() {
+            job.state = self.state;
+        }
+        let (Some(info), Some(saved)) = (job.multi_schema_info.as_ref(), self.sub_jobs.as_ref()) else {
+            return;
+        };
+        let mut saved = saved.clone();
+        if matches!(
+            run_error,
+            Some(DdlPlanError::Source(error))
+                if tidb_meta::meta_errors::ERR_DDL_REORG_ELEMENT_NOT_EXIST.equal(Some(error))
+        ) {
+            // Keep the recovery reset from `getReorgInfo` so the next step
+            // recreates the missing handle.
+            for (saved, current) in saved.iter_mut().zip(info.read().sub_jobs.handles()) {
+                if let (Some(saved), Some(current)) = (saved.as_mut(), current) {
+                    if saved.snapshot_version != 0 && current.read().snapshot_version == 0 {
+                        saved.snapshot_version = 0;
+                    }
+                }
+            }
+        }
+        info.write().sub_jobs = tidb_model::GoSharedPointerSlice::from_handles(
+            saved.into_iter().map(|sub| sub.map(GoShared::new)).collect(),
+        );
+    }
+}
 
 /// Go's `afterUpdateJobToTable` call-failpoint: the job and the error of its
 /// row update, which the test may replace (Go `job, &err`).
@@ -3797,7 +3906,6 @@ fn plan_persisted_check_constraint_job_step(
             label_rules: Vec::new(),
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
-            affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
             resource_group_update: None,
         },
         // Go runOneJobStep re-encodes decoded arguments after any successful
@@ -3916,7 +4024,6 @@ fn plan_persisted_create_schema_job_step(
             label_rules: Vec::new(),
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
-            affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
             resource_group_update: None,
         },
         update_raw_args: true,
@@ -3997,7 +4104,6 @@ fn plan_persisted_create_tables_job_step(
     let database_id = database.read().id;
     let schema = database.read().name.original().to_owned();
     let mut placement_bundles = Vec::new();
-    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     let mut table_infos = Vec::new();
     // Go: a stub job per table runs `createSequenceWithCheck` or
     // `createTable`; any failure cancels the batch.
@@ -4015,7 +4121,6 @@ fn plan_persisted_create_tables_job_step(
                 fk_check,
                 start_ts,
                 &mut placement_bundles,
-                &mut affinity_groups,
             )
         }
         .map_err(|error| cancel_ddl_job(active, error))?;
@@ -4088,7 +4193,6 @@ fn plan_persisted_create_tables_job_step(
             label_rules: Vec::new(),
             warnings: Vec::new(),
             placement_bundles,
-            affinity_groups,
             resource_group_update: None,
         },
         update_raw_args: true,
@@ -4127,7 +4231,6 @@ fn plan_persisted_drop_schema_job_step(
     };
 
     let mut db_info = database;
-    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     let mut label_rules = LabelRuleSteps::new();
     if db_info.state == SchemaState::PUBLIC
         && tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::Relaxed)
@@ -4179,9 +4282,27 @@ fn plan_persisted_drop_schema_job_step(
         // Go `metaMut.ListTables(job.SchemaID)`.
         let tables = meta.tables(db_info.id).map_err(meta_error)?;
         meta.drop_database(db_info.id).map_err(meta_error)?;
-        // Go `onDropSchema`'s `batchDeleteTableAffinityGroups`.
+        // Go `onDropSchema`'s `collectTableAffinityGroupIDs` and
+        // `batchDeleteTableAffinityGroups`: best effort, logged.
+        let mut affinity_group_ids = std::collections::BTreeSet::new();
+        let mut affinity_err = None;
         for table in &tables {
-            affinity_groups.delete_table_affinity_groups_in_pd(table, None);
+            if table.affinity.is_some() && affinity_err.is_none() {
+                affinity_err = crate::ddl_affinity::collect_table_affinity_group_ids(table, &mut affinity_group_ids).err();
+            }
+        }
+        let affinity_err = match affinity_err {
+            None => crate::ddl_affinity::batch_delete_table_affinity_groups(&affinity_group_ids).err(),
+            error => error,
+        };
+        if let Some(error) = affinity_err {
+            tidb_ddl_logutil::ddl_logger().warn(
+                "failed to delete affinity groups for batch tables, but operation will continue",
+                &[
+                    tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+                    tidb_log::Field::new("databaseID", tidb_log::Value::I64(db_info.id)),
+                ],
+            );
         }
         // Go `onDropSchema`'s `dropMaskingPoliciesByDBName`: a failure is
         // logged and the drop continues.
@@ -4264,7 +4385,6 @@ fn plan_persisted_drop_schema_job_step(
             label_rules: label_rules.steps,
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
-            affinity_groups,
             resource_group_update: None,
         },
         // Go `needUpdateRawArgs`: the finished arguments reach history.
@@ -4295,7 +4415,6 @@ fn plan_persisted_drop_table_job_step(
     let database = job_schema(txn, active.job.schema_id)?
         .expect("checked_job_table checked the database");
 
-    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     // Go master: a DROP TABLE of a table with materialized view metadata is
     // refused, as the executor refuses it.
     if table.state == SchemaState::PUBLIC && active.job.type_ == ActionType::ACTION_DROP_TABLE {
@@ -4406,8 +4525,17 @@ fn plan_persisted_drop_table_job_step(
         {
             append_schema_change_mutations(txn, ddl_job_id, &[(-1, SchemaChangeEvent::drop_table(table.clone_like_go()))])?;
         }
-        // Go `onDropTableOrView`'s `deleteTableAffinityGroupsInPD`.
-        affinity_groups.delete_table_affinity_groups_in_pd(&table, None);
+        // Go `onDropTableOrView`'s `deleteTableAffinityGroupsInPD`: best
+        // effort, logged.
+        if let Err(error) = crate::ddl_affinity::delete_table_affinity_groups_in_pd(&table, None) {
+            tidb_ddl_logutil::ddl_logger().error(
+                "failed to delete affinity groups from PD",
+                &[
+                    tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+                    tidb_log::Field::new("tableID", tidb_log::Value::I64(table.id)),
+                ],
+            );
+        }
         // Go master: a dropped log's purge schedule row goes with it.
         if table.materialized_view_log.is_some() {
             materialized_view::delete_materialized_view_log_purge_info(txn, table.id)?;
@@ -4490,7 +4618,6 @@ fn plan_persisted_drop_table_job_step(
             label_rules: Vec::new(),
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
-            affinity_groups,
             resource_group_update: None,
         },
         // Go `needUpdateRawArgs`: the finished arguments reach history.
@@ -4656,7 +4783,6 @@ pub fn job_only_write(ddl_job_id: i64, mutations: Vec<BufferMutation>) -> DdlWri
         label_rules: Vec::new(),
         warnings: Vec::new(),
         placement_bundles: Vec::new(),
-        affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
         resource_group_update: None,
     }
 }
@@ -4773,10 +4899,11 @@ fn plan_cancel_persisted_ddl_job(
         ActionType::ACTION_MULTI_SCHEMA_CHANGE => {
             return multi_schema::rolling_back_multi_schema_change(active);
         }
-        ActionType::ACTION_ADD_TABLE_PARTITION
-        | ActionType::ACTION_DROP_TABLE_PARTITION
-        | ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
+        ActionType::ACTION_ADD_TABLE_PARTITION | ActionType::ACTION_DROP_TABLE_PARTITION => {
             return partition::rollingback_add_table_partition(txn, active, start_ts);
+        }
+        ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
+            return partition::rollingback_truncate_table_partition(txn, active, start_ts);
         }
         ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
             return exchange_partition::rollingback_exchange_table_partition(txn, active);
@@ -5098,11 +5225,6 @@ pub struct DdlWrite {
     /// catalog that claims placement PD never accepted is a table whose rows
     /// live somewhere other than where it says they do.
     pub placement_bundles: Vec<tidb_placement::Bundle>,
-    /// The PD affinity groups the change creates and deletes (Go
-    /// `createTableAffinityGroupsInPD`, inside the job before the version is
-    /// published, failing it when PD refuses; `deleteTableAffinityGroupsInPD`,
-    /// best-effort cleanup).
-    pub affinity_groups: crate::ddl_affinity::AffinityGroupUpdate,
     /// The resource-manager write a resource-group job makes before its
     /// version is published (Go `infosync.AddResourceGroup` and its
     /// siblings), failing the change when it fails.
@@ -5823,7 +5945,6 @@ fn apply_create_table(
     info: &mut TableInfo,
     start_ts: u64,
     placement_bundles: &mut Vec<tidb_placement::Bundle>,
-    affinity_groups: &mut crate::ddl_affinity::AffinityGroupUpdate,
 ) -> Result<(), DdlPlanError> {
     if info.placement_policy_ref.is_some()
         || info.partition.as_ref().is_some_and(|partition| {
@@ -5845,9 +5966,9 @@ fn apply_create_table(
     }
     // Go `createTable`'s `createTableAffinityGroupsInPD`, after the
     // placement bundles and wrapped as Go wraps it.
-    affinity_groups.create_error_context = Some(CREATE_TABLE_AFFINITY_ERROR);
-    affinity_groups
-        .create_table_affinity_groups_in_pd(info)
+    // A cancelled job's `deleteAffinityGroupsOfCancelledJob` deletes the
+    // groups, including groups PD created before it failed.
+    crate::ddl_affinity::create_table_affinity_groups_in_pd(info, &[])
         .map_err(|error| pd_step_error(Some(CREATE_TABLE_AFFINITY_ERROR), error))?;
     info.update_ts = start_ts;
     // Go `createTableOrViewWithCheck`.
@@ -5904,115 +6025,6 @@ pub(crate) fn handle_auto_inc_id<T: tidb_meta::transaction::MetaTransaction>(
     }
     tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/handleAutoIncID", &mut ());
     Ok(())
-}
-
-/// Go `onTruncateTable`'s metadata: the table under `new_table_id` (and its
-/// partitions under `new_partition_ids`), the old table key and allocators
-/// gone, the placement bundles, affinity groups and label rules re-keyed.
-/// Returns the new table.
-#[allow(clippy::too_many_arguments)]
-fn apply_truncate_table(
-    txn: &mut JobTxn<'_>,
-    schema: &str,
-    db_id: i64,
-    stored: &TableInfo,
-    new_table_id: i64,
-    new_partition_ids: &[i64],
-    placement_bundles: &mut Vec<tidb_placement::Bundle>,
-    affinity_groups: &mut crate::ddl_affinity::AffinityGroupUpdate,
-    label_rules: &mut LabelRuleSteps,
-) -> Result<TableInfo, DdlPlanError> {
-    let old_table_id = stored.id;
-    // Go `onTruncateTable` reassigns the PARTITION ids as well as the
-    // table's (`ddl/table.go:510`), and its comment says why: "all the
-    // old data is encoded with the old partition ID, it can not be
-    // accessed anymore". A partitioned table's rows are keyed by the
-    // PARTITION's physical id, not the table's -- so giving the table
-    // a new id while the partitions kept theirs would leave every row
-    // exactly where it was and still addressable. The truncate would
-    // report success and empty nothing.
-    //
-    // The ids are drawn in ONE call, table first then one per
-    // partition in definition order, which is the same contiguous
-    // block shape `CREATE TABLE` uses.
-    let mut info = stored.clone_like_go();
-    info.id = new_table_id;
-    if let Some(replica) = &info.tiflash_replica {
-        let mut replica = replica.write();
-        replica.available = false;
-        replica.available_partition_ids = Default::default();
-    }
-    if let Some(partition) = &info.partition {
-        let partition = partition.read();
-        for (ordinal, id) in new_partition_ids.iter().enumerate() {
-            partition
-                .definitions
-                .update(ordinal, |definition| definition.id = *id);
-        }
-    }
-    // Go: `DropTableOrView` and `GetAutoIDAccessors(...).Del()` of the old
-    // id (the allocators travel with the table id; deleting them is what
-    // restarts the counters), then `CreateTableOrView` under the new one.
-    let meta = txn.meta();
-    let meta_error = |error| job_meta_error(&meta, error);
-    meta.drop_table_or_view(db_id, old_table_id).map_err(meta_error)?;
-    meta.auto_ids(db_id, old_table_id).delete().map_err(meta_error)?;
-    meta.create_table_or_view(db_id, &info).map_err(meta_error)?;
-    // Go `onTruncateTable` rebuilds the bundles once the new id is
-    // stamped and sends them (`ddl/table.go:574`). Truncate gives the
-    // table a NEW identity, and PD's rules are keyed by id -- so
-    // without this the truncated table has no rules at all and its
-    // data goes wherever the default says, silently losing the
-    // placement the table still claims in its own catalog entry.
-    if info.placement_policy_ref.is_some()
-        || info.partition.as_ref().is_some_and(|partition| {
-            partition
-                .read()
-                .definitions
-                .snapshot()
-                .iter()
-                .any(|definition| definition.placement_policy_ref.is_some())
-        })
-    {
-        let policies = load_policies(txn)?;
-        *placement_bundles =
-            tidb_placement::new_full_table_bundles(&policies, &info).map_err(|error| {
-                DdlPlanError::Admission(DdlAdmissionError::plain(
-                    error.to_string(),
-                ))
-            })?;
-    }
-    // Go `onTruncateTable`: the new identity's groups first (the job
-    // fails when PD refuses), then the old table's, best-effort.
-    if info.affinity.is_some() {
-        affinity_groups
-            .create_table_affinity_groups_in_pd(&info)
-            .map_err(|error| pd_step_error(None, error))?;
-    }
-    if stored.affinity.is_some() {
-        affinity_groups.delete_table_affinity_groups_in_pd(stored, None);
-    }
-    // Go `onTruncateTable`: the rules named for the table and its
-    // partitions re-range over the new IDs.
-    let label_table = LabelRuleTable::from_table_info(&info);
-    let old_rules = label_rules::get_old_label_rules(
-        label_rules.manager(),
-        &label_table,
-        &schema.go_to_lower(),
-        &label_table.name,
-    )
-    .map_err(|error| pd_step_error(Some("failed to get old label rules from PD"), error))?;
-    label_rules.push(
-        label_rules::update_label_rules(
-            &schema.go_to_lower(),
-            &label_table,
-            &old_rules,
-            &[],
-            new_table_id,
-        ),
-        Some("failed to update the label rule to PD"),
-    )?;
-    Ok(info)
 }
 
 /// Go `checkModifyCharsetAndCollation` under `AlterTableCharsetAndCollate`,
@@ -6468,6 +6480,9 @@ fn append_schema_change_mutations(
         "INSERT INTO mysql.{NOTIFIER_TABLE_NAME} (ddl_job_id, sub_job_id, schema_change, processed_by_flag) \
          VALUES (%?, %?, %?, 0)"
     );
+    // Go master: the publication's internal SQL can flush earlier step
+    // writes, so any later error discards the whole step.
+    txn.set_must_rollback_txn_on_error();
     for (sub_job_id, event) in events {
         let event =
             serde_json::to_vec(event).map_err(|error| DdlPlanError::Encode(error.to_string()))?;

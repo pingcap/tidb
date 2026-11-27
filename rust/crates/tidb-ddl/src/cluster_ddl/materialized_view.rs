@@ -1318,7 +1318,6 @@ pub(super) fn on_create_materialized_view_log(
         )
     })?;
     let mut placement_bundles = Vec::new();
-    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     mlog.state = SchemaState::NONE;
     create_table::create_table(
         txn,
@@ -1329,7 +1328,6 @@ pub(super) fn on_create_materialized_view_log(
         false,
         start_ts,
         &mut placement_bundles,
-        &mut affinity_groups,
     )?;
     let base_info = base.materialized_view_base.get_or_insert_with(Default::default);
     base_info.write().mlog_id = mlog.id;
@@ -1362,7 +1360,6 @@ pub(super) fn on_create_materialized_view_log(
     write.diff = diff;
     write.created_id = Some(mlog.id);
     write.placement_bundles = placement_bundles;
-    write.affinity_groups = affinity_groups;
     Ok(PersistedDdlActionStep { write, update_raw_args: true, run_error: None, reorg: None })
 }
 
@@ -1444,7 +1441,6 @@ pub(super) fn on_create_materialized_view_shadow(
         )
     })?;
     let mut placement_bundles = Vec::new();
-    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     create_table::create_table(
         txn,
         catalog,
@@ -1454,7 +1450,6 @@ pub(super) fn on_create_materialized_view_shadow(
         fk_check,
         start_ts,
         &mut placement_bundles,
-        &mut affinity_groups,
     )?;
     let (schema_version, diff) = update_schema_version(
         &txn.meta(),
@@ -1473,7 +1468,6 @@ pub(super) fn on_create_materialized_view_shadow(
     write.diff = diff;
     write.created_id = Some(shadow.id);
     write.placement_bundles = placement_bundles;
-    write.affinity_groups = affinity_groups;
     Ok(PersistedDdlActionStep { write, update_raw_args: true, run_error: None, reorg: None })
 }
 
@@ -2603,7 +2597,6 @@ pub(super) fn on_create_materialized_view(
                 )
             })?;
             let mut placement_bundles = Vec::new();
-            let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
             mview.state = SchemaState::NONE;
             create_table::create_table(
                 txn,
@@ -2614,7 +2607,6 @@ pub(super) fn on_create_materialized_view(
                 false,
                 start_ts,
                 &mut placement_bundles,
-                &mut affinity_groups,
             )?;
             active.job.table_id = mview.id;
             let extra = update_materialized_view_base_info_on_create(txn, &mut active.job, &mview, &mlog_ids, start_ts)?;
@@ -2641,7 +2633,6 @@ pub(super) fn on_create_materialized_view(
             write.diff = diff;
             write.created_id = Some(mview.id);
             write.placement_bundles = placement_bundles;
-            write.affinity_groups = affinity_groups;
             Ok(PersistedDdlActionStep { write, update_raw_args: true, run_error: None, reorg: None })
         }
         SchemaState::WRITE_REORGANIZATION => {

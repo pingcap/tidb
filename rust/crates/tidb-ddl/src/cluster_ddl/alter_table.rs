@@ -995,6 +995,7 @@ pub(crate) fn alter_table_affinity<S: MetaSnapshot>(
             JobArgsValue::AlterTableAffinity(Some(GoShared::new(
                 tidb_model::AlterTableAffinityArgs {
                     affinity: affinity.map(GoShared::new),
+                    old_affinity: None,
                 },
             ))),
         )
@@ -1642,7 +1643,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
     let mut counter_writes = Vec::new();
     let mut bundles = Vec::new();
     let mut label_steps = Vec::new();
-    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
+    let mut old_affinity_args = None;
     let placement_error =
         |error: tidb_placement::PlacementError| DdlPlanError::plain_refusal(error.to_string());
     match active.job.type_ {
@@ -2067,7 +2068,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
             label_steps.push(step);
         }
         // Go `onAlterTableAffinity`: the new groups first (the job fails when
-        // PD refuses), the old ones best-effort unless the level stays.
+        // PD refuses); the old level's stay until the job commits.
         ActionType::ACTION_ALTER_TABLE_AFFINITY => {
             let args = tidb_model::get_alter_table_affinity_args(&mut active.job)
                 .map_err(|error| args_error(active, error))?
@@ -2077,7 +2078,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
                 .affinity
                 .as_ref()
                 .map(|affinity| affinity.read().clone());
-            let old = info.clone_like_go();
+            let old_affinity = info.affinity.clone();
             tidb_ddl_build::validate_table_affinity(
                 info.temp_table_type != tidb_model::TempTableType::NONE,
                 info.get_partition_info().is_some(),
@@ -2085,20 +2086,19 @@ pub(super) fn plan_persisted_alter_table_job_step(
             )
             .map_err(|error| cancel_ddl_job(active, driver_refusal(error)))?;
             info.affinity = affinity.map(GoShared::new);
+            // A cancelled job's `deleteAffinityGroupsOfCancelledJob` deletes
+            // the groups of a new level, including groups PD created before
+            // it failed.
             if info.affinity.is_some() {
-                affinity_groups
-                    .create_table_affinity_groups_in_pd(&info)
+                crate::ddl_affinity::create_table_affinity_groups_in_pd(&info, &[])
                     .map_err(|error| cancel_ddl_job(active, pd_step_error(None, error)))?;
             }
-            if let Some(previous) = old.affinity.as_ref() {
-                let level_changed = info
-                    .affinity
-                    .as_ref()
-                    .is_none_or(|new| new.read().level != previous.read().level);
-                if level_changed {
-                    affinity_groups.delete_table_affinity_groups_in_pd(&old, None);
-                }
-            }
+            // The groups of the old level stay until the job commits, because
+            // a later failure in this step can still cancel the job and keep
+            // the old affinity; `cleanup_alter_table_affinity_groups_after_commit`
+            // deletes them afterwards.
+            args.write().old_affinity = old_affinity;
+            old_affinity_args = Some(args);
         }
         // Go `onAlterTableSetRegionSplitPolicy`.
         ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY => {
@@ -2323,14 +2323,67 @@ pub(super) fn plan_persisted_alter_table_job_step(
     write.mutations.extend(counter_writes);
     write.placement_bundles = bundles;
     write.label_rules = label_steps;
-    write.affinity_groups = affinity_groups;
     active.job.finish_table_job(
         JobState::DONE,
         finished_state,
         write.schema_version,
         Some(GoShared::new(info.clone_like_go())),
     );
+    if let Some(args) = old_affinity_args {
+        active.job.fill_args(Some(args));
+    }
     Ok(action_step(write))
+}
+
+/// Go `cleanupAlterTableAffinityGroupsAfterCommit`: once an ALTER TABLE ...
+/// AFFINITY job has committed as done, the old level's groups go. Best
+/// effort: a failure leaves the old groups in PD.
+pub(super) fn cleanup_alter_table_affinity_groups_after_commit(job: &mut tidb_model::Job) {
+    let new_info = job
+        .binlog_info
+        .as_ref()
+        .and_then(|binlog| binlog.read().table_info.clone())
+        .map(|info| info.read().clone_like_go());
+    let args = tidb_model::get_alter_table_affinity_args(job);
+    let (Some(new_info), Ok(Some(args))) = (new_info, &args) else {
+        let error = args.err().map(|error| error.to_string()).unwrap_or_default();
+        tidb_ddl_logutil::ddl_logger().warn(
+            "failed to get alter table affinity args for post-commit affinity cleanup",
+            &[
+                tidb_log::Field::new("jobID", tidb_log::Value::I64(job.id)),
+                tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+            ],
+        );
+        return;
+    };
+    let Some(old_affinity) = args.read().old_affinity.clone() else {
+        return;
+    };
+    // Groups of an unchanged level are the table's current groups.
+    if new_info
+        .affinity
+        .as_ref()
+        .is_some_and(|new| new.read().level == old_affinity.read().level)
+    {
+        return;
+    }
+    // ALTER TABLE ... AFFINITY keeps the table id and partitions.
+    let old_info = TableInfo {
+        id: new_info.id,
+        name: new_info.name.clone(),
+        affinity: Some(old_affinity),
+        partition: new_info.partition.clone(),
+        ..TableInfo::default()
+    };
+    if let Err(error) = crate::ddl_affinity::delete_table_affinity_groups_with_timeout(&old_info, None) {
+        tidb_ddl_logutil::ddl_logger().warn(
+            "failed to delete old affinity groups from PD",
+            &[
+                tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+                tidb_log::Field::new("tableID", tidb_log::Value::I64(old_info.id)),
+            ],
+        );
+    }
 }
 
 /// Go `convertJob2RollbackJob` for these actions.

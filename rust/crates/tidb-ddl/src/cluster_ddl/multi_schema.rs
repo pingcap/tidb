@@ -648,10 +648,10 @@ fn run_sub_job_step(
     ) {
         Ok(mut step) => {
             // Go `countForError` on the proxy.
-            let run_error = step.run_error.take();
-            if let Some(error) = &run_error {
-                record_ddl_action_error(&mut proxy.job, error);
-            }
+            let run_error = step
+                .run_error
+                .take()
+                .and_then(|error| count_for_error_on_proxy(&mut proxy.job, error));
             SubJobStep {
                 proxy,
                 step,
@@ -660,15 +660,25 @@ fn run_sub_job_step(
         }
         Err(error) => {
             // Go `countForError` on the proxy.
-            record_ddl_action_error(&mut proxy.job, &error);
+            let run_error = count_for_error_on_proxy(&mut proxy.job, error);
             let ddl_job_id = proxy.job.id;
             SubJobStep {
                 proxy,
                 step: job_control_step_for(ddl_job_id),
-                run_error: Some(error),
+                run_error,
             }
         }
     }
+}
+
+/// Go `countForError` on a proxy job: the error is recorded on it, and a
+/// proxy the action cancelled ("DDL job is cancelled normally") returns no
+/// error, so the parent goes on with the sub-job cancelled.
+fn count_for_error_on_proxy(job: &mut Job, error: DdlPlanError) -> Option<DdlPlanError> {
+    if !record_ddl_action_error(job, &error) {
+        return Some(error);
+    }
+    (job.state != JobState::CANCELLED).then_some(error)
 }
 
 fn job_control_step_for(ddl_job_id: i64) -> PersistedDdlActionStep {
@@ -1005,8 +1015,16 @@ pub(super) fn on_multi_schema_change(
             super::materialized_view::set_schema_diff_for_multi_infos(&mut diff, &involving_infos);
             super::materialized_view::set_schema_diff_for_multi_infos(&mut diff, &collected_infos);
             let meta = txn.meta();
-            meta.set_schema_diff(&diff)
-                .map_err(|error| job_meta_error(&meta, error))?;
+            if let Err(error) = meta.set_schema_diff(&diff) {
+                let error = job_meta_error(&meta, error);
+                // Go master: restore the processed sub-jobs and discard the
+                // whole transaction, so the batch retries.
+                for (sub, saved) in sub_jobs.iter().zip(&saved) {
+                    *sub.write() = saved.clone();
+                }
+                txn.set_must_rollback_txn_on_error();
+                return Err(error);
+            }
             merged.diff = diff;
         }
         merged.schema_version = version;

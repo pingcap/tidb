@@ -2124,3 +2124,31 @@ fn materialized_view_job_args_are_go_masters_bytes() {
         (10, 20, false)
     );
 }
+
+// Go `TestAlterTableAffinityArgs`.
+#[test]
+fn test_alter_table_affinity_args() {
+    let affinity = |level: &str| {
+        crate::new_table_affinity_info_with_level(level)
+            .unwrap()
+            .map(GoShared::new)
+    };
+    let level = |value: &Option<GoShared<crate::table::TableAffinityInfo>>| {
+        value.as_ref().map(|affinity| affinity.read().level.clone())
+    };
+    for version in [JobVersion::V1, JobVersion::V2] {
+        for new_affinity in [None, affinity("partition")] {
+            for old_affinity in [None, affinity("table"), affinity("partition")] {
+                let args = GoShared::new(AlterTableAffinityArgs {
+                    affinity: new_affinity.clone(),
+                    old_affinity: old_affinity.clone(),
+                });
+                let mut job = encoded_job(version, ActionType::ACTION_ALTER_TABLE_AFFINITY, args);
+                let decoded = get_alter_table_affinity_args(&mut job).unwrap().unwrap();
+                let decoded = decoded.read();
+                assert_eq!(level(&decoded.affinity), level(&new_affinity));
+                assert_eq!(level(&decoded.old_affinity), level(&old_affinity));
+            }
+        }
+    }
+}

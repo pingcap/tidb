@@ -102,84 +102,106 @@ pub fn build_affinity_group_definitions(
     }
 }
 
-/// The PD affinity group work a DDL change owes: the groups it creates (Go
-/// `createTableAffinityGroupsInPD`, which fails the job when PD refuses) and
-/// the ones it deletes (Go `deleteTableAffinityGroupsInPD` /
-/// `batchDeleteTableAffinityGroups`, best-effort cleanup).
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct AffinityGroupUpdate {
-    /// The groups to create, idempotently.
-    pub create: AffinityGroups,
-    /// The prefix Go wraps a creation failure in, when it wraps one.
-    pub create_error_context: Option<&'static str>,
-    /// The group ids to delete.
-    pub delete: Vec<String>,
+/// Go `collectAffinityGroupIDs`.
+fn collect_affinity_group_ids(groups: &AffinityGroups) -> Vec<String> {
+    groups.keys().cloned().collect()
 }
 
-impl AffinityGroupUpdate {
-    /// Go `createTableAffinityGroupsInPD`: nothing for a table without
-    /// affinity.
-    pub fn create_table_affinity_groups_in_pd(&mut self, table: &TableInfo) -> Result<(), String> {
-        self.create
-            .extend(build_affinity_group_definitions(table, None)?);
-        Ok(())
+/// Go `createTableAffinityGroupsInPD`: creates the groups of `table` in PD,
+/// of the given partitions or, with none, of all its partitions. A critical
+/// operation: the caller fails the DDL when it fails. Used by CREATE TABLE,
+/// ALTER TABLE AFFINITY = 'xxx', TRUNCATE TABLE and TRUNCATE PARTITION.
+pub fn create_table_affinity_groups_in_pd(
+    table: &TableInfo,
+    partition_defs: &[PartitionDefinition],
+) -> Result<(), String> {
+    if table.affinity.is_none() {
+        return Ok(());
     }
-
-    /// Go `deleteTableAffinityGroupsInPD`: the groups of `table`, or of the
-    /// given partitions of it. A definition error is logged as Go's
-    /// best-effort callers log it.
-    pub fn delete_table_affinity_groups_in_pd(
-        &mut self,
-        table: &TableInfo,
-        partition_defs: Option<&[PartitionDefinition]>,
-    ) {
-        match build_affinity_group_definitions(table, partition_defs) {
-            Ok(groups) => self.delete.extend(groups.into_keys()),
-            Err(error) => tidb_ddl_logutil::ddl_logger().error(
-                "failed to delete affinity groups from PD",
-                &[
-                    tidb_log::Field::new("error", tidb_log::Value::Str(error)),
-                    tidb_log::Field::new("tableID", tidb_log::Value::I64(table.id)),
-                ],
+    let partition_defs = (!partition_defs.is_empty()).then_some(partition_defs);
+    let groups = build_affinity_group_definitions(table, partition_defs)?;
+    if groups.is_empty() {
+        return Ok(());
+    }
+    tidb_ddl_logutil::ddl_logger().info(
+        "creating affinity groups in PD",
+        &[
+            tidb_log::Field::new("tableID", tidb_log::Value::I64(table.id)),
+            tidb_log::Field::new(
+                "groupIDs",
+                tidb_log::Value::Str(format!("{:?}", collect_affinity_group_ids(&groups))),
             ),
-        }
-    }
+        ],
+    );
+    tidb_domain_affinity::create_groups_if_not_exists(&groups).map_err(|error| error.to_string())
+}
 
-    /// Whether the change owes PD nothing.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.create.is_empty() && self.delete.is_empty()
-    }
+/// Go `deleteTableAffinityGroupsInPD`: deletes the groups of `table`, or of
+/// the given partitions of it. Best-effort cleanup: the callers log a
+/// failure and continue.
+pub fn delete_table_affinity_groups_in_pd(
+    table: &TableInfo,
+    partition_defs: Option<&[PartitionDefinition]>,
+) -> Result<(), String> {
+    delete_table_affinity_groups(table, partition_defs)
+}
 
-    /// Creates the groups; the error is the job's.
-    pub fn apply_create(&self) -> Result<(), String> {
-        if self.create.is_empty() {
-            return Ok(());
-        }
-        tidb_domain_affinity::create_groups_if_not_exists(&self.create).map_err(|error| match self
-            .create_error_context
-        {
-            Some(context) => format!("{context}: {error}"),
-            None => error.to_string(),
+/// Go `deleteTableAffinityGroupsWithTimeout`: the deletion rollback and
+/// post-commit cleanup run, after the step context may be cancelled. These
+/// PD calls take no context, so it is [`delete_table_affinity_groups_in_pd`].
+pub fn delete_table_affinity_groups_with_timeout(
+    table: &TableInfo,
+    partition_defs: Option<&[PartitionDefinition]>,
+) -> Result<(), String> {
+    delete_table_affinity_groups(table, partition_defs)
+}
+
+/// Go `deleteTableAffinityGroups`.
+fn delete_table_affinity_groups(
+    table: &TableInfo,
+    partition_defs: Option<&[PartitionDefinition]>,
+) -> Result<(), String> {
+    let groups = build_affinity_group_definitions(table, partition_defs)?;
+    tidb_domain_affinity::delete_groups_with_retry(&collect_affinity_group_ids(&groups))
+        .map_err(|error| error.to_string())
+}
+
+/// Go `partitionDefinitionsFromIDs`: an explicit list even when `ids` is
+/// empty, since no list selects all of a table's partitions.
+#[must_use]
+pub fn partition_definitions_from_ids(ids: &[i64]) -> Vec<PartitionDefinition> {
+    ids.iter()
+        .map(|id| PartitionDefinition {
+            id: *id,
+            ..PartitionDefinition::default()
         })
-    }
+        .collect()
+}
 
-    /// Deletes the groups, best-effort with Go's retries; a final failure is
-    /// logged and does not fail the change.
-    pub fn apply_delete(&self) {
-        if self.delete.is_empty() {
-            return;
-        }
-        if let Err(error) = tidb_domain_affinity::delete_groups_with_retry(&self.delete) {
-            tidb_ddl_logutil::ddl_logger().error(
-                "failed to delete affinity groups from PD",
-                &[tidb_log::Field::new(
-                    "error",
-                    tidb_log::Value::Str(error.to_string()),
-                )],
-            );
-        }
+/// Go `collectTableAffinityGroupIDs`: adds the group ids of `table` to
+/// `group_ids`.
+pub fn collect_table_affinity_group_ids(
+    table: &TableInfo,
+    group_ids: &mut std::collections::BTreeSet<String>,
+) -> Result<(), String> {
+    group_ids.extend(build_affinity_group_definitions(table, None)?.into_keys());
+    Ok(())
+}
+
+/// Go `batchDeleteTableAffinityGroups`: deletes the groups of several
+/// tables (DROP DATABASE); the error is the caller's to log.
+pub fn batch_delete_table_affinity_groups(
+    group_ids: &std::collections::BTreeSet<String>,
+) -> Result<(), String> {
+    if group_ids.is_empty() {
+        return Ok(());
     }
+    let ids: Vec<String> = group_ids.iter().cloned().collect();
+    tidb_ddl_logutil::ddl_logger().info(
+        "deleting affinity groups for batch tables",
+        &[tidb_log::Field::new("groupIDs", tidb_log::Value::Str(format!("{ids:?}")))],
+    );
+    tidb_domain_affinity::delete_groups_with_retry(&ids).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
