@@ -579,3 +579,24 @@ Projection_18	8000.00	root		Column#8
   └─Projection_32(Probe)	6400.00	root		100.00->Column#8
     └─Selection_33	6400.00	root		eq(executor__expand.tr.a, 2024-09-15 00:00:00.000000)
       └─TableDual_34	8000.00	root		rows:1
+drop table if exists t_not_rollup;
+create table t_not_rollup (a int, b int);
+insert into t_not_rollup values (1, null), (null, 2), (3, 4), (5, 6);
+select a is not null as x, b is not null as y, count(*) as c from t_not_rollup group by a is not null, b is not null with rollup;
+x	y	c
+NULL	NULL	4
+0	NULL	1
+0	1	1
+1	NULL	3
+1	0	1
+1	1	2
+select not (a in (1, 3)) as x, not (b in (2, 4)) as y, count(*) as c from t_not_rollup group by not (a in (1, 3)), not (b in (2, 4)) with rollup;
+x	y	c
+NULL	NULL	1
+NULL	NULL	4
+NULL	0	1
+0	NULL	1
+0	NULL	2
+0	0	1
+1	NULL	1
+1	1	1

@@ -65,6 +65,13 @@ func TestExpressionSemanticEqual(t *testing.T) {
 	sf10 := newFunctionWithMockCtx(ast.UnaryNot, sf7)
 	require.True(t, ExpressionsSemanticEqual(sf1, sf10))
 
+	// not(isnull(a)) and not(isnull(b)) have no comparison to fold the NOT into and must stay distinct.
+	notNullA := newFunctionWithMockCtx(ast.UnaryNot, newFunctionWithMockCtx(ast.IsNull, a))
+	notNullA2 := newFunctionWithMockCtx(ast.UnaryNot, newFunctionWithMockCtx(ast.IsNull, a))
+	notNullB := newFunctionWithMockCtx(ast.UnaryNot, newFunctionWithMockCtx(ast.IsNull, b))
+	require.True(t, ExpressionsSemanticEqual(notNullA, notNullA2))
+	require.False(t, ExpressionsSemanticEqual(notNullA, notNullB))
+
 	// order insensitive cases
 	// a + b; b + a
 	p1 := newFunctionWithMockCtx(ast.Plus, a, b)
