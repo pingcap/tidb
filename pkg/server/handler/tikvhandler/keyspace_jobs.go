@@ -115,7 +115,12 @@ func (h *KeyspaceActiveJobsHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 	}
 	// Keep admission until workers actually exit: a started store open or runtime
 	// initialization can outlive request cancellation.
-	defer activeJobsRequestRunning.Store(false)
+	admissionHeld := true
+	defer func() {
+		if admissionHeld {
+			activeJobsRequestRunning.Store(false)
+		}
+	}()
 	concurrency := min(max(input.Concurrency, 1), max(cpu.GetCPUCount(), 1), len(results))
 	ctx, cancel := context.WithTimeout(req.Context(), activeJobsBatchTimeout)
 	defer cancel()
@@ -138,6 +143,8 @@ func (h *KeyspaceActiveJobsHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 		})
 	}
 	workers.Wait()
+	admissionHeld = false
+	activeJobsRequestRunning.Store(false)
 	handler.WriteData(w, struct {
 		Keyspaces []keyspaceJobResult `json:"keyspaces"`
 	}{Keyspaces: results})

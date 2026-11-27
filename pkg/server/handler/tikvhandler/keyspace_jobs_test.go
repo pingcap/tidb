@@ -273,6 +273,96 @@ func TestKeyspaceActiveJobsConcurrency(t *testing.T) {
 			require.Equal(t, 1, acquired, "admission must recover after the active request exits")
 		})
 	}
+	t.Run("stalled response write releases admission", func(t *testing.T) {
+		writeStarted, unblockWrite, firstDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		releaseWrite := sync.OnceFunc(func() { close(unblockWrite) })
+		firstResponse := &blockingJobResponseWriter{
+			ResponseRecorder: httptest.NewRecorder(),
+			writeStarted:     writeStarted,
+			unblockWrite:     unblockWrite,
+		}
+		first := &KeyspaceActiveJobsHandler{acquireRuntime: func(context.Context, string, string) (sqlsvrapi.KSRuntimeHandle, error) {
+			return nil, unavailable
+		}}
+		go func() {
+			defer close(firstDone)
+			first.ServeHTTP(firstResponse, httptest.NewRequest(http.MethodPost, "/keyspaces/jobs/active",
+				strings.NewReader(`{"keyspaces":["ks1"]}`)))
+		}()
+		defer func() {
+			releaseWrite()
+			select {
+			case <-firstDone:
+			case <-time.After(5 * time.Second):
+				t.Error("first request did not stop")
+			}
+		}()
+		select {
+		case <-writeStarted:
+		case <-time.After(5 * time.Second):
+			t.Fatal("first response write did not start")
+		}
+
+		workerStarted, unblockWorker, secondDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		releaseWorker := sync.OnceFunc(func() { close(unblockWorker) })
+		second := &KeyspaceActiveJobsHandler{acquireRuntime: func(context.Context, string, string) (sqlsvrapi.KSRuntimeHandle, error) {
+			close(workerStarted)
+			<-unblockWorker
+			return nil, unavailable
+		}}
+		secondResponse := httptest.NewRecorder()
+		go func() {
+			defer close(secondDone)
+			second.ServeHTTP(secondResponse, httptest.NewRequest(http.MethodPost, "/keyspaces/jobs/active",
+				strings.NewReader(`{"keyspaces":["ks2"]}`)))
+		}()
+		defer func() {
+			releaseWorker()
+			select {
+			case <-secondDone:
+			case <-time.After(5 * time.Second):
+				t.Error("second request did not stop")
+			}
+		}()
+		select {
+		case <-workerStarted:
+		case <-secondDone:
+			t.Fatalf("second request was rejected while the first response write was stalled: HTTP %d", secondResponse.Code)
+		case <-time.After(5 * time.Second):
+			t.Fatal("second request did not start")
+		}
+
+		releaseWrite()
+		select {
+		case <-firstDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("first response write did not finish")
+		}
+		require.Equal(t, http.StatusOK, firstResponse.Code)
+		var thirdAcquired int
+		third := &KeyspaceActiveJobsHandler{acquireRuntime: func(context.Context, string, string) (sqlsvrapi.KSRuntimeHandle, error) {
+			thirdAcquired++
+			return nil, unavailable
+		}}
+		postThird := func() *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			third.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/keyspaces/jobs/active",
+				strings.NewReader(`{"keyspaces":["ks3"]}`)))
+			return w
+		}
+		require.Equal(t, http.StatusTooManyRequests, postThird().Code,
+			"finishing the first response must not release the second request's admission")
+		require.Zero(t, thirdAcquired)
+		releaseWorker()
+		select {
+		case <-secondDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("second request did not finish")
+		}
+		require.Equal(t, http.StatusOK, secondResponse.Code)
+		require.Equal(t, http.StatusOK, postThird().Code)
+		require.Equal(t, 1, thirdAcquired)
+	})
 	for _, tc := range []struct {
 		raw  string
 		want int
@@ -327,6 +417,18 @@ func TestKeyspaceActiveJobsConcurrency(t *testing.T) {
 			require.Equal(t, http.StatusOK, w.Code)
 		})
 	}
+}
+
+type blockingJobResponseWriter struct {
+	*httptest.ResponseRecorder
+	writeStarted chan struct{}
+	unblockWrite <-chan struct{}
+}
+
+func (w *blockingJobResponseWriter) Write(p []byte) (int, error) {
+	close(w.writeStarted)
+	<-w.unblockWrite
+	return w.ResponseRecorder.Write(p)
 }
 
 func TestKeyspaceActiveJobsCounts(t *testing.T) {

@@ -1411,12 +1411,14 @@ other than POST that reach the HTTP status router return HTTP 405. The status-po
 multiplexer does not route every HTTP method to that router; for example, PATCH
 on a new connection is routed to the gRPC listener.
 
-Only one active-jobs request can run at a time in a TiDB process. An overlapping
-valid request returns HTTP 429 before checking any keyspaces. Retry with backoff
-after the active request finishes. This limit remains in effect until
-all of that request's checks finish, including initialization that outlives its
-deadline. Use smaller batches when cold keyspaces take too long to check, and
-avoid overlapping polls to the same server.
+Only one active-jobs request can check keyspaces at a time in a TiDB process.
+An overlapping valid request returns HTTP 429 before checking any keyspaces.
+Retry with backoff after the active request's checks finish. This limit remains
+in effect until all of that request's checks finish, including initialization
+that outlives its deadline. The limit is released before writing the response,
+so a slow client receiving results does not block later polls. Use smaller
+batches when cold keyspaces take too long to check, and avoid overlapping polls
+to the same server.
 
 DDL counts include every row in `mysql.tidb_ddl_job`. A job counts until DDL
 removes it from the queue during finalization, including while a job marked
