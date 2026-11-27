@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/distsql",
         "//pkg/kv",
+        "//pkg/parser/mysql",
         "//pkg/planner/core/base",
         "//pkg/planner/planctx",
         "//pkg/sessionctx",

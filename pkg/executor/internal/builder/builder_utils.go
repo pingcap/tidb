@@ -17,6 +17,7 @@ package builder
 import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -73,6 +74,13 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 	if ctx.GetSessionVars().GetDivPrecisionIncrement() != vardef.DefDivPrecisionIncrement {
 		var divPrecIncr uint32 = uint32(ctx.GetSessionVars().GetDivPrecisionIncrement())
 		dagReq.DivPrecisionIncrement = &divPrecIncr
+	}
+	if storeType == kv.TiKV {
+		// TiKV checks NO_ZERO_DATE and NO_ZERO_IN_DATE when it decodes a zero date from the request or
+		// from a row, which TiDB never does, so with them a zero date constant or a stored zero date
+		// fails the request.
+		pbSQLMode := uint64(ctx.GetSessionVars().SQLMode &^ (mysql.ModeNoZeroDate | mysql.ModeNoZeroInDate))
+		dagReq.SqlMode = &pbSQLMode
 	}
 	if storeType == kv.TiFlash {
 		var executors []*tipb.Executor

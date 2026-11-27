@@ -263,3 +263,9 @@ func TestIndexReaderRequiredRows(t *testing.T) {
 		require.NoError(t, executor.Close())
 	}
 }
+
+func TestDAGRequestCarriesSQLMode(t *testing.T) {
+	sctx := defaultCtx()
+	sctx.GetSessionVars().SQLMode = mysql.ModeStrictTransTables | mysql.ModeErrorForDivisionByZero | mysql.ModeNoZeroInDate | mysql.ModeNoZeroDate
+	require.Equal(t, uint64(mysql.ModeStrictTransTables|mysql.ModeErrorForDivisionByZero), buildMockDAGRequest(sctx).GetSqlMode())
+}
