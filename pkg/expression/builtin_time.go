@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -5485,7 +5486,7 @@ func (b *builtinConvertTzSig) convertTz(dt types.Time, fromTzStr, toTzStr string
 		if strings.EqualFold(fromTzStr, "SYSTEM") {
 			fromTzStr = "Local"
 		}
-		fromTz, err = time.LoadLocation(fromTzStr)
+		fromTz, err = timeutil.LoadLocation(fromTzStr)
 		if err != nil {
 			return types.ZeroTime, true, nil
 		}
@@ -5503,7 +5504,7 @@ func (b *builtinConvertTzSig) convertTz(dt types.Time, fromTzStr, toTzStr string
 		if strings.EqualFold(toTzStr, "SYSTEM") {
 			toTzStr = "Local"
 		}
-		toTz, err = time.LoadLocation(toTzStr)
+		toTz, err = timeutil.LoadLocation(toTzStr)
 		if err != nil {
 			return types.ZeroTime, true, nil
 		}
