@@ -48,6 +48,158 @@ func (r *closeOrderingResponse) CollectUnconsumedCopRuntimeStats() []*copr.CopRu
 	return r.stats
 }
 
+// mppStreamResp mocks a TiFlash MPP response stream where execution summaries are
+// only attached to a trailing packet after all data packets (matching real TiFlash).
+type mppStreamResp struct {
+	packets []tipb.SelectResponse
+	idx     int
+}
+
+func (r *mppStreamResp) Next(context.Context) (kv.ResultSubset, error) {
+	if r.idx >= len(r.packets) {
+		return nil, nil
+	}
+	packet := r.packets[r.idx]
+	r.idx++
+	raw, err := packet.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	return &mppStreamResultSubset{
+		data: raw,
+		detail: &copr.CopRuntimeStats{
+			CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "tiflash0"},
+		},
+	}, nil
+}
+
+func (*mppStreamResp) Close() error { return nil }
+
+type mppStreamResultSubset struct {
+	data   []byte
+	detail *copr.CopRuntimeStats
+}
+
+func (r *mppStreamResultSubset) GetData() []byte                           { return r.data }
+func (*mppStreamResultSubset) GetStartKey() kv.Key                         { return nil }
+func (r *mppStreamResultSubset) MemSize() int64                            { return int64(len(r.data)) }
+func (*mppStreamResultSubset) RespTime() time.Duration                     { return 0 }
+func (r *mppStreamResultSubset) GetCopRuntimeStats() *copr.CopRuntimeStats { return r.detail }
+
+func makeTiFlashSummary(executorID string, rows uint64) *tipb.ExecutorExecutionSummary {
+	ns := uint64(1000)
+	iters := uint64(1)
+	concurrency := uint64(1)
+	id := executorID
+	return &tipb.ExecutorExecutionSummary{
+		TimeProcessedNs: &ns,
+		NumProducedRows: &rows,
+		NumIterations:   &iters,
+		Concurrency:     &concurrency,
+		ExecutorId:      &id,
+	}
+}
+
+func newTiFlashSelectResultForTest(t *testing.T, packets []tipb.SelectResponse, planIDs []int, rootID int) (*selectResult, *execdetails.RuntimeStatsColl) {
+	t.Helper()
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
+	coll := execdetails.NewRuntimeStatsColl(nil)
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = coll
+	dctx := ctx.GetDistSQLCtx()
+
+	colTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	sr := &selectResult{
+		label:      "mpp",
+		resp:       &mppStreamResp{packets: packets},
+		rowLen:     1,
+		fieldTypes: colTypes,
+		ctx:        dctx,
+		copPlanIDs: planIDs,
+		rootPlanID: rootID,
+		storeType:  kv.TiFlash,
+		stats:      &selectResultRuntimeStats{},
+	}
+	return sr, coll
+}
+
+func encodeIntChunk(t *testing.T, vals ...int64) tipb.Chunk {
+	t.Helper()
+	colTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	chk := chunk.New(colTypes, len(vals), len(vals))
+	for _, v := range vals {
+		chk.AppendInt64(0, v)
+	}
+	codec := chunk.NewCodec(colTypes)
+	return tipb.Chunk{RowsData: codec.Encode(chk)}
+}
+
+// TestMPPExecutionSummaryLostOnEarlyClose reproduces the production issue where:
+//  1. TiFlash sends data packets first, then a trailing summary-only packet
+//  2. TiDB HashJoin (empty build + canSkipProbe) closes after the first Next()
+//  3. The trailing summary packet is never consumed, so MPP plan nodes lose execution info
+//
+// Control case: fully draining the stream records the summary.
+func TestMPPExecutionSummaryLostOnEarlyClose(t *testing.T) {
+	planIDs := []int{214, 67}
+	rootID := 215
+	dataPacket := tipb.SelectResponse{
+		EncodeType: tipb.EncodeType_TypeChunk,
+		Chunks:     []tipb.Chunk{encodeIntChunk(t, 1, 2, 3)},
+	}
+	summaryPacket := tipb.SelectResponse{
+		EncodeType: tipb.EncodeType_TypeChunk,
+		ExecutionSummaries: []*tipb.ExecutorExecutionSummary{
+			makeTiFlashSummary("ExchangeSender_214", 3),
+			makeTiFlashSummary("TableFullScan_67", 100),
+		},
+	}
+
+	t.Run("full_drain_records_summary", func(t *testing.T) {
+		sr, coll := newTiFlashSelectResultForTest(t, []tipb.SelectResponse{dataPacket, summaryPacket}, planIDs, rootID)
+		chk := chunk.New(sr.fieldTypes, 1024, 1024)
+		chk.SetRequiredRows(3, 1024)
+		require.NoError(t, sr.Next(context.Background(), chk))
+		require.Equal(t, 3, chk.NumRows())
+		require.Equal(t, 1, sr.resp.(*mppStreamResp).idx, "first Next should only consume the data packet")
+		// Drain until EOF so the trailing summary packet is fetched.
+		for {
+			chk.Reset()
+			chk.SetRequiredRows(3, 1024)
+			require.NoError(t, sr.Next(context.Background(), chk))
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+		require.NoError(t, sr.Close())
+		require.True(t, coll.ExistsCopStats(214), "full drain should record ExchangeSender summary")
+		require.True(t, coll.ExistsCopStats(67), "full drain should record TableFullScan summary")
+		require.Equal(t, int64(3), coll.GetCopStats(214).GetActRows())
+		require.Equal(t, int64(100), coll.GetCopStats(67).GetActRows())
+	})
+
+	t.Run("early_close_loses_summary", func(t *testing.T) {
+		sr, coll := newTiFlashSelectResultForTest(t, []tipb.SelectResponse{dataPacket, summaryPacket}, planIDs, rootID)
+		// Limit required rows so readFromChunk returns via ReuseIntermChk and does NOT
+		// eagerly fetch the trailing summary-only packet in the same Next() call.
+		// This matches HashJoin probe fetcher limiting fetch size before skipProbe/Close.
+		chk := chunk.New(sr.fieldTypes, 1024, 1024)
+		chk.SetRequiredRows(3, 1024)
+		require.NoError(t, sr.Next(context.Background(), chk))
+		require.Equal(t, 3, chk.NumRows())
+		require.Equal(t, 1, sr.resp.(*mppStreamResp).idx, "first Next should only consume the data packet")
+		require.NoError(t, sr.Close())
+
+		// Current behavior (bug): trailing MPP execution summary packet is dropped on Close.
+		// Fix directions: drain remaining MPP packets on Close, or enable ReportMPPTaskStatus
+		// for HashJoin empty-build early-close (same class as LIMIT).
+		require.False(t, coll.ExistsCopStats(214),
+			"repro: early Close must currently lose ExchangeSender_214 execution summary")
+		require.False(t, coll.ExistsCopStats(67),
+			"repro: early Close must currently lose TableFullScan_67 execution summary")
+	})
+}
+
 func TestUpdateCopRuntimeStats(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()

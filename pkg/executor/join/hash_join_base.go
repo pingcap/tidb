@@ -160,6 +160,19 @@ func (fetcher *probeSideTupleFetcherBase) getProbeSideResource(shouldLimitProbeF
 // and sends the chunks to multiple channels which will be read by multiple join workers.
 func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, maxChunkSize int, isBuildEmpty isBuildSideEmpty, checkSpill isSpillTriggered, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
 	hasWaitedForBuild := false
+	// When the join can skip probing on an empty build side, wait for build before the first
+	// probe Next(). Otherwise we may block on a slow probe (e.g. TiFlash MPP) even though the
+	// join result is already empty, then Close the probe stream and drop TiFlash's trailing
+	// execution-summary packet. For joins that cannot skip, keep overlapping the first probe
+	// Next() with build for latency.
+	if canSkipIfBuildEmpty {
+		skipProbe, buildSuccess := wait4BuildSide(isBuildEmpty, checkSpill, canSkipIfBuildEmpty, needScanAfterProbeDone, hashJoinCtx)
+		fetcher.buildSuccess = buildSuccess
+		if skipProbe {
+			return
+		}
+		hasWaitedForBuild = true
+	}
 	for {
 		probeSideResource := fetcher.getProbeSideResource(shouldLimitProbeFetchSize, maxChunkSize, hashJoinCtx)
 		if probeSideResource == nil {
