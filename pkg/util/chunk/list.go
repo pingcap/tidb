@@ -67,6 +67,19 @@ func (l *List) GetMemTracker() *memory.Tracker {
 	return l.memTracker
 }
 
+// MemoryUsage returns the memory retained by active and reusable chunks.
+// Unlike the tracker, it includes the current append chunk and excludes memory
+// belonging to other lists that share the tracker.
+func (l *List) MemoryUsage() (sum int64) {
+	for _, chk := range l.chunks {
+		sum += chk.MemoryUsage()
+	}
+	for _, chk := range l.freelist {
+		sum += chk.MemoryUsage()
+	}
+	return
+}
+
 // Len returns the length of the List.
 func (l *List) Len() int {
 	return l.length

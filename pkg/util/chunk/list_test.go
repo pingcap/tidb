@@ -103,16 +103,30 @@ func TestListMemoryUsage(t *testing.T) {
 
 	list := NewList(fieldTypes, maxChunkSize, maxChunkSize*2)
 	require.Equal(t, int64(0), list.GetMemTracker().BytesConsumed())
+	require.Zero(t, list.MemoryUsage())
 
 	list.AppendRow(srcChk.GetRow(0))
 	require.Equal(t, int64(0), list.GetMemTracker().BytesConsumed())
 
 	memUsage := list.chunks[0].MemoryUsage()
+	require.Equal(t, memUsage, list.MemoryUsage())
 	list.Reset()
 	require.Equal(t, memUsage, list.GetMemTracker().BytesConsumed())
+	require.Equal(t, memUsage, list.MemoryUsage())
 
 	list.Add(srcChk)
 	require.Equal(t, memUsage+srcChk.MemoryUsage(), list.GetMemTracker().BytesConsumed())
+	require.Equal(t, memUsage+srcChk.MemoryUsage(), list.MemoryUsage())
+
+	// A shared tracker must not make another list account for these chunks.
+	other := NewListWithMemTracker(fieldTypes, maxChunkSize, maxChunkSize*2, list.GetMemTracker())
+	require.Zero(t, other.MemoryUsage())
+	other.AppendRow(srcChk.GetRow(0))
+	require.Equal(t, other.GetChunk(0).MemoryUsage(), other.MemoryUsage())
+	require.Equal(t, memUsage+srcChk.MemoryUsage(), list.MemoryUsage())
+
+	list.Clear()
+	require.Zero(t, list.MemoryUsage())
 }
 
 func BenchmarkListMemoryUsage(b *testing.B) {
