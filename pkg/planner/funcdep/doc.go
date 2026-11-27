@@ -40,10 +40,10 @@ package funcdep
 //	This alternate definition is briefly covered in section 2.5.3.2 of the paper (see definition
 //	2.19). The reason for this change is to allow a lax dependency to be upgraded to a strict
 //	dependency more readily, needing only the determinant columns to be not-null rather than
-//  both determinant and dependant columns.
+//  both determinant and dependent columns.
 //
 // This is on the condition that, for definite values of determinant of a Lax FD, it won't
-// have two same definite dependant value. That's true, because there is no way can derive
+// have two same definite dependent value. That's true, because there is no way can derive
 // to this kind of FD.
 //
 // Even in our implementation of outer join, the only way to produce duplicate definite

@@ -445,7 +445,7 @@ func (s *FDSet) AddConstants(cons intset.FastIntSet) {
 			if fd.strict {
 				// Constant columns can be removed from the determinant of a strict
 				// FD. If all determinant columns are constant, then the entire FD
-				// can be removed, since this means that the dependant columns must
+				// can be removed, since this means that the dependent columns must
 				// also be constant (and were part of constant closure added to the
 				// constant FD above).
 				if fd.removeColumnsFromSide(cols) {
@@ -1042,8 +1042,8 @@ func (s *FDSet) ProjectCols(cols intset.FastIntSet) {
 		fd := s.fdEdges[i]
 
 		// step1: clear the `to` side
-		// subtract out un-projected columns from dependants.
-		// subtract out strict constant columns from dependants.
+		// subtract out un-projected columns from dependents.
+		// subtract out strict constant columns from dependents.
 		if !fd.to.SubsetOf(cols) {
 			// since loop 1 has computed the complete transitive closure for strict FD, now as:
 			// 1: equivalence FD: {superset} == {superset}
