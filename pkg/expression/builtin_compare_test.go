@@ -77,6 +77,35 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 	}
 }
 
+func TestTimestampAddComparisonType(t *testing.T) {
+	ctx := createContext(t)
+	tblInfo := newTestTableBuilder("").
+		add("d", mysql.TypeDate, 0).
+		add("dt", mysql.TypeDatetime, 0).
+		add("s", mysql.TypeVarchar, 0).
+		build()
+	rhs, err := ParseSimpleExpr(ctx, "'2021-02-01 00:00:00'", WithTableInfo("", tblInfo))
+	require.NoError(t, err)
+
+	tests := []struct {
+		exprStr string
+		cmpType types.EvalType
+	}{
+		{"timestampadd(month, 1, d)", types.ETDatetime},
+		{"timestampadd(month, 1, dt)", types.ETDatetime},
+		{"timestampadd(month, 1, s)", types.ETString},
+	}
+	for _, test := range tests {
+		t.Run(test.exprStr, func(t *testing.T) {
+			lhs, err := ParseSimpleExpr(ctx, test.exprStr, WithTableInfo("", tblInfo))
+			require.NoError(t, err)
+			require.Equal(t, mysql.TypeVarString, lhs.GetType(ctx).GetType())
+			require.Equal(t, test.cmpType, GetAccurateCmpType(ctx, lhs, rhs))
+			require.Equal(t, test.cmpType, GetAccurateCmpType(ctx, lhs.Clone(), rhs))
+		})
+	}
+}
+
 func TestCompare(t *testing.T) {
 	ctx := createContext(t)
 
