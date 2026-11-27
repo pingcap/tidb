@@ -562,3 +562,141 @@ id
 6
 rollback;
 drop table t;
+drop table if exists t;
+create table t (id int primary key, a int, j json, index m ((cast(j as signed array))), index ia(a));
+insert into t values (1, 1, '[1,2]'), (2, 1, '[1,1]'), (3, 2, '[3]'), (4, 2, '[2,1]'), (5, 3, '1'), (6, 3, null), (7, 3, '[]');
+explain format='brief' select id from t use index(m) where json_contains(j, '1', '$[1]');
+id	estRows	task	access object	operator info
+Projection	10.00	root		expression__multi_valued_index.t.id
+└─IndexMerge	0.01	root		type: intersection
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:m(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.01	cop[tikv]		json_contains(expression__multi_valued_index.t.j, cast("1", json BINARY), "$[1]")
+    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(m) where json_contains(j, '1', '$[1]') order by id;
+id
+2
+4
+select id from t ignore index(m) where json_contains(j, '1', '$[1]') order by id;
+id
+2
+4
+select id from t use index(m) where json_contains(j, '1', '$[5]') order by id;
+id
+select id from t use index(m) where json_contains(j, '1', '$[0]') order by id;
+id
+1
+2
+5
+select id from t ignore index(m) where json_contains(j, '1', '$[0]') order by id;
+id
+1
+2
+5
+select id from t use index(m) where json_contains(j, '1', '$') order by id;
+id
+1
+2
+4
+5
+select id from t ignore index(m) where json_contains(j, '1', '$') order by id;
+id
+1
+2
+4
+5
+explain format='brief' select id from t use index(m) where json_contains(j, '[1,2]', '$');
+id	estRows	task	access object	operator info
+Projection	1.00	root		expression__multi_valued_index.t.id
+└─IndexMerge	0.01	root		type: intersection
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:m(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:m(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.01	cop[tikv]		json_contains(expression__multi_valued_index.t.j, cast("[1,2]", json BINARY), "$")
+    └─TableRowIDScan	0.01	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(m) where json_contains(j, '[1,2]', '$') order by id;
+id
+1
+4
+select id from t ignore index(m) where json_contains(j, '[1,2]', '$') order by id;
+id
+1
+4
+select id from t use index(m) where json_contains(j, '[1,1]', '$[1]') order by id;
+id
+select id from t ignore index(m) where json_contains(j, '[1,1]', '$[1]') order by id;
+id
+explain format='brief' select id from t use index(m) where json_contains(j, '1', if(json_overlaps(j, '[1]'), '$[1]', '$[0]'));
+id	estRows	task	access object	operator info
+Projection	8.00	root		expression__multi_valued_index.t.id
+└─Selection	8.00	root		json_contains(expression__multi_valued_index.t.j, cast("1", json BINARY), if(json_overlaps(expression__multi_valued_index.t.j, cast("[1]", json BINARY)), "$[1]", "$[0]"))
+  └─IndexMerge	10.00	root		type: intersection
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:m(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(m) where json_contains(j, '1', if(json_overlaps(j, '[1]'), '$[1]', '$[0]')) order by id;
+id
+2
+4
+select id from t ignore index(m) where json_contains(j, '1', if(json_overlaps(j, '[1]'), '$[1]', '$[0]')) order by id;
+id
+2
+4
+select id from t use index(m) where json_contains(j, '1', if(json_overlaps(j, '[1]'), '$[5]', '$[0]')) order by id;
+id
+explain format='brief' select /*+ use_index_merge(t, m) */ id from t where json_contains(j, '1', '$[1]') or json_contains(j, '3', '$[0]');
+id	estRows	task	access object	operator info
+Projection	19.99	root		expression__multi_valued_index.t.id
+└─IndexMerge	0.04	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:m(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:m(cast(`j` as signed array))	range:[3,3], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.04	cop[tikv]		or(json_contains(expression__multi_valued_index.t.j, cast("1", json BINARY), "$[1]"), json_contains(expression__multi_valued_index.t.j, cast("3", json BINARY), "$[0]"))
+    └─TableRowIDScan	19.99	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ use_index_merge(t, m) */ id from t where json_contains(j, '1', '$[1]') or json_contains(j, '3', '$[0]') order by id;
+id
+2
+3
+4
+select id from t ignore index(m) where json_contains(j, '1', '$[1]') or json_contains(j, '3', '$[0]') order by id;
+id
+2
+3
+4
+explain format='brief' select /*+ use_index_merge(t, m, ia) */ id from t where json_contains(j, '1', '$[1]') and a = 1;
+id	estRows	task	access object	operator info
+Projection	1.00	root		expression__multi_valued_index.t.id
+└─IndexMerge	0.01	root		type: intersection
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:m(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.01	cop[tikv]		json_contains(expression__multi_valued_index.t.j, cast("1", json BINARY), "$[1]")
+    └─TableRowIDScan	0.01	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ use_index_merge(t, m, ia) */ id from t where json_contains(j, '1', '$[1]') and a = 1 order by id;
+id
+2
+select id from t ignore index(m) where json_contains(j, '1', '$[1]') and a = 1 order by id;
+id
+2
+explain format='brief' select /*+ use_index_merge(t, m) */ id from t where json_contains(j, '1', '$[1]') and 2 member of (j);
+id	estRows	task	access object	operator info
+Projection	8.00	root		expression__multi_valued_index.t.id
+└─IndexMerge	0.01	root		type: intersection
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:m(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:m(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.01	cop[tikv]		json_contains(expression__multi_valued_index.t.j, cast("1", json BINARY), "$[1]")
+    └─TableRowIDScan	0.01	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ use_index_merge(t, m) */ id from t where json_contains(j, '1', '$[1]') and 2 member of (j) order by id;
+id
+4
+select id from t ignore index(m) where json_contains(j, '1', '$[1]') and 2 member of (j) order by id;
+id
+4
+explain format='brief' select id from t use index(m) where json_contains(j, '1');
+id	estRows	task	access object	operator info
+Projection	10.00	root		expression__multi_valued_index.t.id
+└─IndexMerge	10.00	root		type: intersection
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:m(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(m) where json_contains(j, '1') order by id;
+id
+1
+2
+4
+5
+drop table t;
