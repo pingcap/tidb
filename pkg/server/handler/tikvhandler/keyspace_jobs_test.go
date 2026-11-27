@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -204,6 +205,74 @@ func TestKeyspaceActiveJobs(t *testing.T) {
 func TestKeyspaceActiveJobsConcurrency(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(3)")
 	unavailable := errors.New("keyspace unavailable")
+	for _, cancelRequest := range []bool{false, true} {
+		t.Run("overlapping requests/canceled="+strconv.FormatBool(cancelRequest), func(t *testing.T) {
+			started, unblock, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(unblock) })
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			first := &KeyspaceActiveJobsHandler{acquireRuntime: func(context.Context, string, string) (sqlsvrapi.KSRuntimeHandle, error) {
+				close(started)
+				// A driver open can outlive request cancellation.
+				<-unblock
+				return nil, unavailable
+			}}
+			firstResponse := httptest.NewRecorder()
+			go func() {
+				defer close(done)
+				first.ServeHTTP(firstResponse, httptest.NewRequest(http.MethodPost, "/keyspaces/jobs/active",
+					strings.NewReader(`{"keyspaces":["ks1"]}`)).WithContext(ctx))
+			}()
+			defer func() {
+				release()
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					t.Error("active request did not stop")
+				}
+			}()
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("active request did not start")
+			}
+			if cancelRequest {
+				cancel()
+			}
+			var acquired int
+			second := &KeyspaceActiveJobsHandler{acquireRuntime: func(context.Context, string, string) (sqlsvrapi.KSRuntimeHandle, error) {
+				acquired++
+				return nil, unavailable
+			}}
+			post := func(body string) *httptest.ResponseRecorder {
+				w := httptest.NewRecorder()
+				second.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/keyspaces/jobs/active", strings.NewReader(body)))
+				return w
+			}
+			require.Equal(t, http.StatusBadRequest, post(`{"keyspaces":[]}`).Code)
+			w := post(`{"keyspaces":["ks2"]}`)
+			require.Equal(t, http.StatusTooManyRequests, w.Code, w.Body.String())
+			if cancelRequest {
+				select {
+				case <-done:
+					t.Fatal("cancellation returned before the worker exited")
+				case <-time.After(100 * time.Millisecond):
+				}
+				require.Equal(t, http.StatusTooManyRequests, post(`{"keyspaces":["ks2"]}`).Code,
+					"cancellation must not release admission before the worker exits")
+			}
+			require.Zero(t, acquired, "overlapping requests must not open another runtime")
+			release()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("active request did not stop")
+			}
+			require.Equal(t, http.StatusOK, firstResponse.Code)
+			require.Equal(t, http.StatusOK, post(`{"keyspaces":["ks2"]}`).Code)
+			require.Equal(t, 1, acquired, "admission must recover after the active request exits")
+		})
+	}
 	for _, tc := range []struct {
 		raw  string
 		want int
@@ -262,7 +331,18 @@ func TestKeyspaceActiveJobsConcurrency(t *testing.T) {
 
 func TestKeyspaceActiveJobsCounts(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	// The mock owner's cancellation only signals retirement. Wait for the
+	// scheduler and its workers to stop before inserting synthetic DDL jobs.
+	schedulerClosed := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterSchedulerClose", func() {
+		close(schedulerClosed)
+	})
 	dom.DDL().OwnerManager().CampaignCancel()
+	select {
+	case <-schedulerClosed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("DDL scheduler did not stop")
+	}
 	tk := testkit.NewTestKit(t, store)
 	counts, err := countActiveKeyspaceJobs(context.Background(), tk.Session())
 	require.NoError(t, err)
@@ -406,22 +486,22 @@ func TestKeyspaceActiveJobsRuntimeCleanup(t *testing.T) {
 			switch tc {
 			case "success":
 				require.NoError(t, err)
-				require.Equal(t, []string{"put", "release(true)"}, events)
+				require.Equal(t, []string{"put", "release(false)"}, events)
 			case "acquire error":
 				require.Error(t, err)
 				require.Empty(t, events)
 			case "session error":
 				require.Error(t, err)
-				require.Equal(t, []string{"release(true)"}, events)
+				require.Equal(t, []string{"release(false)"}, events)
 			case "cancellation":
 				require.ErrorIs(t, err, context.Canceled)
-				require.Equal(t, []string{"release(true)"}, events)
+				require.Equal(t, []string{"release(false)"}, events)
 			case "query error":
 				require.ErrorIs(t, err, queryErr)
-				require.Equal(t, []string{"destroy", "release(true)"}, events)
+				require.Equal(t, []string{"destroy", "release(false)"}, events)
 			case "import result close error":
 				require.ErrorIs(t, err, closeErr)
-				require.Equal(t, []string{"destroy", "release(true)"}, events)
+				require.Equal(t, []string{"destroy", "release(false)"}, events)
 			}
 		})
 	}

@@ -42,6 +42,10 @@ const (
 	activeJobsBatchTimeout           = 2 * time.Minute
 )
 
+// Admission is shared by all handlers so overlapping polls cannot multiply
+// the per-request cold runtime work and its contention with DXF store opens.
+var activeJobsRequestRunning atomic.Bool
+
 type keyspaceJobCounts struct {
 	DDLJobs    int64 `json:"ddl_jobs"`
 	ImportJobs int64 `json:"import_jobs"`
@@ -105,6 +109,13 @@ func (h *KeyspaceActiveJobsHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 		seen[ks] = struct{}{}
 		results = append(results, keyspaceJobResult{Keyspace: ks})
 	}
+	if !activeJobsRequestRunning.CompareAndSwap(false, true) {
+		handler.WriteErrorWithCode(w, http.StatusTooManyRequests, errors.New("another active-jobs request is in progress"))
+		return
+	}
+	// Keep admission until workers actually exit: a started store open or runtime
+	// initialization can outlive request cancellation.
+	defer activeJobsRequestRunning.Store(false)
 	concurrency := min(max(input.Concurrency, 1), max(cpu.GetCPUCount(), 1), len(results))
 	ctx, cancel := context.WithTimeout(req.Context(), activeJobsBatchTimeout)
 	defer cancel()
@@ -155,7 +166,8 @@ func (h *KeyspaceActiveJobsHandler) countKeyspace(ctx context.Context, targetKS 
 	if err != nil {
 		return keyspaceJobCounts{}, err
 	}
-	defer runtime.Release(true)
+	// Reuse the runtime for later polls and DXF work until normal idle eviction.
+	defer runtime.Release(false)
 	if err := ctx.Err(); err != nil {
 		return keyspaceJobCounts{}, err
 	}

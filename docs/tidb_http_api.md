@@ -1382,7 +1382,7 @@ Send a JSON object with these fields:
 | Field | Meaning |
 | --- | --- |
 | `keyspaces` | Required array of 1 to 1,000 valid user-keyspace names. Duplicates count toward the limit and are checked once, in first-occurrence order. `SYSTEM` is not accepted. |
-| `concurrency` | Optional integer limiting simultaneous keyspace checks. Defaults to 1. Values below 1 become 1; values above the process's usable CPU count become that CPU count. |
+| `concurrency` | Optional integer limiting simultaneous keyspace checks per request. Defaults to 1. Values below 1 become 1; values above the process's usable CPU count become that CPU count. |
 
 ```shell
 curl -X POST 'http://{TiDBIP}:10080/keyspaces/jobs/active' \
@@ -1407,7 +1407,16 @@ keyspaces are preserved. Results follow the input order after deduplication.
 The JSON request body can be up to 256 KiB, including whitespace. Split larger
 bodies or lists longer than 1,000 entries across requests. Oversized or
 malformed requests return HTTP 400 before any keyspace is checked. Methods
-other than POST return HTTP 405.
+other than POST that reach the HTTP status router return HTTP 405. The status-port
+multiplexer does not route every HTTP method to that router; for example, PATCH
+on a new connection is routed to the gRPC listener.
+
+Only one active-jobs request can run at a time in a TiDB process. An overlapping
+valid request returns HTTP 429 before checking any keyspaces. Retry with backoff
+after the active request finishes. This limit remains in effect until
+all of that request's checks finish, including initialization that outlives its
+deadline. Use smaller batches when cold keyspaces take too long to check, and
+avoid overlapping polls to the same server.
 
 DDL counts include every row in `mysql.tidb_ddl_job`. A job counts until DDL
 removes it from the queue during finalization, including while a job marked
@@ -1423,6 +1432,9 @@ one two-minute timeout across the batch, subject to any earlier request deadline
 Individual runtime and session initialization operations and teardown can take longer.
 The handler returns the borrowed session to the pool on success and discards it
 if a query fails, including during result-set cleanup. It then releases its
-runtime handle. If it was the last holder, the handler closes the runtime
-immediately. Other holders can continue using the shared runtime and release it
-under their usual policy.
+runtime handle without closing an idle runtime, so subsequent polls and DXF tasks
+can reuse it. The existing runtime manager evicts runtimes after 30 minutes without
+a holder, checking once per minute. Polling many distinct keyspaces can therefore
+retain their runtime resources during this window. The request limit bounds concurrent
+polling work; it does not bound the number of retained runtimes. An active cold
+check can still contend with DXF startup for the TiKV driver's store-open lock.
