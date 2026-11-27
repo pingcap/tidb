@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "executor_issue_test.go",
+        "float_cast_date_grouping_test.go",
         "main_test.go",
     ],
     flaky = True,
