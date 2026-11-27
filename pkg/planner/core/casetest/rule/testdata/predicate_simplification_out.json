@@ -83,6 +83,48 @@
         ]
       },
       {
+        "SQL": "select * from t0 where a > 0 and a < 0;",
+        "Plan": [
+          "TableDual root  rows:0"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t0 where a > 0 and a <= 0;",
+        "Plan": [
+          "TableDual root  rows:0"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t0 where a >= 0 and a < 0;",
+        "Plan": [
+          "TableDual root  rows:0"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t0 where a >= 0 and a <= 0;",
+        "Plan": [
+          "TableReader root  data:Selection",
+          "└─Selection cop[tikv]  ge(test.t0.a, 0), le(test.t0.a, 0)",
+          "  └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": null
+      },
+      {
         "SQL": "select * from t6 where  (a, b, c) in ((1, 1, 1), (2, 2, 2))",
         "Plan": [
           "IndexLookUp root  ",
