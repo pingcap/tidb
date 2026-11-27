@@ -31,7 +31,7 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
 
-func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) {
+func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error, connectionID uint64) {
 	if cc.extensions == nil {
 		return
 	}
@@ -48,6 +48,7 @@ func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) 
 
 	if connInfo == nil {
 		connInfo = cc.connectInfo()
+		connInfo.ConnectionID = connectionID
 	}
 
 	info := &extension.ConnEventInfo{
