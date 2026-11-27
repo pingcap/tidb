@@ -96,13 +96,16 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 	return true, false
 }
 
-// ValidCompareConstantPredicate checks if the predicate is an expression like [column '>'|'>='|'<'|'<='|'=' constant].
-// return param1: return true, if the predicate is a compare constant predicate.
-// return param2: return the column side of predicate.
+// ValidCompareConstantPredicate checks if the predicate is an expression like
+// [column '>'|'>='|'<'|'<='|'=' constant] or [column IN (constant, ...)].
+// It returns true if the predicate is such a column-versus-constant predicate.
 func ValidCompareConstantPredicate(ctx EvalContext, candidatePredicate Expression) bool {
 	scalarFunction, ok := candidatePredicate.(*ScalarFunction)
 	if !ok {
 		return false
+	}
+	if scalarFunction.FuncName.L == ast.In {
+		return validInConstantPredicate(ctx, scalarFunction)
 	}
 	if scalarFunction.FuncName.L != ast.GT && scalarFunction.FuncName.L != ast.GE &&
 		scalarFunction.FuncName.L != ast.LT && scalarFunction.FuncName.L != ast.LE &&
@@ -115,6 +118,28 @@ func ValidCompareConstantPredicate(ctx EvalContext, candidatePredicate Expressio
 	}
 	if column == nil {
 		return false
+	}
+	return true
+}
+
+// validInConstantPredicate checks if the IN predicate has the form [column IN (constant, ...)], where every
+// constant has the same collation as the column (the same requirement ValidCompareConstantPredicateHelper
+// applies to a single comparison).
+func validInConstantPredicate(ctx EvalContext, in *ScalarFunction) bool {
+	args := in.GetArgs()
+	if len(args) < 2 {
+		return false
+	}
+	col, ok := args[0].(*Column)
+	if !ok {
+		return false
+	}
+	collation := col.GetStaticType().GetCollate()
+	for _, arg := range args[1:] {
+		con, ok := arg.(*Constant)
+		if !ok || con.GetType(ctx).GetCollate() != collation {
+			return false
+		}
 	}
 	return true
 }
