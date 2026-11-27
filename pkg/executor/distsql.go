@@ -320,8 +320,8 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 			return err
 		}
 		// Rebuild groupedRanges if it was originally set
-		if len(is.GroupByColIdxs) != 0 {
-			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
+		if len(is.GroupByColIdxs) != 0 || len(is.NullsHighColIdxs) != 0 {
+			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs, is.NullsHighColIdxs)
 			if err != nil {
 				return err
 			}
@@ -625,8 +625,8 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return err
 		}
 		// Rebuild groupedRanges if it was originally set
-		if len(is.GroupByColIdxs) != 0 {
-			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
+		if len(is.GroupByColIdxs) != 0 || len(is.NullsHighColIdxs) != 0 {
+			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs, is.NullsHighColIdxs)
 			if err != nil {
 				return err
 			}
@@ -871,8 +871,10 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	}
 
 	// When len(kvrange) = 1, no sorting is required,
-	// so remove byItems and non-necessary output columns
-	if len(kvRanges) == 1 {
+	// so remove byItems and non-necessary output columns.
+	// Keep them when the ranges depend on correlated columns: Apply reopens this executor
+	// and the rebuilt ranges may form several groups that need the merge sort.
+	if len(kvRanges) == 1 && !e.corColInAccess {
 		e.dagPB.OutputOffsets = e.dagPB.OutputOffsets[len(e.byItems):]
 		e.byItems = nil
 	}

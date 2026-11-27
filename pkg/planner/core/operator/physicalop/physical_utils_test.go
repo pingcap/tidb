@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -250,4 +251,46 @@ func TestFlattenTreePushDownPlan(t *testing.T) {
 	require.Equal(t, 2, len(m))
 	require.Equal(t, 6, m[2])
 	require.Equal(t, 5, m[3])
+}
+
+func TestMatchItems(t *testing.T) {
+	ctx := mock.NewContext()
+	newCol := func() *expression.Column {
+		return &expression.Column{UniqueID: ctx.GetSessionVars().AllocPlanColumnID(), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	}
+	a, b := newCol(), newCol()
+	isNullA := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), a)
+	aPlus1 := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), a, expression.NewOne())
+	prop := func(items ...property.SortItem) *property.PhysicalProperty {
+		return &property.PhysicalProperty{SortItems: items}
+	}
+	by := func(expr expression.Expression, desc bool) *util.ByItems {
+		return &util.ByItems{Expr: expr, Desc: desc}
+	}
+
+	cases := []struct {
+		prop  *property.PhysicalProperty
+		items []*util.ByItems
+		match bool
+	}{
+		// An empty property matches anything, even non-column items.
+		{prop(), []*util.ByItems{by(aPlus1, false)}, true},
+		{prop(property.SortItem{Col: a}), []*util.ByItems{by(a, false), by(aPlus1, false)}, true},
+		{prop(property.SortItem{Col: a}), []*util.ByItems{by(a, true)}, false},
+		{prop(property.SortItem{Col: a}, property.SortItem{Col: b}), []*util.ByItems{by(a, false)}, false},
+		{prop(property.SortItem{Col: a}), []*util.ByItems{by(aPlus1, false)}, false},
+		// `ISNULL(a), a` with the same direction is a NULLs-high order on a.
+		{prop(property.SortItem{Col: a, NullsHigh: true}), []*util.ByItems{by(isNullA, false), by(a, false)}, true},
+		{prop(property.SortItem{Col: a, Desc: true, NullsHigh: true}, property.SortItem{Col: b}),
+			[]*util.ByItems{by(isNullA, true), by(a, true), by(b, false)}, true},
+		// `ISNULL(a) DESC, a` keeps NULLs low, which is the plain order on a.
+		{prop(property.SortItem{Col: a}), []*util.ByItems{by(isNullA, true), by(a, false)}, true},
+		{prop(property.SortItem{Col: a, NullsHigh: true}), []*util.ByItems{by(isNullA, true), by(a, false)}, false},
+		// NullsHigh must not match a plain column item.
+		{prop(property.SortItem{Col: a, NullsHigh: true}), []*util.ByItems{by(a, false)}, false},
+		{prop(property.SortItem{Col: a}), []*util.ByItems{by(isNullA, false), by(a, false)}, false},
+	}
+	for i, c := range cases {
+		require.Equal(t, c.match, MatchItems(c.prop, c.items), "case %d", i)
+	}
 }
