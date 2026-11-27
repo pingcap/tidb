@@ -913,7 +913,7 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 				// for it.
 				// auto analyze is triggered when the table have more than
 				// AutoAnalyzeMinCnt(1000) rows, and tidb_auto_analyze_ratio(0.5)
-				// portion of rows are changed, see NeedAnalyzeTable too.
+				// portion of rows are changed, see CalculateChangePercentage too.
 				// so if the table is small, there is no analyze triggered.
 				if err := statsstorage.UpdateStatsMeta(ctx, se, txn.StartTS(), tableStatsDelta); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))

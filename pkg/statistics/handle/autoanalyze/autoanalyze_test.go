@@ -27,12 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -46,7 +43,6 @@ import (
 	mockexec "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/mock/gomock"
 )
 
@@ -63,9 +59,10 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1)")
-	// Enable auto analyze priority queue.
-	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=ON")
-	require.True(t, vardef.EnableAutoAnalyzePriorityQueue.Load())
+	// An older version could save OFF. It must have no effect after an upgrade.
+	tk.MustExec("replace into mysql.global_variables (variable_name, variable_value) values ('tidb_enable_auto_analyze_priority_queue', 'OFF')")
+	dom.NotifyUpdateSysVarCache(true)
+	tk.MustQuery("select @@global.tidb_enable_auto_analyze_priority_queue").Check(testkit.Rows("1"))
 	h := dom.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
@@ -81,37 +78,6 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	_, err = tk.Exec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=OFF")
 	require.Error(t, err)
 	require.Equal(t, "tidb_enable_auto_analyze_priority_queue has been deprecated and TiDB will always use priority queue to schedule auto analyze", err.Error())
-}
-
-func TestShouldSkipAutoAnalyzeTableNotReadyMV(t *testing.T) {
-	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
-		Name: ast.NewCIStr("mv_not_ready"),
-		MaterializedView: &model.MaterializedViewInfo{
-			InitBuildState: model.MViewInitBuildBuilding,
-		},
-	}))
-	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
-		Name: ast.NewCIStr("mv_deferred"),
-		MaterializedView: &model.MaterializedViewInfo{
-			InitBuildState: model.MViewInitBuildDeferred,
-		},
-	}))
-	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
-		Name: ast.NewCIStr("mv_ready"),
-		MaterializedView: &model.MaterializedViewInfo{
-			InitBuildState: model.MViewInitBuildReady,
-		},
-	}))
-	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
-		Name: ast.NewCIStr("normal_table"),
-	}))
-	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
-		View: &model.ViewInfo{},
-	}))
-	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTable(&model.TableInfo{
-		MaterializedViewLog: &model.MaterializedViewLogInfo{},
-	}))
-	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTable(nil))
 }
 
 func TestAutoAnalyzeLockedTable(t *testing.T) {
@@ -259,58 +225,6 @@ func TestTableAnalyzed(t *testing.T) {
 	require.NoError(t, h.Cache().Update(context.Background(), is))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
-}
-
-func TestNeedAnalyzeTable(t *testing.T) {
-	columns := map[int64]*statistics.Column{}
-	columns[1] = &statistics.Column{StatsVer: statistics.Version2}
-	tests := []struct {
-		tbl    *statistics.Table
-		ratio  float64
-		result bool
-		reason string
-	}{
-		// table was never analyzed and has reach the limit
-		{
-			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
-			ratio:  0,
-			result: true,
-			reason: "table unanalyzed",
-		},
-		// table was never analyzed but has not reached the limit
-		{
-			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
-			ratio:  0,
-			result: true,
-			reason: "table unanalyzed",
-		},
-		// table was already analyzed but auto analyze is disabled
-		{
-			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, 1, 1, columns, nil), LastAnalyzeVersion: 1},
-			ratio:  0,
-			result: false,
-			reason: "",
-		},
-		// table was already analyzed but modify count is small
-		{
-			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, 1, 0, columns, nil), LastAnalyzeVersion: 1},
-			ratio:  0.3,
-			result: false,
-			reason: "",
-		},
-		// table was already analyzed
-		{
-			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, 1, 1, columns, nil), LastAnalyzeVersion: 1},
-			ratio:  0.3,
-			result: true,
-			reason: "too many modifications",
-		},
-	}
-	for _, test := range tests {
-		needAnalyze, reason := autoanalyze.NeedAnalyzeTable(test.tbl, test.ratio)
-		require.Equal(t, test.result, needAnalyze)
-		require.True(t, strings.HasPrefix(reason, test.reason))
-	}
 }
 
 func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
@@ -573,35 +487,6 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 		WrapAsSCtx(exec),
 	)
 	require.NoError(t, err)
-}
-
-func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	ttStart := time.Now().Add(-2 * time.Hour)
-	ttEnd := time.Now().Add(-1 * time.Hour)
-	for i := range 2 {
-		dbName := fmt.Sprintf("db%d", i)
-		tk.MustExec(fmt.Sprintf("create database %s", dbName))
-		for j := range 2 {
-			tableName := fmt.Sprintf("table%d", j)
-			tk.MustExec(fmt.Sprintf("create table %s.%s (a int)", dbName, tableName))
-		}
-	}
-	se, err := dom.SysSessionPool().Get()
-	require.NoError(t, err)
-	require.False(t,
-		autoanalyze.RandomPickOneTableAndTryAutoAnalyze(
-			se.(sessionctx.Context),
-			dom.StatsHandle().ProcIDs(),
-			dom.StatsHandle(),
-			dom.SysProcTracker(),
-			0.6,
-			variable.Dynamic,
-			ttStart,
-			ttEnd,
-		),
-	)
 }
 
 const tiflashReplicaLease = 600 * time.Millisecond

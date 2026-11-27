@@ -1322,12 +1322,10 @@ var defaultSysVars = []*SysVar{
 		Name:  vardef.TiDBEnableAutoAnalyzePriorityQueue,
 		Value: BoolToOnOff(vardef.DefTiDBEnableAutoAnalyzePriorityQueue),
 		Type:  vardef.TypeBool,
-		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return BoolToOnOff(vardef.EnableAutoAnalyzePriorityQueue.Load()), nil
-		},
-		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			vardef.EnableAutoAnalyzePriorityQueue.Store(TiDBOptOn(val))
-			return nil
+		// An older version may have persisted OFF, but auto analyze always uses
+		// the priority queue now.
+		GetGlobal: func(context.Context, *SessionVars) (string, error) {
+			return vardef.On, nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 			if !TiDBOptOn(normalizedValue) {
@@ -1803,17 +1801,10 @@ var defaultSysVars = []*SysVar{
 			return err
 		},
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-			// Check if auto-analyze and auto-analyze priority queue are enabled
-			enableAutoAnalyze := vardef.RunAutoAnalyze.Load()
-			enableAutoAnalyzePriorityQueue := vardef.EnableAutoAnalyzePriorityQueue.Load()
-
-			// Validate that both required settings are enabled
-			if !enableAutoAnalyze || !enableAutoAnalyzePriorityQueue {
+			if !vardef.RunAutoAnalyze.Load() {
 				return originalValue, errors.Errorf(
-					"cannot set %s: requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue to be true. Current values: tidb_enable_auto_analyze=%v, tidb_enable_auto_analyze_priority_queue=%v",
+					"cannot set %s: requires tidb_enable_auto_analyze to be true",
 					vardef.TiDBAutoAnalyzeConcurrency,
-					enableAutoAnalyze,
-					enableAutoAnalyzePriorityQueue,
 				)
 			}
 
