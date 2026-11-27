@@ -17,11 +17,16 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"math"
+	"net"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 
+	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
@@ -54,6 +59,8 @@ import (
 	"github.com/stretchr/testify/require"
 	pderr "github.com/tikv/pd/client/errs"
 	"go.uber.org/atomic"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestDoneTaskKeeper(t *testing.T) {
@@ -127,6 +134,69 @@ func TestBackfillRetryableErrors(t *testing.T) {
 	t.Run("unrelated PD errors are not made retryable", func(t *testing.T) {
 		err := pderr.ErrClientProtoUnmarshal.FastGenByArgs("invalid response")
 		require.False(t, isRetryableError(err, false))
+	})
+
+	t.Run("modify column retries transient connection errors", func(t *testing.T) {
+		retryableErrs := []error{
+			driver.ErrBadConn,
+			gmysql.ErrInvalidConn,
+			&net.OpError{Op: "read", Err: &os.SyscallError{Syscall: "read", Err: syscall.ECONNRESET}},
+			status.Error(codes.Unavailable, "service unavailable"),
+		}
+		for _, err := range retryableErrs {
+			require.True(t, isRetryableModifyColumnReorgJobError(err, 0))
+			require.True(t, isRetryableModifyColumnReorgJobError(errors.Annotate(err, "wrapped"), 0))
+			require.False(t, isRetryableModifyColumnReorgJobError(err, vardef.GetDDLErrorCountLimit()-1))
+		}
+		require.False(t, isRetryableModifyColumnReorgJobError(errors.New("deterministic conversion error"), 0))
+	})
+
+	t.Run("modify column does not retry unrecognized grpc unknown errors", func(t *testing.T) {
+		err := status.Error(codes.Unknown, "deterministic conversion error")
+		wrappedErrors := []error{
+			err,
+			errors.Annotate(err, "wrapped"),
+			fmt.Errorf("wrapped: %w", err),
+			errors.Annotate(fmt.Errorf("wrapped: %w", err), "outer"),
+		}
+		for _, wrappedErr := range wrappedErrors {
+			require.False(t, isRetryableModifyColumnReorgJobError(wrappedErr, 0), "type=%T", wrappedErr)
+		}
+	})
+
+	t.Run("modify column retains legacy retries for grpc unknown errors", func(t *testing.T) {
+		for _, message := range dbterror.ReorgRetryableErrMsgs {
+			err := status.Error(codes.Unknown, message)
+			wrappedErrors := []error{
+				err,
+				errors.Annotate(err, "wrapped"),
+				fmt.Errorf("wrapped: %w", err),
+				errors.Annotate(fmt.Errorf("wrapped: %w", err), "outer"),
+			}
+			for _, wrappedErr := range wrappedErrors {
+				require.True(t, isRetryableModifyColumnReorgJobError(wrappedErr, 0),
+					"message=%q type=%T", message, wrappedErr)
+				require.False(t, isRetryableModifyColumnReorgJobError(wrappedErr, vardef.GetDDLErrorCountLimit()-1),
+					"message=%q type=%T", message, wrappedErr)
+			}
+		}
+	})
+
+	t.Run("modify column does not retry permission errors", func(t *testing.T) {
+		messages := append([]string{"insufficient privilege"}, dbterror.ReorgRetryableErrMsgs...)
+		for _, message := range messages {
+			err := status.Error(codes.PermissionDenied, message)
+			wrappedErrors := []error{
+				err,
+				errors.Annotate(err, "wrapped"),
+				fmt.Errorf("wrapped: %w", err),
+				errors.Annotate(fmt.Errorf("wrapped: %w", err), "outer"),
+			}
+			for _, wrappedErr := range wrappedErrors {
+				require.False(t, isRetryableModifyColumnReorgJobError(wrappedErr, 0),
+					"message=%q type=%T", message, wrappedErr)
+			}
+		}
 	})
 }
 
