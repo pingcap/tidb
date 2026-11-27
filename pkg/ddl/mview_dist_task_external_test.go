@@ -151,7 +151,7 @@ func newMViewTaskTest(t *testing.T, hook mviewBuildSQLHook) *mviewTaskTest {
 func TestMViewBuildCancelPausedTask(t *testing.T) {
 	f := newMViewTaskTest(t, nil)
 	worker := ddl.NewMViewBuildWorkerForTest(f.ctx, f.store, f.pool)
-	for _, state := range []proto.TaskState{proto.TaskStatePaused, proto.TaskStatePausing, proto.TaskStateResuming} {
+	for _, state := range []proto.TaskState{proto.TaskStatePaused, proto.TaskStatePausing, proto.TaskStateResuming, proto.TaskStateModifying} {
 		t.Run(string(state), func(t *testing.T) {
 			key := taskkey.ForJob(f.importJobID)
 			id, err := f.mgr.CreateTask(f.ctx, key, proto.ImportInto, f.store.GetKeyspace(), 1, "", 1, proto.ExtraParams{}, f.meta)
@@ -179,7 +179,7 @@ func TestMViewBuildCancelPausedTask(t *testing.T) {
 					return
 				case <-ticker.C:
 					_, err := f.mgr.ExecuteSQLWithNewSession(f.ctx, `update mysql.tidb_global_task set state = case state
-      when 'pausing' then 'paused' when 'resuming' then 'running' when 'cancelling' then 'reverted' else state end where id = %?`, id)
+      when 'pausing' then 'paused' when 'resuming' then 'running' when 'modifying' then 'running' when 'cancelling' then 'reverted' else state end where id = %?`, id)
 					require.NoError(t, err)
 				}
 			}

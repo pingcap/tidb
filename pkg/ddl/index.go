@@ -3614,11 +3614,12 @@ func cancelDistTask(ctx context.Context, taskKey string) (done bool, err error) 
 	if task.IsDone() {
 		return true, nil
 	}
-	if task.State == proto.TaskStatePaused {
-		_, err := mgr.ResumeTask(ctx, taskKey)
-		return false, err
+	err = mgr.CancelTask(ctx, task.ID)
+	if goerrors.Is(err, storage.ErrTaskStateNotAllow) {
+		// Retry after the in-flight state transition finishes.
+		return false, nil
 	}
-	return false, mgr.CancelTask(ctx, task.ID)
+	return false, err
 }
 
 func (w *worker) waitDistTask(
