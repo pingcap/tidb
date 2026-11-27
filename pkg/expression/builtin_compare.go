@@ -1662,6 +1662,56 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 	return con, false
 }
 
+// refineYearBoundConstant rewrites an integer constant that was refined from a
+// non-integer constant (e.g. `year_col < 1.0` becomes `year_col < 1`) so that the
+// YEAR adjustment for integer constants in refineArgs cannot change it again.
+//
+// Such a constant keeps its numeric value, but once it is an integer constant, a
+// later refining (e.g. when constant propagation rebuilds the comparison) would
+// treat 1..99 as a 2-digit year and turn `year_col < 1` into `year_col < 2001`.
+// A YEAR value is either 0 or in [MinYear, MaxYear], so for a bound in 1..99:
+//
+//	year_col <  v  <=>  year_col <  MinYear
+//	year_col >= v  <=>  year_col >= MinYear
+//	year_col <= v  <=>  year_col <= 0
+//	year_col >  v  <=>  year_col >  0
+//
+// Both MinYear and 0 are left unchanged by types.AdjustYear.
+// See https://github.com/pingcap/tidb/issues/73149.
+func refineYearBoundConstant(con *Constant, op opcode.Op) *Constant {
+	var v int64
+	switch con.Value.Kind() {
+	case types.KindInt64:
+		v = con.Value.GetInt64()
+	case types.KindUint64:
+		if con.Value.GetUint64() > 99 {
+			return con
+		}
+		v = int64(con.Value.GetUint64())
+	default:
+		return con
+	}
+	if v < 1 || v > 99 {
+		return con
+	}
+	var bound int64
+	switch op {
+	case opcode.LT, opcode.GE:
+		bound = int64(types.MinYear)
+	case opcode.LE, opcode.GT:
+		bound = 0
+	default:
+		return con
+	}
+	newCon := con.Clone().(*Constant)
+	if newCon.Value.Kind() == types.KindUint64 {
+		newCon.Value.SetUint64(uint64(bound))
+	} else {
+		newCon.Value.SetInt64(bound)
+	}
+	return newCon
+}
+
 func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldType) bool {
 	return (exprType.GetType() == mysql.TypeTimestamp || exprType.GetType() == mysql.TypeDatetime) &&
 		(conEvalType == types.ETReal || conEvalType == types.ETDecimal || conEvalType == types.ETInt)
@@ -1819,6 +1869,9 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
+		if !isExceptional && arg0Type.GetType() == mysql.TypeYear {
+			arg1 = refineYearBoundConstant(arg1, c.op)
+		}
 		// Why check not null flag
 		// eg: int_col > const_val(which is less than min_int32)
 		// If int_col got null, compare result cannot be true
@@ -1846,6 +1899,9 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
+		if !isExceptional && arg1Type.GetType() == mysql.TypeYear {
+			arg0 = refineYearBoundConstant(arg0, symmetricOp[c.op])
+		}
 		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.GetFlag())) {
 			finalArg0 = arg0
 		}
@@ -1865,6 +1921,9 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	if arg0IsCon && arg0IsInt && arg1Type.GetType() == mysql.TypeYear && !arg0.Value.IsNull() {
 		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
 		if failed == nil {
+			// Do not modify the constant in place: it may be shared with other expressions,
+			// e.g. when constant propagation rebuilds a comparison with the same constant.
+			arg0 = arg0.Clone().(*Constant)
 			arg0.Value.SetInt64(adjusted)
 			finalArg0 = arg0
 		}
@@ -1873,6 +1932,8 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	if arg1IsCon && arg1IsInt && arg0Type.GetType() == mysql.TypeYear && !arg1.Value.IsNull() {
 		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
 		if failed == nil {
+			// Do not modify the constant in place, see the comment above.
+			arg1 = arg1.Clone().(*Constant)
 			arg1.Value.SetInt64(adjusted)
 			finalArg1 = arg1
 		}

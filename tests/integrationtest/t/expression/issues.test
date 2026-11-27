@@ -2340,3 +2340,36 @@ select
   collation(group_concat(' ', first_name, ' ', last_name, ' ', marker)) as group_concat_collation
 from t_gc;
 drop table if exists t_gc;
+
+# TestIssue73149
+drop table if exists yy;
+create table yy(y1 year, y2 year);
+insert into yy values (0,0),(1990,1990),(2000,2000),(2005,2005),(1990,2000);
+--sorted_result
+select * from yy where y2 < 1.0;
+--sorted_result
+select * from yy where y1 = y2 and y2 < 1.0;
+explain format='brief' select * from yy where y1 = y2 and y2 < 1.0;
+--sorted_result
+select * from yy where y2 >= 0.5;
+--sorted_result
+select * from yy where y1 = y2 and y2 >= 0.5;
+explain format='brief' select * from yy where y1 = y2 and y2 >= 0.5;
+--sorted_result
+select * from yy where y1 = y2 and y2 <= 1.5;
+--sorted_result
+select * from yy where y1 = y2 and y2 > 1.5;
+--sorted_result
+select * from yy where y1 = y2 and y2 < 1;
+insert into yy values (2001,2001);
+--sorted_result
+select * from yy where y1 = y2 and y2 = 1.0;
+--sorted_result
+select * from yy where y1 = y2 and y2 <=> 1.0;
+--sorted_result
+select * from yy where y1 = y2 and y2 != 1.0;
+--sorted_result
+select * from yy where y1 = y2 and y2 in (1.0, 2000.0);
+--sorted_result
+select * from yy where y1 = y2 and y2 = 1;
+drop table if exists yy;

@@ -3461,3 +3461,65 @@ from t_gc;
 concat_collation	group_concat_collation
 utf8mb4_0900_ai_ci	utf8mb4_0900_ai_ci
 drop table if exists t_gc;
+drop table if exists yy;
+create table yy(y1 year, y2 year);
+insert into yy values (0,0),(1990,1990),(2000,2000),(2005,2005),(1990,2000);
+select * from yy where y2 < 1.0;
+y1	y2
+0000	0000
+select * from yy where y1 = y2 and y2 < 1.0;
+y1	y2
+0000	0000
+explain format='brief' select * from yy where y1 = y2 and y2 < 1.0;
+id	estRows	task	access object	operator info
+TableReader	883.56	root		data:Selection
+└─Selection	883.56	cop[tikv]		eq(test.yy.y1, test.yy.y2), lt(test.yy.y1, 1901), lt(test.yy.y2, 1901)
+  └─TableFullScan	10000.00	cop[tikv]	table:yy	keep order:false, stats:pseudo
+select * from yy where y2 >= 0.5;
+y1	y2
+1990	1990
+1990	2000
+2000	2000
+2005	2005
+select * from yy where y1 = y2 and y2 >= 0.5;
+y1	y2
+1990	1990
+2000	2000
+2005	2005
+explain format='brief' select * from yy where y1 = y2 and y2 >= 0.5;
+id	estRows	task	access object	operator info
+TableReader	888.89	root		data:Selection
+└─Selection	888.89	cop[tikv]		eq(test.yy.y1, test.yy.y2), ge(test.yy.y1, 1901), ge(test.yy.y2, 1901)
+  └─TableFullScan	10000.00	cop[tikv]	table:yy	keep order:false, stats:pseudo
+select * from yy where y1 = y2 and y2 <= 1.5;
+y1	y2
+0000	0000
+select * from yy where y1 = y2 and y2 > 1.5;
+y1	y2
+1990	1990
+2000	2000
+2005	2005
+select * from yy where y1 = y2 and y2 < 1;
+y1	y2
+0000	0000
+1990	1990
+2000	2000
+insert into yy values (2001,2001);
+select * from yy where y1 = y2 and y2 = 1.0;
+y1	y2
+select * from yy where y1 = y2 and y2 <=> 1.0;
+y1	y2
+select * from yy where y1 = y2 and y2 != 1.0;
+y1	y2
+0000	0000
+1990	1990
+2000	2000
+2001	2001
+2005	2005
+select * from yy where y1 = y2 and y2 in (1.0, 2000.0);
+y1	y2
+2000	2000
+select * from yy where y1 = y2 and y2 = 1;
+y1	y2
+2001	2001
+drop table if exists yy;
