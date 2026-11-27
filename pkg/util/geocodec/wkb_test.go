@@ -46,7 +46,7 @@ func flagsOf(d dims) uint32 {
 }
 
 // le is a little-endian geometry of type typ with coordinates d, its body body.
-func le(typ Type, d dims, body ...[]byte) []byte {
+func le(typ GeomType, d dims, body ...[]byte) []byte {
 	b := []byte{byteOrderLittle}
 	b = binary.LittleEndian.AppendUint32(b, uint32(typ)|flagsOf(d))
 	for _, part := range body {
@@ -77,7 +77,7 @@ func emptyPoint(d dims) []byte {
 }
 
 // collectionOf is a collection of type typ with coordinates d holding members.
-func collectionOf(typ Type, d dims, members ...[]byte) []byte {
+func collectionOf(typ GeomType, d dims, members ...[]byte) []byte {
 	return le(typ, d, append([][]byte{count(len(members))}, members...)...)
 }
 
@@ -193,7 +193,7 @@ func (g *wkbGen) float64s(b []byte, order binary.AppendByteOrder, n int) []byte 
 // genMaxDepth bounds how deep generated collections nest.
 const genMaxDepth = 4
 
-var allTypes = []Type{
+var allTypes = []GeomType{
 	TypePoint, TypeLineString, TypePolygon, TypeMultiPoint, TypeMultiLineString,
 	TypeMultiPolygon, TypeGeometryCollection,
 }
@@ -221,7 +221,7 @@ func (g *wkbGen) float() float64 {
 
 // geometry returns random WKB of type typ, little-endian at the root, and whether a member
 // is big-endian.
-func (g *wkbGen) geometry(typ Type, depth int) (b []byte, bigEndian bool) {
+func (g *wkbGen) geometry(typ GeomType, depth int) (b []byte, bigEndian bool) {
 	if depth == 1 {
 		g.canon, g.env, g.short = nil, Envelope{}, false
 	}

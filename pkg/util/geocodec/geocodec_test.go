@@ -53,7 +53,7 @@ func checkAccepted(t testing.TB, b []byte) {
 	srid, typ, err := Header(b)
 	require.NoError(t, err, "%X", b)
 	require.Equal(t, binary.LittleEndian.Uint32(b), srid, "%X", b)
-	require.Equal(t, Type(binary.LittleEndian.Uint32(b[5:])&^ewkbFlags), typ, "%X", b)
+	require.Equal(t, GeomType(binary.LittleEndian.Uint32(b[5:])&^ewkbFlags), typ, "%X", b)
 	s := BareToStored(b)
 	require.Equal(t, Version1, s[0], "%X", b)
 	back, err := StoredToBare(s)
@@ -168,7 +168,7 @@ func TestStoredFormat(t *testing.T) {
 }
 
 func TestHeader(t *testing.T) {
-	values := map[Type][][]byte{
+	values := map[GeomType][][]byte{
 		TypePoint:              {point12, le(TypePoint, dimsXYZM, coords(1, 2, 3, 4)), emptyPoint(dimsXY)},
 		TypeLineString:         {line0011, line(dimsXYM, 0, 0, 1, 1, 1, 2)},
 		TypePolygon:            {triangle, polygon(dimsXY)},
@@ -279,7 +279,7 @@ func TestParseColumnValue(t *testing.T) {
 
 	for _, c := range []struct {
 		g   []byte
-		typ Type
+		typ GeomType
 		env Envelope
 	}{
 		{point12, TypePoint, Envelope{1, 2, 1, 2, true}},

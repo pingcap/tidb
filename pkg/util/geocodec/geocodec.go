@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 )
 
 const (
@@ -60,7 +61,7 @@ const (
 	minGeometrySize = 9
 
 	// anyType lets a GEOMETRYCOLLECTION member be of any type.
-	anyType Type = 0
+	anyType GeomType = 0
 
 	// nonFinite is the exponent of a NaN or an infinity, which has every bit set.
 	nonFinite uint64 = 0x7FF0000000000000
@@ -68,19 +69,19 @@ const (
 	emptyPointNaN uint64 = 0x7FF8000000000000
 )
 
-// Type is a geometry type, numbered by its WKB type code, as the parser numbers a geometry
+// GeomType is a geometry type, numbered by its WKB type code, as the parser numbers a geometry
 // column's subtype, where 0 is any type.
-type Type uint32
+type GeomType uint32
 
 // The geometry types.
 const (
-	TypePoint              Type = 1
-	TypeLineString         Type = 2
-	TypePolygon            Type = 3
-	TypeMultiPoint         Type = 4
-	TypeMultiLineString    Type = 5
-	TypeMultiPolygon       Type = 6
-	TypeGeometryCollection Type = 7
+	TypePoint              GeomType = 1
+	TypeLineString         GeomType = 2
+	TypePolygon            GeomType = 3
+	TypeMultiPoint         GeomType = 4
+	TypeMultiLineString    GeomType = 5
+	TypeMultiPolygon       GeomType = 6
+	TypeGeometryCollection GeomType = 7
 )
 
 // dims says which coordinates a position has: Z adds 1 and M adds 2.
@@ -114,8 +115,7 @@ func CheckBare(b []byte) error {
 
 // BareToStored prepends the version byte; bare must have passed CheckBare.
 func BareToStored(bare []byte) []byte {
-	stored := make([]byte, 0, 1+len(bare))
-	return append(append(stored, Version1), bare...)
+	return slices.Concat([]byte{Version1}, bare)
 }
 
 // StoredToBare checks and strips the version byte, without copying.
@@ -130,7 +130,7 @@ func StoredToBare(stored []byte) ([]byte, error) {
 }
 
 // Header reads only the root header of a bare value.
-func Header(bare []byte) (srid uint32, typ Type, err error) {
+func Header(bare []byte) (srid uint32, typ GeomType, err error) {
 	c := cursor{buf: bare}
 	if srid, err = c.uint32(); err != nil {
 		return 0, 0, err
@@ -157,7 +157,7 @@ type Envelope struct {
 
 // Summary is what ParseColumnValue learns about a value while checking it.
 type Summary struct {
-	Type     Type
+	Type     GeomType
 	Envelope Envelope
 }
 
@@ -169,16 +169,15 @@ func ParseColumnValue(b []byte) (bare []byte, srid uint32, sum Summary, err erro
 		return nil, 0, Summary{}, ErrInvalid
 	}
 	v := validator{c: cursor{buf: b[sridSize:]}, bare: true}
-	if err := v.run(); err != nil {
+	if err = v.run(); err != nil {
 		return nil, 0, Summary{}, err
 	}
 	bare = b
 	if v.rewrite {
 		bare = append([]byte(nil), b...)
 		fix := validator{c: cursor{buf: bare[sridSize:]}, fix: bare[sridSize:]}
-		if err := fix.run(); err != nil {
-			return nil, 0, Summary{}, err
-		}
+		// Cannot fail: v.run() accepted the same bytes under more rules.
+		_ = fix.run()
 	}
 	return bare, binary.LittleEndian.Uint32(b), v.sum, nil
 }
@@ -230,8 +229,8 @@ func (c *cursor) count(minSize int) (int, error) {
 }
 
 // splitType splits an EWKB type word; ok is false for a type code other than 1 to 7.
-func splitType(word uint32) (typ Type, d dims, hasSRID, ok bool) {
-	typ = Type(word &^ ewkbFlags)
+func splitType(word uint32) (typ GeomType, d dims, hasSRID, ok bool) {
+	typ = GeomType(word &^ ewkbFlags)
 	if word&ewkbZ != 0 {
 		d |= dimsXYZ
 	}
@@ -241,7 +240,7 @@ func splitType(word uint32) (typ Type, d dims, hasSRID, ok bool) {
 	return typ, d, word&ewkbSRID != 0, typ >= TypePoint && typ <= TypeGeometryCollection
 }
 
-func memberTypeOf(typ Type) Type {
+func memberTypeOf(typ GeomType) GeomType {
 	switch typ {
 	case TypeMultiPoint:
 		return TypePoint
@@ -282,7 +281,7 @@ func (v *validator) run() error {
 }
 
 // geometry checks one geometry; want and parentDims are what its parent requires.
-func (v *validator) geometry(depth int, want Type, parentDims dims) error {
+func (v *validator) geometry(depth int, want GeomType, parentDims dims) error {
 	if depth > MaxDepth {
 		return ErrTooDeep
 	}
@@ -378,10 +377,8 @@ func (v *validator) sequence(size int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	coords, err := v.c.next(n * size)
-	if err != nil {
-		return 0, err
-	}
+	// count checked that n*size bytes remain.
+	coords, _ := v.c.next(n * size)
 	if !finite(coords) {
 		return 0, ErrInvalid
 	}
