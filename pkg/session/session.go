@@ -152,7 +152,6 @@ import (
 	"github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
-	gouberatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -3723,10 +3722,8 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			ConnectionID:                vars.ConnectionID,
 			SessionAlias:                vars.SessionAlias,
 
-			ExecDetails: &sc.SyncExecDetails,
-		}
-		if ret.MaxKeysRead > 0 {
-			ret.MaxKeysReadCounter = new(gouberatomic.Uint64)
+			ExecDetails:        &sc.SyncExecDetails,
+			MaxKeysReadCounter: &sc.KeysRead,
 		}
 		return ret
 	})

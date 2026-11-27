@@ -42,6 +42,9 @@ type coprCacheValue struct {
 	TimeStamp         uint64
 	RegionID          uint64
 	RegionDataVersion uint64
+	// KeysRead is the keys the cached response read; a hit charges it to
+	// tidb_max_keys_read.
+	KeysRead uint64
 
 	// Used in coprocessor paging protocol
 	PageStart []byte

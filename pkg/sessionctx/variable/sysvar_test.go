@@ -196,6 +196,9 @@ func TestDMLMaxExecutionTime(t *testing.T) {
 }
 
 func TestTiDBMaxKeysRead(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_max_keys_read is not supported in NextGen, see TestTiDBMaxKeysReadInNextGen")
+	}
 	sv := GetSysVar(vardef.TiDBMaxKeysRead)
 	require.NotNil(t, sv)
 	vars := NewSessionVars(nil)

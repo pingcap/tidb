@@ -2067,6 +2067,13 @@ var defaultSysVars = []*SysVar{
 		MinValue:                0,
 		MaxValue:                math.MaxUint64,
 		IsHintUpdatableVerified: true,
+		Validation: func(_ *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+			// The NextGen storage engine does not enforce the pushed-down budget.
+			if kerneltype.IsNextGen() && TidbOptUint64(normalizedValue, 0) > 0 {
+				return "0", ErrNotSupportedInNextGen.FastGenByArgs(vardef.TiDBMaxKeysRead)
+			}
+			return normalizedValue, nil
+		},
 		SetSession: func(s *SessionVars, val string) error {
 			s.MaxKeysRead = TidbOptUint64(val, 0)
 			return nil

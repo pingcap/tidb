@@ -763,7 +763,8 @@ type Request struct {
 	MaxKeysRead uint64
 	// MaxKeysReadCounter, when non-nil, is the shared atomic accumulator used by
 	// copIterator to enforce a statement-wide max_keys_read budget across
-	// multiple coprocessor iterators belonging to the same statement.
+	// multiple coprocessor iterators belonging to the same statement. It also
+	// feeds tidb_keys_examined.
 	MaxKeysReadCounter *atomic.Uint64
 
 	RunawayChecker resourcegroup.RunawayChecker

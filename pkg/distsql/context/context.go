@@ -87,7 +87,8 @@ type DistSQLContext struct {
 	MaxKeysRead                   uint64
 	// MaxKeysReadCounter, when non-nil, is the shared atomic accumulator used by
 	// copIterator to enforce a statement-wide max_keys_read budget across all
-	// coprocessor iterators belonging to the same statement. nil when MaxKeysRead == 0.
+	// coprocessor iterators belonging to the same statement. It also feeds
+	// tidb_keys_examined.
 	MaxKeysReadCounter *atomic.Uint64
 
 	ReplicaClosestReadThreshold int64

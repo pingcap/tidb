@@ -244,6 +244,11 @@ type StatementContext struct {
 	// errCtx is used to indicate how to handle the errors
 	errCtx errctx.Context
 
+	// KeysRead counts the keys read by the coprocessor responses this statement
+	// consumed, cache hits included. It enforces tidb_max_keys_read and feeds
+	// tidb_keys_examined.
+	KeysRead atomic2.Uint64
+
 	// distSQLCtxCache is used to persist all variables and tools needed by the `distsql`
 	// this cache is set on `StatementContext` because it has to be updated after each statement.
 	distSQLCtxCache struct {
@@ -1288,6 +1293,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
+	sc.KeysRead.Store(0)
 	sc.WarnHandler.TruncateWarnings(0)
 	sc.ExtraWarnHandler.TruncateWarnings(0)
 

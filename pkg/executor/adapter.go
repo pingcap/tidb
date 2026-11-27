@@ -1807,9 +1807,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 				// Only record the read keys in write statement which affect row more than 0.
 				a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
 			}
-			sessVars.KeysExamined += uint64(processedKeys)
 		}
 	}
+	// Count the same keys as the tidb_max_keys_read budget.
+	sessVars.KeysExamined += sessVars.StmtCtx.KeysRead.Load()
 	succ := err == nil
 	if a.Plan != nil {
 		// If this statement has a Plan, the StmtCtx.plan should have been set when it comes here,

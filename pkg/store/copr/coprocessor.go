@@ -1042,7 +1042,14 @@ type copIterator struct {
 	// One EMA per copIterator (logical scan), shared across workers.
 	ema         *ruEMA
 	maxKeysRead uint64          // global limit from kv.Request (0 = unlimited)
-	keysRead    *atomic2.Uint64 // cumulative storage engine keys read across all completed tasks; may be shared across copIterators in the same statement
+	keysRead    *atomic2.Uint64 // cumulative keys read by responses delivered to the statement; may be shared across copIterators in the same statement
+}
+
+// processedKeysOf returns the keys a coprocessor response read, for
+// tidb_max_keys_read. It reads the raw response, so it does not depend on
+// execution-info collection.
+func processedKeysOf(details *kvrpcpb.ExecDetailsV2) uint64 {
+	return details.GetScanDetailV2().GetProcessedVersions()
 }
 
 // pickKeysReadCounter returns the counter used by a copIterator for cumulative
@@ -1110,6 +1117,9 @@ type copResponse struct {
 	err      error
 	respSize int64
 	respTime time.Duration
+	// keysRead is the keys this response read, charged to tidb_max_keys_read
+	// when Next() delivers it. For a cache hit it comes from the cache entry.
+	keysRead uint64
 }
 
 // requestLockHints keeps the lock hints carried by the RPC that produced a response.
@@ -1536,18 +1546,15 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	// single-task path and the concurrent worker path funnel responses through
 	// here, so doing it here covers both uniformly. Sequential tasks pick up the
 	// updated remaining budget at handleTaskOnce dispatch via keysRead.Load().
-	if it.maxKeysRead > 0 {
-		if resp.detail != nil && resp.detail.ScanDetail != nil {
-			if pk := resp.detail.ScanDetail.ProcessedKeys; pk > 0 {
-				it.keysRead.Add(uint64(pk))
-			}
-		}
-		if it.keysRead.Load() > it.maxKeysRead {
+	// Keys are charged on delivery, so responses fetched ahead but never
+	// consumed (e.g. by a LIMIT) do not count.
+	if total := it.keysRead.Add(resp.keysRead); it.maxKeysRead > 0 {
+		if total > it.maxKeysRead {
 			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 				close(it.finishCh)
 			}
 			// Return resp (non-nil) so the caller can still merge CopRuntimeStats
-			// into StmtCtx.ExecDetails, which flows into tidb_keys_examined.
+			// into StmtCtx.ExecDetails.
 			return resp, exeerrors.ErrMaxKeysReadExceeded
 		}
 	}
@@ -1778,14 +1785,16 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	}
 
 	// All concurrent tasks get the full remaining budget; the cumulative check
-	// in Next() enforces the global limit.
+	// in Next() enforces the global limit. A budget used up exactly is not
+	// exceeded, since the rest of the range may hold no keys; such a task is
+	// sent with a budget of 1, as 0 means unlimited.
 	var taskMaxKeysRead uint64
 	if worker.maxKeysRead > 0 {
 		scanned := worker.keysRead.Load()
-		if scanned >= worker.maxKeysRead {
+		if scanned > worker.maxKeysRead {
 			return nil, exeerrors.ErrMaxKeysReadExceeded
 		}
-		taskMaxKeysRead = worker.maxKeysRead - scanned
+		taskMaxKeysRead = max(worker.maxKeysRead-scanned, 1)
 	}
 
 	copReq := coprocessor.Request{
@@ -2393,6 +2402,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, lockHints *req
 		}
 		return nil, errors.Trace(err)
 	}
+	resp.keysRead = processedKeysOf(resp.pbResp.ExecDetailsV2)
 	// When the request is using paging API, the `Range` is not nil.
 	if resp.pbResp.Range != nil {
 		resp.startKey = resp.pbResp.Range.Start
@@ -2613,6 +2623,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints
 		if err := worker.handleCollectExecutionInfo(bo, dummyRPCCtx, resp); err != nil {
 			return batchRespList, nil, err
 		}
+		resp.keysRead = processedKeysOf(batchResp.ExecDetailsV2)
 		worker.checkRespOOM(resp)
 		batchRespList = append(batchRespList, resp)
 	}
@@ -2770,6 +2781,8 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 		// Cache hit and is valid: use cached data as response data and we don't update the cache.
 		data := slices.Clone(cacheValue.Data)
 		resp.pbResp.Data = data
+		// Charge the keys the cached response read.
+		resp.keysRead = cacheValue.KeysRead
 		if worker.req.Paging.Enable || worker.req.Paging.PagingSizeBytes > 0 {
 			var start, end []byte
 			if cacheValue.PageStart != nil {
@@ -2810,6 +2823,7 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 					TimeStamp:         worker.req.StartTs,
 					RegionID:          task.region.GetID(),
 					RegionDataVersion: resp.pbResp.CacheLastVersion,
+					KeysRead:          processedKeysOf(resp.pbResp.ExecDetailsV2),
 				}
 				// When paging protocol is used, the response key range is part of the cache data.
 				if r := resp.pbResp.GetRange(); r != nil {

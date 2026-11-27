@@ -82,3 +82,18 @@ func TestTiDBReplicaReadInNextGen(t *testing.T) {
 		require.Equal(t, kv.ReplicaReadLeader, vars.GetReplicaRead(), replicaRead)
 	}
 }
+
+func TestTiDBMaxKeysReadInNextGen(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBMaxKeysRead)
+	vars := NewSessionVars(nil)
+	for _, scope := range []vardef.ScopeFlag{vardef.ScopeSession, vardef.ScopeGlobal} {
+		val, err := sv.Validate(vars, "0", scope)
+		require.NoError(t, err)
+		require.Equal(t, "0", val)
+
+		val, err = sv.Validate(vars, "1000", scope)
+		require.Error(t, err)
+		require.True(t, ErrNotSupportedInNextGen.Equal(err))
+		require.Equal(t, "0", val)
+	}
+}
