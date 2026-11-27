@@ -355,6 +355,73 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	require.True(t, newTableReader.TablePlan == newTableReader.TablePlans[0])
 }
 
+func checkShuffleConcurrency(
+	t *testing.T, shuffle *physicalop.PhysicalShuffle, want int,
+) {
+	t.Helper()
+	if want == 0 {
+		require.Nil(t, shuffle)
+		return
+	}
+	require.NotNil(t, shuffle)
+	require.Equal(t, want, shuffle.Concurrency)
+}
+
+func TestShuffleConcurrencyLargeNDV(t *testing.T) {
+	const workers = 4
+	const fractionalNDV = 3.9
+	const fractionalWorkers = 3
+	intBoundary := float64(math.MaxInt64)
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().SetWindowConcurrency(workers)
+	ctx.GetSessionVars().SetStreamAggConcurrency(workers)
+	col := &expression.Column{
+		UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	schema := expression.NewSchema(col)
+	for _, tc := range []struct {
+		ndv  float64
+		want int
+	}{
+		{1, 0}, {2, 2}, {fractionalNDV, fractionalWorkers},
+		{workers, workers},
+		{math.Nextafter(intBoundary, 0), workers}, {intBoundary, workers},
+		{math.MaxFloat64, workers}, {math.Inf(1), workers},
+	} {
+		t.Run(fmt.Sprint(tc.ndv), func(t *testing.T) {
+			stats := &property.StatsInfo{
+				RowCount: tc.ndv, ColNDVs: map[int64]float64{1: tc.ndv},
+			}
+			source := physicalop.PhysicalTableDual{}.Init(ctx, stats, 0)
+			source.SetSchema(schema)
+			sortPlan := physicalop.PhysicalSort{}.Init(ctx, stats, 0)
+			sortPlan.SetChildren(source)
+			window := physicalop.PhysicalWindow{
+				PartitionBy: []property.SortItem{{Col: col}},
+			}.Init(ctx, stats, 0)
+			window.SetChildren(sortPlan)
+			aggPlan := (&physicalop.PhysicalStreamAgg{
+				BasePhysicalAgg: physicalop.BasePhysicalAgg{
+					GroupByItems: []expression.Expression{col},
+				},
+			}).InitForStream(ctx, stats, 0, schema)
+			agg, ok := aggPlan.(*physicalop.PhysicalStreamAgg)
+			require.True(t, ok)
+			agg.SetChildren(sortPlan)
+			t.Run("window", func(t *testing.T) {
+				checkShuffleConcurrency(
+					t, optimizeByShuffle4Window(window, ctx), tc.want,
+				)
+			})
+			t.Run("stream agg", func(t *testing.T) {
+				checkShuffleConcurrency(
+					t, optimizeByShuffle4StreamAgg(agg, ctx), tc.want,
+				)
+			})
+		})
+	}
+}
+
 func TestPhysicalPlanClone(t *testing.T) {
 	ctx := mock.NewContext()
 	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}
