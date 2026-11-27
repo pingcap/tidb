@@ -148,7 +148,7 @@
                "lines": true,
                "linewidth": 1,
                "links": [ ],
-               "nullPointMode": "null",
+               "nullPointMode": "null as zero",
                "percentage": false,
                "pointradius": 5,
                "points": false,
