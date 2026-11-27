@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/stretchr/testify/require"
@@ -39,7 +40,9 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdgc "github.com/tikv/pd/client/clients/gc"
+	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/constants"
+	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 )
 
@@ -753,7 +756,13 @@ func TestBuildPagingTasks(t *testing.T) {
 	require.Equal(t, tasks[0].pagingSize, paging.MinPagingSize)
 }
 
-func TestBuildCopTaskDoesNotCancelBoCtx(t *testing.T) {
+func TestBuildCopTaskContext(t *testing.T) {
+	t.Run("does not cancel backoffer context", testBuildCopTaskDoesNotCancelBoCtx)
+	t.Run("statement timeout during PD region scan", testBuildCopTasksTimeoutDuringPDRegionScan)
+	t.Run("batch statement timeout during PD region scan", testBuildBatchCopTasksTimeoutDuringPDRegionScan)
+}
+
+func testBuildCopTaskDoesNotCancelBoCtx(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -786,6 +795,97 @@ func TestBuildCopTaskDoesNotCancelBoCtx(t *testing.T) {
 	default:
 	}
 	require.False(t, contextDone, "buildCopTasks should not cancel bo context")
+}
+
+type cancelRegionScanPDClient struct {
+	pd.Client
+}
+
+func (c cancelRegionScanPDClient) WithCallerComponent(caller.Component) pd.Client {
+	return c
+}
+
+func (c cancelRegionScanPDClient) BatchScanRegions(ctx context.Context, ranges []router.KeyRange, limit int, opts ...opt.GetRegionOption) ([]*router.Region, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return c.Client.BatchScanRegions(ctx, ranges, limit, opts...)
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func testBuildCopTasksTimeoutDuringPDRegionScan(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, mockClient.Close()) })
+	testutils.BootstrapWithSingleStore(cluster)
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, cancelRegionScanPDClient{Client: pdClient})
+	t.Cleanup(pdCli.Close)
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	t.Cleanup(cache.Close)
+
+	req := &kv.Request{MaxExecutionTime: 1}
+	worker := &copIteratorWorker{req: req}
+	build := func(ctx context.Context) error {
+		bo, cancel := chooseBackoffer(ctx, make(map[uint64]*Backoffer), &copTask{}, worker)
+		defer cancel()
+		_, err := buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
+		return err
+	}
+	t.Run("statement deadline", func(t *testing.T) {
+		require.ErrorIs(t, build(context.Background()), exeerrors.ErrMaxExecTimeExceeded)
+	})
+	t.Run("caller deadline", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 0)
+		defer cancel()
+		err := build(ctx)
+		require.ErrorContains(t, err, "batchScanRegion from PD failed")
+		require.False(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	})
+}
+
+func testBuildBatchCopTasksTimeoutDuringPDRegionScan(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	testutils.BootstrapWithSingleStore(cluster)
+	tikvStore, err := tikv.NewTestTiKVStore(mockClient, cancelRegionScanPDClient{Client: pdClient}, nil, nil, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+	copStore, err := NewStore(tikvStore, nil)
+	require.NoError(t, err)
+	t.Cleanup(copStore.Close)
+	client := &CopClient{store: copStore}
+
+	for _, partitioned := range []bool{false, true} {
+		name := "non-partitioned"
+		if partitioned {
+			name = "partitioned"
+		}
+		t.Run(name, func(t *testing.T) {
+			build := func(ctx context.Context) error {
+				req := &kv.Request{StoreType: kv.TiFlash, MaxExecutionTime: 1}
+				ranges := BuildKeyRanges("a", "c")
+				if partitioned {
+					req.PartitionIDAndRanges = []kv.PartitionIDAndRanges{{ID: 1, KeyRanges: ranges}}
+				} else {
+					req.KeyRanges = kv.NewNonPartitionedKeyRanges(ranges)
+				}
+				resp := client.sendBatch(ctx, req, kv.NewVariables(nil), &kv.ClientSendOption{})
+				defer func() { require.NoError(t, resp.Close()) }()
+				_, err := resp.Next(ctx)
+				return err
+			}
+			t.Run("statement deadline", func(t *testing.T) {
+				require.ErrorIs(t, build(context.Background()), exeerrors.ErrMaxExecTimeExceeded)
+			})
+			t.Run("caller deadline", func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 0)
+				defer cancel()
+				err := build(ctx)
+				require.ErrorContains(t, err, "batchScanRegion from PD failed")
+				require.False(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+			})
+		})
+	}
 }
 
 func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
