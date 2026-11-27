@@ -4415,6 +4415,7 @@ func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sess
 			tbl.MaterializedView.RefreshNext,      // REFRESH_NEXT
 		)
 		rows = append(rows, record)
+		e.recordMemoryConsume(record)
 	}
 	e.rows = rows
 	return nil
@@ -4617,6 +4618,7 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 			purgeNext,                      // PURGE_NEXT
 		)
 		rows = append(rows, record)
+		e.recordMemoryConsume(record)
 	}
 	e.rows = rows
 	return nil
@@ -4811,6 +4813,7 @@ func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Co
 				dep.name,              // MVIEW_NAME
 			)
 			rows = append(rows, record)
+			e.recordMemoryConsume(record)
 		}
 	}
 	e.rows = rows
