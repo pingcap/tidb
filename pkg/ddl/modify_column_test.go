@@ -1882,3 +1882,55 @@ func TestModifyColumnResumeLegacyReorgJob(t *testing.T) {
 		})
 	}
 }
+
+func TestModifyColumnCheckQuotedIdentifiers(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists `db``1`")
+	tk.MustExec("create database `db``1`")
+	defer tk.MustExec("drop database if exists `db``1`")
+	tk.MustExec("use `db``1`")
+
+	t.Run("varcharToTinyText", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use `db``1`")
+		tk.MustExec("drop table if exists `t``1`")
+		tk.MustExec("create table `t``1` (`c``1` varchar(255) charset utf8mb4)")
+		tk.MustExec("insert into `t``1` values ('ok')")
+
+		var gotType model.ModifyColumnType
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+			gotType = tp
+		})
+		tk.MustExec("alter table `t``1` modify column `c``1` tinytext charset utf8mb4")
+		require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotType)
+		tk.MustQuery("select `c``1` from `t``1`").Check(testkit.Rows("ok"))
+		tk.MustExec("admin check table `t``1`")
+
+		// Reject values exceeding TINYTEXT's 255-byte limit on quoted identifiers too.
+		tk.MustExec("drop table if exists `t``2`")
+		tk.MustExec("create table `t``2` (`c``2` varchar(255) charset utf8mb4)")
+		tk.MustExec(fmt.Sprintf("insert into `t``2` values ('%s')", strings.Repeat("é", 128)))
+		err := tk.ExecToErr("alter table `t``2` modify column `c``2` tinytext charset utf8mb4")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Data truncated")
+	})
+
+	t.Run("integerNarrowingAndNotNull", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use `db``1`")
+		tk.MustExec("drop table if exists `t``int`")
+		tk.MustExec("create table `t``int` (`c``int` int)")
+		tk.MustExec("insert into `t``int` values (42)")
+
+		var gotType model.ModifyColumnType
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+			gotType = tp
+		})
+		tk.MustExec("alter table `t``int` modify column `c``int` tinyint not null")
+		require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotType)
+		tk.MustQuery("select `c``int` from `t``int`").Check(testkit.Rows("42"))
+		tk.MustExec("admin check table `t``int`")
+	})
+}
