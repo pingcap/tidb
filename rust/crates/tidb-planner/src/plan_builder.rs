@@ -786,6 +786,11 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// `used` set of `buildUpdate` for a multi-table UPDATE): everything
     /// else leaves the read. `None` keeps every column.
     pub dml_keep: Option<BTreeSet<(String, String)>>,
+    /// The table qualifiers (lower-case, `""` for an unqualified one) under
+    /// which an UPDATE's SET expressions read `_tidb_commit_ts`: Go
+    /// `buildUpdate` keeps such a commit timestamp (`colRef.Has`), every
+    /// other one is pruned from the write's read.
+    pub(crate) update_commit_ts_refs: BTreeSet<String>,
     /// Go `buildDelete` initializes the `Delete` root right after its source
     /// (the lock, sort and limit included) and before the pruning projection.
     /// When set, [`Self::build_dml_source`] draws that root's plan id at that
@@ -941,6 +946,25 @@ pub fn snapshot_schema_and_names(plan: &LogicalPlan) -> (Schema, Vec<FieldName>)
         plan.schema().cloned().unwrap_or_default(),
         plan.output_names().to_vec(),
     )
+}
+
+/// The table qualifiers under which `update`'s SET expressions read
+/// `_tidb_commit_ts` (lower-case; `""` when unqualified).
+pub(crate) fn update_commit_ts_refs(update: &tidb_ast::UpdateStmt) -> BTreeSet<String> {
+    let mut refs = BTreeSet::new();
+    for assignment in &update.assignments {
+        let mut value = assignment.value.clone();
+        aggregation::visit_exprs(&mut value, &mut |node| {
+            if let Expr::Column(path) = node {
+                if path.last().is_some_and(|name| tidb_hack::go_to_lower(name.clone()) == EXTRA_COMMIT_TS_NAME) {
+                    let table = if path.len() >= 2 { tidb_hack::go_to_lower(path[path.len() - 2].clone()) } else { String::new() };
+                    refs.insert(table);
+                }
+            }
+            false
+        });
+    }
+    refs
 }
 
 /// Go `rewriteExprNode`'s deferred output-name reset
@@ -1866,6 +1890,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             is_for_update_read: false,
             in_update_or_delete_stmt: false,
             dml_keep: None,
+            update_commit_ts_refs: BTreeSet::new(),
             allocate_delete_root: false,
             dml_root: None,
             on_delete_root: None,
@@ -5754,10 +5779,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 on_delete_root();
             }
         }
-        // Go's UPDATE projection explicitly removes ExtraCommitTS. DELETE's
-        // column-position projection reaches the same retained single-table
-        // layout. Keep the original column identities so handle metadata and
-        // physical access paths resolve against the same DataSource columns.
+        // Go's write prunes ExtraCommitTS (DELETE's column-position
+        // projection, UPDATE's `used` set) unless an UPDATE's SET
+        // expressions read it ("The commit timestamp is outside the writable
+        // row, but assignments may read it"). Keep the original column
+        // identities so handle metadata and physical access paths resolve
+        // against the same DataSource columns.
         self.opt_flag |= flags::ELIMINATE_PROJECTION;
         // Go prunes what the write does not need: a DELETE's target tables
         // keep the handle's and the indexes' columns
@@ -5783,7 +5810,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .iter()
             .enumerate()
             .filter(|(position, column)| {
-                column.id != EXTRA_COMMIT_TS_ID
+                (column.id != EXTRA_COMMIT_TS_ID
+                    || source_names.get(*position).is_some_and(|name| {
+                        self.update_commit_ts_refs.contains("")
+                            || self.update_commit_ts_refs.contains(&name.names.table.lower)
+                    }))
                     && keep_mask.as_ref().is_none_or(|mask| mask[*position])
                     && keep.as_ref().is_none_or(|keep| {
                         source_names.get(*position).is_some_and(|name| {
@@ -5849,6 +5880,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             builder.with_dml_ctes(select, |builder| {
                 // Go `buildUpdate`: the read first, then `buildUpdateLists`
                 // over it.
+                builder.update_commit_ts_refs = update_commit_ts_refs(update);
                 let (mut plan, _) = builder.build_dml_source_in_block(select, wrap_lock)?;
                 builder.cur_clause = ClauseCode::FieldList;
                 let assignments = builder.resolve_single_update_assignments(update, allow_write_row_id)?;

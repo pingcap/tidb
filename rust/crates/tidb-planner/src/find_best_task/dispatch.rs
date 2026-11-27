@@ -4062,6 +4062,8 @@ fn find_best_task_4_logical_data_source_paths(
                 if prop.index_join_prop.is_none()
                     && ctx.enable_point_get_conversion
                     && convertable_schema
+                    // Go: a point get cannot read the commit timestamp.
+                    && !accesses_extra_commit_ts_column(ds)
                     && point_handle_ok
                     // Go disallows ordinary partitioned batches in dynamic
                     // prune mode, including an explicit PARTITION(p).
@@ -4819,6 +4821,11 @@ fn find_best_task_4_logical_data_source_paths(
                             ctx.opt_prefix_index_single_scan,
                         )
                     });
+                // Go `convertToIndexScan`: a single-scan index read cannot
+                // return the commit timestamp.
+                if single_scan && accesses_extra_commit_ts_column(ds) {
+                    continue 'paths;
+                }
                 // The two COP property kinds are disjoint: a covering index
                 // is single-read, while a lookup is multi-read.
                 // Refused after pruning, as for the table path above.
@@ -5709,7 +5716,13 @@ fn find_best_task_4_logical_data_source_paths(
     // it."
     let prefer_tiflash =
         ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0;
-    for candidate in merge_candidates.iter().filter(|_| !prop.is_flash_prop() && !prefer_tiflash) {
+    // Go `convertToIndexMergeScan`: an index merge cannot read the commit
+    // timestamp.
+    let accesses_commit_ts = accesses_extra_commit_ts_column(ds);
+    for candidate in merge_candidates
+        .iter()
+        .filter(|_| !prop.is_flash_prop() && !prefer_tiflash && !accesses_commit_ts)
+    {
         let mut merge_task = match candidate {
             super::candidate_preparation::PreparedMerge::Union(path) =>
                 super::index_merge_union::build_converged_union_index_merge_task(ds, path, ctx)?,
@@ -5727,6 +5740,14 @@ fn find_best_task_4_logical_data_source_paths(
         }
     }
     Ok(best)
+}
+
+/// Go `accessesExtraCommitTSColumn`.
+fn accesses_extra_commit_ts_column(ds: &tidb_planner_core_operator_logicalop::DataSource) -> bool {
+    ds.base
+        .base
+        .schema()
+        .is_some_and(|schema| schema.columns.iter().any(|column| column.id == crate::plan_builder::EXTRA_COMMIT_TS_ID))
 }
 
 /// Go `DataSource` table name in a note: the alias when there is one.

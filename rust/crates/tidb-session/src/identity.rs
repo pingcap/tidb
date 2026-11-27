@@ -1736,10 +1736,6 @@ impl tidb_planner::preprocess::PreprocessContext for Session {
         self.vars.sql_mode().has_strict_mode()
     }
 
-    fn enable_mview(&self) -> bool {
-        self.vars.enable_mview()
-    }
-
     fn is_local_temporary_table(&self, path: &[String]) -> bool {
         self.is_local_temporary_table_path(path)
     }

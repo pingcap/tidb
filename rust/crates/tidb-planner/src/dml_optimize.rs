@@ -488,6 +488,43 @@ pub fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
                     .transpose()?
                     .flatten(),
             };
+            // Go `tryUpdatePointPlan`: `buildOrderedList` over the point plan,
+            // whose `rewriteAstExprWithPlanCtx` inits a `LogicalTableDual` for
+            // each assignment; an assignment it cannot resolve there (a
+            // column the point plan does not read, such as
+            // `_tidb_commit_ts`) leaves no fast plan, and the statement takes
+            // the full build.
+            let mut fast_update_parts = None;
+            let fast = match (fast, update.filter(|_| operator.eq_ignore_ascii_case("Update"))) {
+                (Some(point), Some(update)) => {
+                    for _ in &update.assignments {
+                        let _point_update_filler = plan_ids.alloc();
+                    }
+                    let parts = update_assignments_for_plan(update, catalog, current_db, ctx).and_then(|assignments| {
+                        let assigns = single_update_assigns(&assignments);
+                        fast_update_ordered_list(
+                            hooks,
+                            update,
+                            &assignments,
+                            &point,
+                            catalog,
+                            current_db,
+                            ctx,
+                            &plan_ids,
+                            &column_ids,
+                        )
+                        .map(|expressions| (assigns, expressions))
+                    });
+                    match parts {
+                        Ok(parts) => {
+                            fast_update_parts = Some(parts);
+                            Some(point)
+                        }
+                        Err(_) => None,
+                    }
+                }
+                (fast, _) => fast,
+            };
             if let Some(mut fast) = fast {
                 // Go's `Optimize` returns the fast plan without `optimize`'s
                 // `CheckPrivilege`: `checkFastPlanPrivilege` was its check.
@@ -501,34 +538,10 @@ pub fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
                     }
                     _ => {}
                 }
-                // Go's point-UPDATE builder allocates one extra plan between
-                // the PointGet and the Update root; the DELETE builder does
-                // not.
-                // Go `buildOrderedList`'s `rewriteAstExprWithPlanCtx` inits a
-                // `LogicalTableDual` for each assignment.
-                if let Some(update) = update.filter(|_| operator.eq_ignore_ascii_case("Update")) {
-                    for _ in &update.assignments {
-                        let _point_update_filler = plan_ids.alloc();
-                    }
-                }
                 root_base = Some(BasePhysicalPlan::new(plan_ids, operator, 0));
-                if let Some(update) = update {
-                    // Go `tryUpdatePointPlan`'s `buildOrderedList`, over the
-                    // point plan.
-                    let assignments =
-                        update_assignments_for_plan(update, catalog, current_db, ctx)?;
-                    update_assigns = single_update_assigns(&assignments);
-                    update_expressions = fast_update_ordered_list(
-                        hooks,
-                        update,
-                        &assignments,
-                        &fast,
-                        catalog,
-                        current_db,
-                        ctx,
-                        &plan_ids,
-                        &column_ids,
-                    )?;
+                if let Some((assigns, expressions)) = fast_update_parts {
+                    update_assigns = assigns;
+                    update_expressions = expressions;
                     fast_update_list = true;
                 }
                 Some(fast)

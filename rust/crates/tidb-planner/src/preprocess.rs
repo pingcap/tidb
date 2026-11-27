@@ -90,9 +90,6 @@ pub trait PreprocessContext {
     /// Go `SessionVars.SQLMode.HasStrictMode()`, which decides whether an
     /// over-long VARCHAR is an error (`hasAutoConvertWarning`).
     fn strict_sql_mode(&self) -> bool;
-    /// Go `SessionVars.EnableMVIEW` (`tidb_mview_enable`), which admits the
-    /// commit-TS pseudo column.
-    fn enable_mview(&self) -> bool;
     /// Whether `path` names one of the session's local temporary tables
     /// (Go `checkCreateTableGrammar`'s LIKE source).
     fn is_local_temporary_table(&self, path: &[String]) -> bool;
@@ -396,27 +393,21 @@ impl Preprocessor<'_> {
         }
         Ok(())
     }
+}
 
-    /// Go `Enter`'s `*ast.ColumnName` arm.
-    fn check_column_name(&mut self, path: &[String]) {
-        let names_commit_ts = path.last().is_some_and(|name| {
-            go_to_lower(name.clone()) == crate::plan_builder::EXTRA_COMMIT_TS_NAME
-        });
-        if names_commit_ts
-            && matches!(
-                self.stmt_tp,
-                StmtType::Select | StmtType::Update | StmtType::Delete
-            )
-            && !self.ctx.enable_mview()
-        {
-            self.err = Some(PlanError::from(
-                tidb_plannererrors::ERR_INTERNAL.gen_with_stack(format!(
-                    "Usage of column name '{}' is not supported for now",
-                    crate::plan_builder::EXTRA_COMMIT_TS_NAME
-                )),
-            ));
-        }
+/// Go `checkCommitTSWrite`: the explicit write targets of INSERT and UPDATE
+/// may not name `_tidb_commit_ts`.
+fn check_commit_ts_write(columns: &[&str], assignments: &[tidb_ast::Assignment]) -> Result<(), PlanError> {
+    let is_commit_ts = |name: &str| go_to_lower(name.to_owned()) == crate::plan_builder::EXTRA_COMMIT_TS_NAME;
+    if columns.iter().any(|column| is_commit_ts(column))
+        || assignments.iter().any(|assign| assign.col.last().is_some_and(|name| is_commit_ts(name)))
+    {
+        return Err(PlanError::from(tidb_plannererrors::ERR_INTERNAL.gen_with_stack(format!(
+            "Usage of column name '{}' is not supported for now",
+            crate::plan_builder::EXTRA_COMMIT_TS_NAME
+        ))));
     }
+    Ok(())
 }
 
 impl Visitor for Preprocessor<'_> {
@@ -426,10 +417,23 @@ impl Visitor for Preprocessor<'_> {
             self.check_select_noop_funcs(select);
         } else if node.is::<tidb_ast::DeleteStmt>() {
             self.stmt_tp = StmtType::Delete;
-        } else if node.is::<tidb_ast::UpdateStmt>() {
+        } else if let Some(update) = node.downcast_ref::<tidb_ast::UpdateStmt>() {
             self.stmt_tp = StmtType::Update;
-        } else if node.is::<tidb_ast::InsertStmt>() {
+            if let Err(error) = check_commit_ts_write(&[], &update.assignments) {
+                self.err = Some(error);
+            }
+        } else if let Some(insert) = node.downcast_ref::<tidb_ast::InsertStmt>() {
             self.stmt_tp = StmtType::Insert;
+            // Go `node.Columns`: the column list, or a SET form's targets.
+            let columns: Vec<&str> = insert
+                .columns
+                .iter()
+                .map(String::as_str)
+                .chain(insert.set_columns.iter().filter_map(|path| path.last().map(String::as_str)))
+                .collect();
+            if let Err(error) = check_commit_ts_write(&columns, &insert.on_duplicate) {
+                self.err = Some(error);
+            }
         } else if let Some(show) = node.downcast_mut::<tidb_ast::ShowStmt>() {
             self.stmt_tp = StmtType::Show;
             // Go `resolveShowStmt`.
@@ -461,9 +465,6 @@ impl Visitor for Preprocessor<'_> {
             }
             let name = table_ref.name.clone();
             self.collect_table_name(&name);
-        } else if let Some(assignment) = node.downcast_ref::<tidb_ast::Assignment>() {
-            let column = assignment.col.clone();
-            self.check_column_name(&column);
         } else if let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() {
             match expr {
                 // Go `*ast.VariableExpr`.
@@ -496,10 +497,6 @@ impl Visitor for Preprocessor<'_> {
                             ),
                         ),
                     ));
-                }
-                tidb_ast::Expr::Column(path) => {
-                    let path = path.clone();
-                    self.check_column_name(&path);
                 }
                 _ => {}
             }
@@ -1930,9 +1927,6 @@ mod preprocessor_tests {
         }
         fn strict_sql_mode(&self) -> bool {
             true
-        }
-        fn enable_mview(&self) -> bool {
-            false
         }
         fn is_local_temporary_table(&self, _path: &[String]) -> bool {
             false

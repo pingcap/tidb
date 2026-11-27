@@ -855,15 +855,107 @@ fn a_failed_complete_refresh_rolls_back_as_go_master() {
     }
 }
 
-/// Go master's `_tidb_commit_ts` pseudo column: refused while
-/// `tidb_mview_enable` is OFF (Go `preprocessor`), and otherwise each row's
-/// commit timestamp (`ChunkDecoder.DecodeToChunk` fills `ExtraCommitTSID`
-/// from the scanned version), readable in a SELECT, a WHERE and a DELETE's
-/// filter, on handle and clustered tables. Replayed from a Go master node
+/// Go master's `_tidb_commit_ts` pseudo column: each row's commit timestamp
+/// (`ChunkDecoder.DecodeToChunk` fills `ExtraCommitTSID` from the scanned
+/// version), readable in a SELECT, a WHERE and a DELETE's filter, on handle
+/// and clustered tables, whatever `tidb_mview_enable` says (4c3c87c5b44
+/// dropped the preprocessor's read refusal; the capture's two refused reads
+/// now answer, the last one asked as `_tidb_commit_ts > 0` since a raw
+/// commit TSO differs per run). Replayed from a Go master node
 /// (`testdata/commit_ts_column_go.jsonl`).
 #[test]
 fn commit_ts_column_answers_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/commit_ts_column_go.jsonl"));
+}
+
+/// Go master `planner/core/casetest/integration.test`'s "TableScan and
+/// IndexLookUp access to `_tidb_commit_ts`" block (4c3c87c5b44): reading
+/// the commit timestamp turns a point get into a range scan, an index read
+/// into a lookup and leaves no index merge; DML reads it in filters and
+/// assignments, and writing it is refused.
+#[test]
+fn test_table_scan_and_index_lookup_access_to_commit_ts() {
+    let (_stack, _users, mut tk) = go_master_mview_stack();
+    let plan = |tk: &mut Session, sql: &str| -> Vec<String> {
+        let rows = answer(tk, sql);
+        let rows: Vec<Vec<String>> = serde_json::from_str(rows.strip_prefix("RS:").unwrap_or_else(|| panic!("{sql}: {rows}"))).unwrap();
+        rows.into_iter().map(|row| row.join("\t")).collect()
+    };
+    let unsupported = "ERR 1815 Usage of column name '_tidb_commit_ts' is not supported for now";
+    must_exec_all(&mut tk, &[
+        "use test",
+        "SET tidb_mview_enable = OFF",
+        "CREATE TABLE t_commit_ts (a INT PRIMARY KEY, b INT, c INT, INDEX idx_b(b), INDEX idx_c(c))",
+        "INSERT INTO t_commit_ts VALUES (1, 1, 2), (2, 2, 1)",
+    ]);
+    assert_eq!(
+        plan(&mut tk, "explain format = 'plan_tree' select _tidb_commit_ts from t_commit_ts where a = 1"),
+        [
+            "TableReader\troot\t\tdata:Projection",
+            "└─Projection\tcop[tikv]\t\ttest.t_commit_ts._tidb_commit_ts",
+            "  └─TableRangeScan\tcop[tikv]\ttable:t_commit_ts\trange:[1,1], keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        plan(&mut tk, "explain format = 'plan_tree' select _tidb_commit_ts from t_commit_ts where a in (1, 2)"),
+        [
+            "TableReader\troot\t\tdata:Projection",
+            "└─Projection\tcop[tikv]\t\ttest.t_commit_ts._tidb_commit_ts",
+            "  └─TableRangeScan\tcop[tikv]\ttable:t_commit_ts\trange:[1,1], [2,2], keep order:false, stats:pseudo",
+        ]
+    );
+    for (sql, expected) in [
+        ("select _tidb_commit_ts > 0 as valid_commit_ts from t_commit_ts use index (idx_b) where b = 1", r#"RS:[["1"]]"#),
+        ("select _tidb_commit_ts > 0 as valid_commit_ts from t_commit_ts where a = 1", r#"RS:[["1"]]"#),
+        ("select a from t_commit_ts where _tidb_commit_ts > 0 order by a", r#"RS:[["1"],["2"]]"#),
+        (
+            "select _tidb_commit_ts > 0 as valid_commit_ts from t_commit_ts union all select _tidb_commit_ts > 0 from t_commit_ts",
+            r#"RS:[["1"],["1"],["1"],["1"]]"#,
+        ),
+        (
+            "explain format = 'plan_tree' select /*+ use_index_merge(t_commit_ts, idx_b, idx_c) */ _tidb_commit_ts from t_commit_ts where b = 1 or c = 1",
+            "ERR 1815 Internal : Can't find a proper physical plan for this query",
+        ),
+    ] {
+        assert_eq!(answer(&mut tk, sql), expected, "{sql}");
+    }
+    // Read commit timestamps in DML expressions, including in UPDATE
+    // assignments.
+    must_exec_all(&mut tk, &[
+        "update t_commit_ts set b = b + 10 where a = 1 and _tidb_commit_ts > 0",
+        "update t_commit_ts set b = 20 + (_tidb_commit_ts > 0) where a = 2",
+        "update t_commit_ts set b = b + 100 where _tidb_commit_ts = 0",
+    ]);
+    assert_eq!(answer(&mut tk, "select a, b from t_commit_ts order by a"), r#"RS:[["1","11"],["2","21"]]"#);
+    must_exec_all(&mut tk, &[
+        "create table t_commit_ts_copy (a int, ts bigint unsigned)",
+        "insert into t_commit_ts_copy select a, _tidb_commit_ts from t_commit_ts where _tidb_commit_ts > 0",
+    ]);
+    assert_eq!(answer(&mut tk, "select a, ts > 0 from t_commit_ts_copy order by a"), r#"RS:[["1","1"],["2","1"]]"#);
+    must_exec_all(&mut tk, &[
+        "update t_commit_ts t join t_commit_ts_copy s on t.a = s.a set t.c = 10 + (s._tidb_commit_ts > 0), s.ts = t._tidb_commit_ts",
+    ]);
+    assert_eq!(
+        answer(&mut tk, "select t.a, t.c, s.ts > 0 from t_commit_ts t join t_commit_ts_copy s on t.a = s.a order by t.a"),
+        r#"RS:[["1","11","1"],["2","11","1"]]"#
+    );
+    for sql in [
+        "update t_commit_ts set _tidb_commit_ts = 1",
+        "insert into t_commit_ts (_tidb_commit_ts) select a from t_commit_ts_copy",
+        "insert into t_commit_ts (a) values (1) on duplicate key update _tidb_commit_ts = 1",
+    ] {
+        assert_eq!(answer(&mut tk, sql), unsupported, "{sql}");
+    }
+    // Materialized view log purge deletes by _tidb_commit_ts. A miss keeps
+    // the rows; a hit removes them.
+    for (sql, count) in [
+        ("delete from t_commit_ts where _tidb_commit_ts = 0", "2"),
+        ("delete from t_commit_ts where _tidb_commit_ts > 0 limit 1", "1"),
+        ("delete from t_commit_ts where _tidb_commit_ts > 0", "0"),
+    ] {
+        must_exec_all(&mut tk, &[sql]);
+        assert_eq!(answer(&mut tk, "select count(*) from t_commit_ts"), format!(r#"RS:[["{count}"]]"#), "{sql}");
+    }
 }
 
 /// Go master's `PurgeMaterializedViewLogExec`: the target's errors, the

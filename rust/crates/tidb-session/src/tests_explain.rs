@@ -6907,25 +6907,47 @@ fn an_always_false_refined_comparison_folds_away() {
     );
 }
 
-/// Go preprocessor (`*ast.ColumnName`): SELECT, UPDATE and DELETE may not
-/// name `_tidb_commit_ts` yet (1815); INSERT reaches name resolution.
+/// Go master `TestPreprocessor`'s `_tidb_commit_ts` cases
+/// (`preprocess_test.go`, 4c3c87c5b44): reads do not depend on
+/// `tidb_mview_enable`; INSERT and UPDATE may not write the column (1815).
 #[test]
 fn the_commit_ts_pseudo_column_is_refused_by_name() {
     let mut session = Session::new();
-    session
-        .run("create table t_commit_ts (a int primary key, b int)")
-        .unwrap();
-    for sql in [
-        "select _tidb_commit_ts from t_commit_ts where a = 1",
-        "delete from t_commit_ts where _tidb_commit_ts = 1",
-        "update t_commit_ts set b = b + 1 where _tidb_commit_ts = 1",
-    ] {
+    session.run("create table t (a int primary key, b int)").unwrap();
+    let refused = |session: &mut Session, sql: &str| {
         let error = session.run(sql).unwrap_err().to_mysql_error();
-        assert_eq!(error.code, 1815, "{sql}");
         assert_eq!(
-            error.message,
-            "Usage of column name '_tidb_commit_ts' is not supported for now"
+            (error.code, error.message.as_str()),
+            (1815, "Usage of column name '_tidb_commit_ts' is not supported for now"),
+            "{sql}"
         );
+    };
+    for mview_enable in ["off", "on"] {
+        session.run(&format!("set tidb_mview_enable = {mview_enable}")).unwrap();
+        for sql in [
+            "SELECT _tidb_commit_ts FROM t WHERE a = 1",
+            "SELECT a FROM t WHERE _tidb_commit_ts > 0",
+            "SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t",
+            "UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0",
+            "DELETE FROM t WHERE _tidb_commit_ts > 0",
+            "DELETE FROM t WHERE _tidb_commit_ts > 0 AND _tidb_commit_ts <= 1 LIMIT 1",
+        ] {
+            session.run(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        }
+        refused(&mut session, "UPDATE t SET _tidb_commit_ts = 1");
+    }
+    session.run("set tidb_mview_enable = off").unwrap();
+    for sql in ["UPDATE t SET a = (_tidb_commit_ts > 0)", "INSERT INTO t (a) SELECT _tidb_commit_ts FROM t"] {
+        session.run(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+    for sql in [
+        "UPDATE t SET t._tidb_commit_ts = 1",
+        "INSERT INTO t (_TIDB_COMMIT_TS) VALUES (1)",
+        "INSERT INTO t (_tidb_commit_ts) SELECT a FROM t",
+        "INSERT INTO t SET _tidb_commit_ts = 1",
+        "INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE _tidb_commit_ts = 1",
+    ] {
+        refused(&mut session, sql);
     }
 }
 

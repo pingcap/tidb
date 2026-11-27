@@ -375,3 +375,24 @@ fn an_unrelated_ddl_keeps_a_cached_tables_runtime() {
     let rebuilt = Arc::clone(catalog.physical_kv_table_by_id(id).unwrap().cached_table().unwrap());
     assert!(!Arc::ptr_eq(&before, &rebuilt));
 }
+
+/// Go `TestIssue32422`'s cached-table read and Go master's commit-timestamp
+/// refusals (4c3c87c5b44, `validateCachedTableSchema`): a cached table
+/// answers from its copy, and reading `_tidb_commit_ts` from it, by the
+/// table reader or an index lookup, is refused.
+#[test]
+fn test_issue_32422_cached_table_refuses_commit_ts() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(164)).expect("session opens");
+    rows(&mut session, "create table test.t (id int, c int, index(id))");
+    rows(&mut session, "insert into test.t values (3,3), (4,4), (5,5)");
+    rows(&mut session, "alter table test.t cache");
+    read_until_cached(&mut session, "select id+1, c from test.t where c = 4", &[vec![5, 4]]);
+    for sql in [
+        "select id, _tidb_commit_ts from test.t where c = 4",
+        "select id, _tidb_commit_ts from test.t use index(id) where id = 4",
+    ] {
+        let error = session.run(sql).expect_err(sql).to_mysql_error();
+        assert!(error.message.contains("'_tidb_commit_ts' is unsupported on cache tables."), "{sql}: {}", error.message);
+    }
+}

@@ -885,8 +885,12 @@ fn test_purge_materialized_view_log_internal_sql_no_schedule_sets_next_unix_seco
     assert_eq!(last_purge_method(&mut tk, mlog_id), "auto");
 }
 
+/// Go master `TestMViewCommitTSAccessIndependentOfMViewEnable`
+/// (4c3c87c5b44): `_tidb_commit_ts` reads do not depend on
+/// `tidb_mview_enable`, and a purge-session delete by it removes exactly
+/// what it matches.
 #[test]
-fn test_m_view_enable_controls_m_log_commit_ts_access_and_purge() {
+fn test_m_view_commit_ts_access_independent_of_m_view_enable() {
     let (_stack, _users, mut tk) = go_master_mview_stack();
     must_exec_all(&mut tk, &[
         "use test",
@@ -897,11 +901,21 @@ fn test_m_view_enable_controls_m_log_commit_ts_access_and_purge() {
     ]);
     assert_eq!(single_value(&mut tk, "select _tidb_commit_ts > 0 from `$mlog$t_mlog_commit_ts_gate`"), "1");
     must_exec_all(&mut tk, &["set tidb_mview_enable = off"]);
-    exec_err_contains(&mut tk, "select _tidb_commit_ts from `$mlog$t_mlog_commit_ts_gate`", "Usage of column name '_tidb_commit_ts' is not supported for now");
-    // "Pooled purge sessions start from the default global value (OFF), so a
-    // successful purge proves they enable the same session capability
-    // locally."
-    must_exec_all(&mut tk, &["set tidb_mview_enable = on", "purge materialized view log on t_mlog_commit_ts_gate"]);
+    assert_eq!(single_value(&mut tk, "select _tidb_commit_ts > 0 from `$mlog$t_mlog_commit_ts_gate`"), "1");
+    must_exec_all(&mut tk, &["delete from t_mlog_commit_ts_gate where _tidb_commit_ts = 0"]);
+    assert_eq!(single_value(&mut tk, "select count(*) from t_mlog_commit_ts_gate"), "1");
+    // "Pooled purge sessions start from the default global value (OFF). A
+    // commit_ts predicate that matches nothing must leave the log row in
+    // place."
+    must_exec_all(&mut tk, &["set tidb_mview_enable = on"]);
+    must_exec_mview_purge_internal(&mut tk, "delete from `$mlog$t_mlog_commit_ts_gate` where _tidb_commit_ts = 0");
+    assert_eq!(single_value(&mut tk, "select count(*) from `$mlog$t_mlog_commit_ts_gate`"), "1");
+    must_exec_mview_purge_internal(&mut tk, "delete from `$mlog$t_mlog_commit_ts_gate` where _tidb_commit_ts > 0 limit 1");
+    assert_eq!(single_value(&mut tk, "select count(*) from `$mlog$t_mlog_commit_ts_gate`"), "0");
+    must_exec_all(&mut tk, &[
+        "insert into t_mlog_commit_ts_gate values (2, 20)",
+        "purge materialized view log on t_mlog_commit_ts_gate",
+    ]);
     assert_eq!(single_value(&mut tk, "select count(*) from `$mlog$t_mlog_commit_ts_gate`"), "0");
 }
 

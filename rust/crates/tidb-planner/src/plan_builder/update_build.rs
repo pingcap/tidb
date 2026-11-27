@@ -76,6 +76,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         self.with_dml_hints(select, |builder| {
             builder.with_dml_ctes(select, |builder| {
+                builder.update_commit_ts_refs = super::update_commit_ts_refs(update);
                 let (mut plan, _) = builder.build_dml_source_in_block(select, false)?;
                 builder.cur_clause = ClauseCode::FieldList;
                 let (frozen_schema, frozen_names) = snapshot_schema_and_names(&plan);

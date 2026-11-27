@@ -4601,6 +4601,11 @@ fn build_point_get(
     let snapshot_stats =
         configure_point_snapshot_read(ctx, plan.point_avg_row_size(true), snapshot_stats);
     let schema = plan_schema(plan)?;
+    // Go `buildPointGet` / `buildBatchPointGet`: a cached table cannot
+    // return the commit timestamp.
+    if table.cache_status() == tidb_model::TableCacheStatusType::ENABLE {
+        validate_cached_table_schema(&schema)?;
+    }
     let output_columns = table_output_columns(&schema, &table)?;
     let executor_meta = ExecutorMeta::new(schema, i64::from(plan.base().base.id()), 1, 1)
         .with_alloc_pool(ctx.chunk_allocator());
@@ -4682,6 +4687,11 @@ fn build_batch_point_get(
     let snapshot_stats =
         configure_point_snapshot_read(ctx, plan.point_avg_row_size(true), snapshot_stats);
     let schema = plan_schema(plan)?;
+    // Go `buildPointGet` / `buildBatchPointGet`: a cached table cannot
+    // return the commit timestamp.
+    if table.cache_status() == tidb_model::TableCacheStatusType::ENABLE {
+        validate_cached_table_schema(&schema)?;
+    }
     let output_columns = table_output_columns(&schema, &table)?;
     // Go buildBatchPointGet sizes both capacities to the retained access keys.
     let capacity = batch.ranges.len();
@@ -7258,6 +7268,17 @@ fn temporary_table_snapshot(
     Ok(Some(Arc::new(tidb_kv::mem_buffer::MemBufferSnapshot { entries })))
 }
 
+/// Go `validateCachedTableSchema`.
+fn validate_cached_table_schema(schema: &tidb_expr::schema::Schema) -> Result<(), DriverError> {
+    if schema.columns.iter().any(|column| column.id == tidb_model::column::EXTRA_COMMIT_TS_ID) {
+        return Err(DriverError::from(tidb_terror::MysqlError::from_terror(
+            &tidb_table::table_errors::ERR_OPT_ON_CACHE_TABLE
+                .gen_with_stack_by_args(&[tidb_model::column::EXTRA_COMMIT_TS_NAME.into()]),
+        )));
+    }
+    Ok(())
+}
+
 /// What Go's `buildUnionScanFromReader` and `UnionScanExec.open` read
 /// besides the reader: its descriptor and table, the handle columns'
 /// offsets, the statement's buffer, and the buffer over the snapshot Go's
@@ -7324,7 +7345,11 @@ fn union_scan_source(
     })?;
     // Go `handleCachedTable`: a cached table read inside its lease reads the
     // in-memory copy, which `getSnapIter` unions under the buffer, and its
-    // reader is a dummy (`setDummy`).
+    // reader is a dummy (`setDummy`); its schema may not hold the commit
+    // timestamp.
+    if table.cache_status() == tidb_model::TableCacheStatusType::ENABLE {
+        validate_cached_table_schema(&plan_schema(plan)?)?;
+    }
     let cache_table = cached_table_data(&table, ctx, true);
     // Go `getSnapIter`: the session's temporary table data, when it has any,
     // or else the table's cache, read under the buffer.
