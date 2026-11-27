@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -42,7 +43,7 @@ type JoinOrder struct {
 }
 
 // A joinGroup is a subtree of the original plan tree. It's the unit for join order.
-// root is the root of the subtree, if root is not a join, then the joinGroup only contains one vertex.
+// root may also be a Selection or Projection that can be safely looked through.
 // vertexes are the leaf nodes of the subtree, it may have its children, but they are considered as a vertex in this subtree.
 type joinGroup struct {
 	root base.LogicalPlan
@@ -69,6 +70,12 @@ type joinGroup struct {
 	// selConds holds filter conditions collected from Selection operators
 	// that were looked through during extractJoinGroup.
 	selConds map[int][]expression.Expression
+
+	// colExprMap contains definitions of columns from inlined projections.
+	colExprMap map[int64]expression.Expression
+	// nullExtendedCols prevents moving projection expressions below an outer join
+	// that supplies NULL values for their inputs.
+	nullExtendedCols *expression.Schema
 }
 
 func (g *joinGroup) merge(other *joinGroup) {
@@ -82,6 +89,15 @@ func (g *joinGroup) merge(other *joinGroup) {
 		maps.Copy(g.vertexHints, other.vertexHints)
 	}
 	g.allInnerJoin = g.allInnerJoin && other.allInnerJoin
+	if len(other.colExprMap) > 0 {
+		if g.colExprMap == nil {
+			g.colExprMap = make(map[int64]expression.Expression, len(other.colExprMap))
+		}
+		maps.Copy(g.colExprMap, other.colExprMap)
+	}
+	if other.nullExtendedCols != nil {
+		g.nullExtendedCols = expression.MergeSchema(g.nullExtendedCols, other.nullExtendedCols)
+	}
 
 	if len(other.selConds) > 0 {
 		if g.selConds == nil {
@@ -92,10 +108,29 @@ func (g *joinGroup) merge(other *joinGroup) {
 }
 
 func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
+	return extractJoinGroupWithProjection(p, p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughProj)
+}
+
+func extractJoinGroupWithProjection(p base.LogicalPlan, inlineProjection bool) (resJoinGroup *joinGroup) {
+	if proj, ok := p.(*logicalop.LogicalProjection); ok {
+		if inlineProjection && CanInlineProjectionBasic(proj) {
+			childGroup := extractJoinGroupWithProjection(proj.Children()[0], inlineProjection)
+			if len(childGroup.vertexes) > 1 && CanInlineProjection(proj, childGroup.vertexes, childGroup.colExprMap, childGroup.nullExtendedCols) {
+				childGroup.colExprMap = BuildProjectionColumnMap(proj, childGroup.colExprMap)
+				childGroup.root = proj
+				p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptJoinReorderThroughProj)
+				return childGroup
+			}
+		}
+		return makeSingleGroup(p)
+	}
+
 	if sel, isSel := p.(*logicalop.LogicalSelection); isSel {
 		if p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughSel &&
-			!slices.ContainsFunc(sel.Conditions, expression.IsMutableEffectsExpr) {
-			childGroup := extractJoinGroup(sel.Children()[0])
+			!slices.ContainsFunc(sel.Conditions, func(expr expression.Expression) bool {
+				return expression.IsMutableEffectsExpr(expr) || expression.CheckNonDeterministic(expr)
+			}) {
+			childGroup := extractJoinGroupWithProjection(sel.Children()[0], inlineProjection)
 			// This check is necessary: the child JoinGroup must contain at least one join operator.
 			// If a table outside the Selection subtree needs to be reordered with tables inside it,
 			// the connectivity must be verified through CR. Since the CR of Selection-derived edge will not be generated,
@@ -205,7 +240,9 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	leftShouldPreserve := curLeadingHint != nil && IsDerivedTableInLeadingHint(join.Children()[0], curLeadingHint)
 	var leftJoinGroup, rightJoinGroup *joinGroup
 	if !leftHasHint && !leftShouldPreserve {
-		leftJoinGroup = extractJoinGroup(join.Children()[0])
+		// Do not lift derived expressions out of the NULL-producing side: e.g.
+		// IFNULL(col, 0) must itself become NULL for an unmatched outer row.
+		leftJoinGroup = extractJoinGroupWithProjection(join.Children()[0], inlineProjection && join.JoinType != base.RightOuterJoin)
 	} else {
 		leftJoinGroup = makeSingleGroup(join.Children()[0])
 	}
@@ -213,11 +250,19 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 
 	rightShouldPreserve := curLeadingHint != nil && IsDerivedTableInLeadingHint(join.Children()[1], curLeadingHint)
 	if !rightHasHint && !rightShouldPreserve {
-		rightJoinGroup = extractJoinGroup(join.Children()[1])
+		rightJoinGroup = extractJoinGroupWithProjection(join.Children()[1], inlineProjection && join.JoinType != base.LeftOuterJoin)
 	} else {
 		rightJoinGroup = makeSingleGroup(join.Children()[1])
 	}
 	resJoinGroup.merge(rightJoinGroup)
+	if inlineProjection {
+		switch join.JoinType {
+		case base.LeftOuterJoin:
+			resJoinGroup.nullExtendedCols = expression.MergeSchema(resJoinGroup.nullExtendedCols, join.Children()[1].Schema())
+		case base.RightOuterJoin:
+			resJoinGroup.nullExtendedCols = expression.MergeSchema(resJoinGroup.nullExtendedCols, join.Children()[0].Schema())
+		}
+	}
 	return resJoinGroup
 }
 
@@ -275,6 +320,11 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 			return nil, err
 		}
 		vertexMap[oldID] = joinGroup.vertexes[i]
+		// Join construction looks up method hints by the optimized child's ID.
+		if methodHint, ok := joinGroup.vertexHints[oldID]; ok && oldID != joinGroup.vertexes[i].ID() {
+			delete(joinGroup.vertexHints, oldID)
+			joinGroup.vertexHints[joinGroup.vertexes[i].ID()] = methodHint
+		}
 	}
 	if len(vertexMap) > 0 {
 		joinGroup.root = replaceJoinGroupVertexes(joinGroup.root, vertexMap)
@@ -331,12 +381,18 @@ func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.Logica
 		}
 	}
 
-	// Ensure the schema is not changed after join reorder.
-	if !p.Schema().Equal(originalSchema) {
+	// An inlined root projection can carry a derived-table alias even when its
+	// columns pass through unchanged. Outer LEADING hints still need that identity.
+	_, rootIsProjection := group.root.(*logicalop.LogicalProjection)
+	if p != group.root && (rootIsProjection || !p.Schema().Equal(originalSchema)) {
+		exprs := expression.Column2Exprs(originalSchema.Columns)
+		if len(group.colExprMap) > 0 {
+			exprs = SubstituteColsInExprs(exprs, group.colExprMap)
+		}
 		proj := logicalop.LogicalProjection{
-			Exprs: expression.Column2Exprs(originalSchema.Columns),
-		}.Init(p.SCtx(), p.QueryBlockOffset())
-		proj.SetSchema(originalSchema.Clone())
+			Exprs: exprs,
+		}.Init(ctx, group.root.QueryBlockOffset())
+		proj.SetSchemaAndNames(originalSchema.Clone(), group.root.OutputNames())
 		proj.SetChildren(p)
 		return proj, nil
 	}

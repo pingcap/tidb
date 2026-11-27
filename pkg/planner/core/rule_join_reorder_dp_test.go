@@ -400,7 +400,7 @@ func TestJoinReorderInlineSafetyGates(t *testing.T) {
 			foundRows,
 		)
 		proj := newProjection(join, expr)
-		require.False(t, canInlineProjectionBasic(proj))
+		require.False(t, joinorder.CanInlineProjectionBasic(proj))
 	})
 
 	t.Run("projection leaf gate rejects cross-leaf expressions", func(t *testing.T) {
@@ -416,11 +416,8 @@ func TestJoinReorderInlineSafetyGates(t *testing.T) {
 			right.Schema().Columns[0],
 		)
 		proj := newProjection(join, expr)
-		require.True(t, canInlineProjectionBasic(proj))
-		require.False(t, canInlineProjection(proj, &joinGroupResult{
-			group:              []base.LogicalPlan{left, right},
-			basicJoinGroupInfo: &basicJoinGroupInfo{},
-		}))
+		require.True(t, joinorder.CanInlineProjectionBasic(proj))
+		require.False(t, joinorder.CanInlineProjection(proj, []base.LogicalPlan{left, right}, nil, nil))
 	})
 
 	t.Run("projection leaf gate rejects null-extended expressions", func(t *testing.T) {
@@ -436,13 +433,8 @@ func TestJoinReorderInlineSafetyGates(t *testing.T) {
 			expression.NewOne(),
 		)
 		proj := newProjection(join, expr)
-		require.True(t, canInlineProjectionBasic(proj))
-		require.False(t, canInlineProjection(proj, &joinGroupResult{
-			group: []base.LogicalPlan{left, right},
-			basicJoinGroupInfo: &basicJoinGroupInfo{
-				nullExtendedCols: expression.NewSchema(right.Schema().Columns...),
-			},
-		}))
+		require.True(t, joinorder.CanInlineProjectionBasic(proj))
+		require.False(t, joinorder.CanInlineProjection(proj, []base.LogicalPlan{left, right}, nil, expression.NewSchema(right.Schema().Columns...)))
 	})
 
 	t.Run("tryInlineProjectionForJoinGroup keeps safe single-leaf derived columns", func(t *testing.T) {
