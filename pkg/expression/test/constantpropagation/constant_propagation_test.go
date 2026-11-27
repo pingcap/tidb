@@ -86,6 +86,78 @@ func TestLikeColumnPropagation(t *testing.T) {
 	})
 }
 
+func TestPadSpaceColumnPropagation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	predicates := []struct {
+		name      string
+		cond      string
+		planToken string
+	}{
+		{"concat", "concat(o.k, 'x') = 'a x'", "concat(test.i.k"},
+		{"concat_ws", "concat_ws('-', o.k, 'x') = 'a -x'", "concat_ws(-, test.i.k"},
+		{"regexp", "o.k regexp '^a $'", "regexp(test.i.k"},
+		{"regexp_like", "regexp_like(o.k, '^a $')", "regexp_like(test.i.k"},
+		{"reverse", "reverse(o.k) = ' a'", "reverse(test.i.k"},
+		{"repeat", "repeat(o.k, 2) = 'a a '", "repeat(test.i.k"},
+		{"insert", "insert(o.k, 2, 0, 'x') = 'ax '", "insert(test.i.k"},
+		{"lpad", "lpad(o.k, 3, '0') = '0a '", "lpad(test.i.k"},
+	}
+
+	for _, collation := range []string{"utf8mb4_general_ci", "utf8mb4_bin", "utf8mb4_unicode_ci"} {
+		t.Run(collation, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists o, i")
+			tk.MustExec("create table o (k varchar(10) not null) charset utf8mb4 collate " + collation)
+			tk.MustExec("create table i (k varchar(10) not null) charset utf8mb4 collate " + collation)
+			tk.MustExec("insert into o values ('a ')")
+			tk.MustExec("insert into i values ('a')")
+
+			for _, pred := range predicates {
+				t.Run(pred.name, func(t *testing.T) {
+					for _, join := range []string{"o left join i", "i right join o", "o join i"} {
+						query := "select hex(o.k), hex(i.k) from " + join + " on o.k = i.k where " + pred.cond
+						tk.MustQuery(query).Check(testkit.Rows("6120 61"))
+						tk.MustQuery("explain format='brief' " + query).CheckNotContain(pred.planToken)
+					}
+					// ON clause, OR branch, IN subquery, and EXISTS subquery.
+					tk.MustQuery("select hex(o.k), hex(i.k) from o left join i on o.k = i.k and " + pred.cond).Check(testkit.Rows("6120 61"))
+					tk.MustQuery("select hex(o.k), hex(i.k) from o join i on o.k = i.k where o.k = 'z' or " + pred.cond).Check(testkit.Rows("6120 61"))
+					tk.MustQuery("select hex(o.k) from o where o.k in (select k from i) and " + pred.cond).Check(testkit.Rows("6120"))
+					tk.MustQuery("select hex(o.k) from o where exists (select 1 from i where i.k = o.k) and " + pred.cond).Check(testkit.Rows("6120"))
+				})
+			}
+
+			// Plain comparisons under the same collation should still propagate.
+			tk.MustQuery("explain format='brief' select hex(o.k), hex(i.k) from o join i on o.k = i.k where o.k > '0'").CheckContain("gt(test.i.k")
+			tk.MustQuery("explain format='brief' select hex(o.k), hex(i.k) from o join i on o.k = i.k where o.k in ('a', 'b')").CheckContain("in(test.i.k")
+		})
+	}
+
+	// Byte-exact collations (binary, utf8mb4_0900_bin) should continue propagating string functions.
+	for _, collation := range []string{"binary", "utf8mb4_0900_bin"} {
+		t.Run(collation, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists o, i")
+			chs := "utf8mb4"
+			if collation == "binary" {
+				chs = "binary"
+			}
+			tk.MustExec("create table o (k varchar(10) not null) charset " + chs + " collate " + collation)
+			tk.MustExec("create table i (k varchar(10) not null) charset " + chs + " collate " + collation)
+			tk.MustExec("insert into o values ('a ')")
+			tk.MustExec("insert into i values ('a'), ('a ')")
+
+			for _, join := range []string{"o left join i", "i right join o", "o join i"} {
+				query := "select hex(o.k), hex(i.k) from " + join + " on o.k = i.k where concat(o.k, 'x') = 'a x'"
+				tk.MustQuery(query).Check(testkit.Rows("6120 6120"))
+				tk.MustQuery("explain format='brief' " + query).CheckContain("concat(test.i.k")
+			}
+		})
+	}
+}
+
 func TestConstantPropagation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -222,6 +222,29 @@ var inequalFunctions = map[string]struct{}{
 	ast.IsNull: {},
 }
 
+// collationEqualitySafeFunctions stores functions whose result is invariant when
+// substituting a string column with an equal column under a non-byte-exact
+// collation (e.g. PAD SPACE or case/accent-insensitive collations).
+// Comparison functions here rely on tryToReplaceCond verifying that the
+// expression's collation matches the target column's collation.
+var collationEqualitySafeFunctions = map[string]struct{}{
+	ast.EQ:                 {},
+	ast.NE:                 {},
+	ast.NullEQ:             {},
+	ast.LT:                 {},
+	ast.LE:                 {},
+	ast.GT:                 {},
+	ast.GE:                 {},
+	ast.In:                 {},
+	ast.LogicAnd:           {},
+	ast.LogicOr:            {},
+	ast.LogicXor:           {},
+	ast.UnaryNot:           {},
+	ast.IsTruthWithNull:    {},
+	ast.IsTruthWithoutNull: {},
+	ast.IsFalsity:          {},
+}
+
 // mutableEffectsFunctions stores functions which are mutable or have side effects, specifically,
 // we cannot remove them from filter even if they have duplicates.
 var mutableEffectsFunctions = map[string]struct{}{

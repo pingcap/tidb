@@ -226,6 +226,15 @@ func replaceEqCondtionWithTrue(ctx BuildContext, src *Column, tgt *Column, cond 
 	return cond, false
 }
 
+func isByteExactStringCollation(src, tgt *Column) bool {
+	if src.RetType.EvalType() != types.ETString || tgt.RetType.EvalType() != types.ETString {
+		return false
+	}
+	collation := src.RetType.GetCollate()
+	return collation == tgt.RetType.GetCollate() &&
+		(collation == charset.CollationBin || collation == charset.CollationUTF8MB40900Bin)
+}
+
 // tryToReplaceCond aims to replace all occurrences of column 'src' and try to replace it with 'tgt' in 'cond'
 // It returns
 //
@@ -260,10 +269,7 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 		// String equality under binary and utf8mb4_0900_bin is byte-exact, so equal
 		// values have the same pattern-matching result. Numeric types can also have
 		// binary collation, but equal numbers need not have identical string forms.
-		collation := src.RetType.GetCollate()
-		if src.RetType.EvalType() != types.ETString || tgt.RetType.EvalType() != types.ETString ||
-			collation != tgt.RetType.GetCollate() ||
-			(collation != charset.CollationBin && collation != charset.CollationUTF8MB40900Bin) {
+		if !isByteExactStringCollation(src, tgt) {
 			return false, true, cond
 		}
 	}
@@ -309,6 +315,16 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 		}
 	}
 	if replaced {
+		// Under non-byte-exact string collations (such as PAD SPACE or case/accent-insensitive
+		// collations), equal values can differ in trailing spaces, case, or bytes. Functions like
+		// CONCAT, REGEXP, REVERSE, REPEAT, INSERT, and LPAD can observe those differences, so only
+		// allow functions known to be invariant under collation equality.
+		if (src.RetType.EvalType() == types.ETString || tgt.RetType.EvalType() == types.ETString) &&
+			!isByteExactStringCollation(src, tgt) {
+			if _, ok := collationEqualitySafeFunctions[sf.FuncName.L]; !ok {
+				return false, true, cond
+			}
+		}
 		return true, false, NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(ctx.GetEvalCtx()), args...)
 	}
 	return false, false, cond
