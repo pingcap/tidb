@@ -306,7 +306,11 @@ func TestMemoryControlWithUpdate(t *testing.T) {
 	capacity := int64(100)
 	lfu, err := NewLFU(capacity)
 	require.NoError(t, err)
-	for i := range 100 {
+
+	t1 := testutil.NewMockStatisticsTable(0, 1, true, false, false)
+	lfu.Put(1, t1)
+	lfu.WaitForAsyncUpdates()
+	for i := 1; i < 100; i++ {
 		t1 := testutil.NewMockStatisticsTable(i, 1, true, false, false)
 		lfu.Put(1, t1)
 	}
