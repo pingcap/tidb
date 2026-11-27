@@ -210,6 +210,7 @@ go_test(
         "//pkg/session",
         "//pkg/session/sessionapi",
         "//pkg/session/sessmgr",
+        "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",

@@ -4546,29 +4546,19 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	l := sel.LockInfo
 	if l != nil && l.LockType != ast.SelectLockNone {
 		var tableList []*ast.TableName
-		var isExplicitSetTablesNames bool
 		if len(l.Tables) == 0 && sel.From != nil {
 			// It's for stmt like `select xxx from table t, t1 where t.a = t1.a for update`
 			nodeW := resolve.NewNodeWWithCtx(sel.From, b.resolveCtx)
 			tableList = ExtractTableList(nodeW, false)
 		} else if len(l.Tables) != 0 {
 			// It's for stmt like `select xxx from table t, t1 where t.a = t1.a for update of t`
-			isExplicitSetTablesNames = true
 			tableList = l.Tables
 		}
 		for _, tName := range tableList {
 			// CTE has no *model.HintedTable, we need to skip it.
 			tNameW := b.resolveCtx.GetTableName(tName)
-			if tNameW == nil {
+			if tNameW == nil || l.IsForShare() {
 				continue
-			}
-			if isExplicitSetTablesNames {
-				// If `LockTableIDs` map is empty, it will lock all records from all tables.
-				// Besides, it will only lock the metioned in `of` part.
-				if b.ctx.GetSessionVars().StmtCtx.LockTableIDs == nil {
-					b.ctx.GetSessionVars().StmtCtx.LockTableIDs = make(map[int64]struct{})
-				}
-				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
 			}
 			// Use the already-resolved DBInfo to derive the privilege-check DB name.
 			// For OF-alias targets, tName.Schema is empty; falling back to currentDB via getLowerDB would

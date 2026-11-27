@@ -187,60 +187,17 @@ func (*globalPanicOnExceed) GetPriority() int64 {
 	return memory.DefPanicPriority
 }
 
-// SelectLockExec represents a select lock executor.
-// It is built from the "SELECT .. FOR UPDATE" or the "SELECT .. LOCK IN SHARE MODE" statement.
-// For "SELECT .. FOR UPDATE" statement, it locks every row key from source Executor.
-// After the execution, the keys are buffered in transaction, and will be sent to KV
-// when doing commit. If there is any key already locked by another transaction,
-// the transaction will rollback and retry.
+// SelectLockExec locks the selected row handles before returning each chunk.
 type SelectLockExec struct {
 	exec.BaseExecutor
 
 	Lock *ast.SelectLockInfo
-	keys []kv.Key
 
 	// The children may be a join of multiple tables, so we need a map.
 	tblID2Handle map[int64][]plannerutil.HandleCols
 
-	// When SelectLock work on a partition table, we need the partition ID
-	// (Physical Table ID) instead of the 'logical' table ID to calculate
-	// the lock KV. In that case, the Physical Table ID is extracted
-	// from the row key in the store and as an extra column in the chunk row.
-
-	// tblID2PhyTblIDCol is used for partitioned tables.
-	// The child executor need to return an extra column containing
-	// the Physical Table ID (i.e. from which partition the row came from)
-	// Used during building
-	tblID2PhysTblIDCol map[int64]*expression.Column
-
-	// Used during execution
-	// Map from logic tableID to column index where the physical table id is stored
-	// For dynamic prune mode, model.ExtraPhysTblID columns are requested from
-	// storage and used for physical table id
-	// For static prune mode, model.ExtraPhysTblID is still sent to storage/Protobuf
-	// but could be filled in by the partitions TableReaderExecutor
-	// due to issues with chunk handling between the TableReaderExecutor and the
-	// SelectReader result.
-	tblID2PhysTblIDColIdx map[int64]int
-}
-
-// Open implements the Executor Open interface.
-func (e *SelectLockExec) Open(ctx context.Context) error {
-	if len(e.tblID2PhysTblIDCol) > 0 {
-		e.tblID2PhysTblIDColIdx = make(map[int64]int)
-		cols := e.Schema().Columns
-		for i := len(cols) - 1; i >= 0; i-- {
-			if cols[i].ID == model.ExtraPhysTblID {
-				for tblID, col := range e.tblID2PhysTblIDCol {
-					if cols[i].UniqueID == col.UniqueID {
-						e.tblID2PhysTblIDColIdx[tblID] = i
-						break
-					}
-				}
-			}
-		}
-	}
-	return e.BaseExecutor.Open(ctx)
+	// Keyed by the first handle column's UniqueID to distinguish references in a self-join.
+	physIDColByHandle map[int64]*expression.Column
 }
 
 // Next implements the Executor Next interface.
@@ -255,33 +212,32 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
-	if req.NumRows() > 0 {
-		iter := chunk.NewIterator4Chunk(req)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			for tblID, cols := range e.tblID2Handle {
-				for _, col := range cols {
-					handle, err := col.BuildHandle(e.Ctx().GetSessionVars().StmtCtx, row)
-					if err != nil {
-						return err
-					}
-					physTblID := tblID
-					if physTblColIdx, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
-						physTblID = row.GetInt64(physTblColIdx)
-						if physTblID == 0 {
-							// select * from t1 left join t2 on t1.c = t2.c for update
-							// The join right side might be added NULL in left join
-							// In that case, physTblID is 0, so skip adding the lock.
-							//
-							// Note, we can't distinguish whether it's the left join case,
-							// or a bug that TiKV return without correct physical ID column.
-							continue
-						}
-					}
-					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physTblID, handle))
+	// An empty locking read must still mark the transaction as ineligible for automatic retry.
+	var keys []kv.Key
+	iter := chunk.NewIterator4Chunk(req)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		for tblID, cols := range e.tblID2Handle {
+			for _, col := range cols {
+				handle, err := col.BuildHandle(e.Ctx().GetSessionVars().StmtCtx, row)
+				if err != nil {
+					return err
 				}
+				physTblID := tblID
+				if pid := e.physIDColByHandle[col.GetCol(0).UniqueID]; pid != nil {
+					physTblID = row.GetInt64(pid.Index)
+					if physTblID == 0 {
+						// select * from t1 left join t2 on t1.c = t2.c for update
+						// The join right side might be added NULL in left join
+						// In that case, physTblID is 0, so skip adding the lock.
+						//
+						// Note, we can't distinguish whether it's the left join case,
+						// or a bug that TiKV return without correct physical ID column.
+						continue
+					}
+				}
+				keys = append(keys, tablecodec.EncodeRowKeyWithHandle(physTblID, handle))
 			}
 		}
-		return nil
 	}
 	lockWaitTime := e.Ctx().GetSessionVars().LockWaitTimeout
 	switch e.Lock.LockType {
@@ -298,11 +254,11 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for id := range e.tblID2Handle {
 		e.UpdateDeltaForTableID(id)
 	}
-	lockCtx, err := newSelectLockCtx(e.Ctx(), lockWaitTime, len(e.keys), e.Ctx().GetSessionVars().UseSelectForShare(e.Lock))
+	lockCtx, err := newSelectLockCtx(e.Ctx(), lockWaitTime, len(keys), e.Ctx().GetSessionVars().UseSelectForShare(e.Lock))
 	if err != nil {
 		return err
 	}
-	return doLockKeys(ctx, e.Ctx(), lockCtx, e.keys...)
+	return doLockKeys(ctx, e.Ctx(), lockCtx, keys...)
 }
 
 // getMaxExecutionDeadline derives the deadline from ProcessInfo's effective timeout.
@@ -406,7 +362,6 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 	if !sctx.InUpdateStmt && !sctx.InDeleteStmt {
 		atomic.StoreUint32(&se.GetSessionVars().TxnCtx.ForUpdate, 1)
 	}
-	// Lock keys only once when finished fetching all results.
 	txn, err := se.Txn(true)
 	if err != nil {
 		return err
@@ -415,12 +370,15 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 	// Skip the temporary table keys.
 	keys = filterTemporaryTableKeys(sessVars, keys)
 
-	keys = filterLockTableKeys(sessVars.StmtCtx, keys)
 	var lockKeyStats *tikvutil.LockKeysDetails
 	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
 	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
 	if lockKeyStats != nil {
-		sctx.MergeLockKeysExecDetails(lockKeyStats)
+		if lockCtx.InShareMode {
+			sctx.MergeSharedLockKeysExecDetails(lockKeyStats)
+		} else {
+			sctx.MergeLockKeysExecDetails(lockKeyStats)
+		}
 	}
 	return err
 }
@@ -435,20 +393,6 @@ func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Ke
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
 		if _, ok := txnCtx.TemporaryTables[tblID]; !ok {
-			newKeys = append(newKeys, key)
-		}
-	}
-	return newKeys
-}
-
-func filterLockTableKeys(stmtCtx *stmtctx.StatementContext, keys []kv.Key) []kv.Key {
-	if len(stmtCtx.LockTableIDs) == 0 {
-		return keys
-	}
-	newKeys := keys[:0:len(keys)]
-	for _, key := range keys {
-		tblID := tablecodec.DecodeTableID(key)
-		if _, ok := stmtCtx.LockTableIDs[tblID]; ok {
 			newKeys = append(newKeys, key)
 		}
 	}
@@ -991,7 +935,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// use them.  If already allocated (reused StatementContext), clear to
 	// preserve the backing array for the next complex query.  All read
 	// sites handle nil maps safely (len(nil)==0, range over nil is a no-op).
-	clear(sc.LockTableIDs)
 	clear(sc.TableStats)
 	clear(sc.RelatedTableIDs)
 	clear(sc.TblInfo2UnionScan)

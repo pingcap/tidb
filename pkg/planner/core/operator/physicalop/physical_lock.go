@@ -36,8 +36,8 @@ type PhysicalLock struct {
 	// Lock shares the read-only AST lock metadata forwarded from LogicalLock.
 	Lock *ast.SelectLockInfo `plan-cache-clone:"shallow"`
 
-	TblID2Handle       map[int64][]util.HandleCols
-	TblID2PhysTblIDCol map[int64]*expression.Column
+	TblID2Handle      map[int64][]util.HandleCols
+	PhysIDColByHandle map[int64]*expression.Column
 }
 
 // ExhaustPhysicalPlans4LogicalLock exhausts PhysicalLock plans from LogicalLock.
@@ -50,9 +50,9 @@ func ExhaustPhysicalPlans4LogicalLock(lp base.LogicalPlan, prop *property.Physic
 	}
 	childProp := prop.CloneEssentialFields()
 	lock := PhysicalLock{
-		Lock:               p.Lock,
-		TblID2Handle:       p.TblID2Handle,
-		TblID2PhysTblIDCol: p.TblID2PhysTblIDCol,
+		Lock:              p.Lock,
+		TblID2Handle:      p.TblID2Handle,
+		PhysIDColByHandle: p.PhysIDColByHandle,
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), childProp)
 	return []base.PhysicalPlan{lock}, true, nil
 }
@@ -82,7 +82,7 @@ func (p *PhysicalLock) MemoryUsage() (sum int64) {
 			sum += val.MemoryUsage()
 		}
 	}
-	for _, val := range p.TblID2PhysTblIDCol {
+	for _, val := range p.PhysIDColByHandle {
 		sum += size.SizeOfInt64 + size.SizeOfPointer + val.MemoryUsage()
 	}
 	return
@@ -109,6 +109,14 @@ func (p *PhysicalLock) ResolveIndices() (err error) {
 			if err != nil {
 				return err
 			}
+			handleID := col.GetCol(0).UniqueID
+			if pid := p.PhysIDColByHandle[handleID]; pid != nil {
+				resolved, err := pid.ResolveIndices(p.Children()[0].Schema())
+				if err != nil {
+					return err
+				}
+				p.PhysIDColByHandle[handleID] = resolved.(*expression.Column)
+			}
 			p.TblID2Handle[i][j] = resolvedCol
 		}
 	}
@@ -130,10 +138,10 @@ func (p *PhysicalLock) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bo
 			cloned.TblID2Handle[k] = util.CloneHandleCols(v)
 		}
 	}
-	if p.TblID2PhysTblIDCol != nil {
-		cloned.TblID2PhysTblIDCol = make(map[int64]*expression.Column, len(p.TblID2PhysTblIDCol))
-		for k, v := range p.TblID2PhysTblIDCol {
-			cloned.TblID2PhysTblIDCol[k] = v.Clone().(*expression.Column)
+	if p.PhysIDColByHandle != nil {
+		cloned.PhysIDColByHandle = make(map[int64]*expression.Column, len(p.PhysIDColByHandle))
+		for k, v := range p.PhysIDColByHandle {
+			cloned.PhysIDColByHandle[k] = v.Clone().(*expression.Column)
 		}
 	}
 	return cloned, true

@@ -31,10 +31,8 @@ type LogicalLock struct {
 	Lock         *ast.SelectLockInfo `hash64-equals:"true"`
 	TblID2Handle map[int64][]util.HandleCols
 
-	// tblID2phyTblIDCol is used for partitioned tables,
-	// the child executor need to return an extra column containing
-	// the Physical Table ID (i.e. from which partition the row came from)
-	TblID2PhysTblIDCol map[int64]*expression.Column
+	// PhysIDColByHandle maps the first handle column's UniqueID to its physical partition ID column.
+	PhysIDColByHandle map[int64]*expression.Column
 }
 
 // Init initializes LogicalLock.
@@ -64,15 +62,14 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 		return p, nil
 	}
 
-	for tblID, cols := range p.TblID2Handle {
+	for _, cols := range p.TblID2Handle {
 		for _, col := range cols {
 			for c := range col.IterColumns() {
 				parentUsedCols = append(parentUsedCols, c)
 			}
-		}
-		if physTblIDCol, ok := p.TblID2PhysTblIDCol[tblID]; ok {
-			// If the children include partitioned tables, there is an extra partition ID column.
-			parentUsedCols = append(parentUsedCols, physTblIDCol)
+			if physTblIDCol := p.PhysIDColByHandle[col.GetCol(0).UniqueID]; physTblIDCol != nil {
+				parentUsedCols = append(parentUsedCols, physTblIDCol)
+			}
 		}
 	}
 	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols)

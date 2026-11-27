@@ -20,15 +20,20 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
 
 func TestInvalidReadTemporaryTable(t *testing.T) {
@@ -799,4 +804,204 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 		require.Less(t, time.Since(start), time.Second*2)
 		tk.MustExec("commit")
 	}
+}
+
+func TestNativeSharedLockExecution(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("native shared reads are Classic-only")
+	}
+	store := testkit.CreateMockStore(t)
+	newSession := func(t *testing.T) *testkit.TestKit {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_select_for_share=on")
+		t.Cleanup(func() { tk.MustExec("rollback") })
+		return tk
+	}
+	admin := newSession(t)
+	admin.MustExec("create table t (id int primary key, u int unique, v int)")
+	admin.MustExec("insert into t values (1,10,100),(2,20,200)")
+	admin.MustExec("create table pt (id int primary key, v int) partition by hash(id) partitions 2")
+	admin.MustExec("insert into pt values (1,100),(2,200)")
+	checkLock := func(probe *testkit.TestKit, table, id string, locked bool) {
+		probe.MustExec("begin pessimistic")
+		sql := "select id from " + table + " where id=" + id + " for update nowait"
+		if locked {
+			probe.MustGetErrCode(sql, mysql.ErrLockAcquireFailAndNoWaitSet)
+		} else {
+			probe.MustQuery(sql).Check(testkit.Rows(id))
+		}
+		probe.MustExec("rollback")
+	}
+
+	t.Run("commit preserves row and index", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("create table commit_shared like t")
+		tk.MustExec("insert into commit_shared select * from t")
+		for _, mixed := range []bool{false, true} {
+			tk.MustExec("begin pessimistic")
+			tk.MustQuery("select v from commit_shared where u=10 for share").Check(testkit.Rows("100"))
+			if mixed {
+				tk.MustExec("update commit_shared set v=v+1 where id=2")
+			}
+			tk.MustExec("commit")
+			fresh := newSession(t)
+			fresh.MustQuery("select v from commit_shared where id=1").Check(testkit.Rows("100"))
+			fresh.MustQuery("select id,v from commit_shared force index(u) where u=10").Check(testkit.Rows("1 100"))
+			fresh.MustExec("admin check table commit_shared")
+			if mixed {
+				fresh.MustQuery("select v from commit_shared where id=2").Check(testkit.Rows("201"))
+			}
+		}
+	})
+	for _, column := range []string{"id", "u"} {
+		t.Run("RC miss "+column, func(t *testing.T) {
+			reader, writer := newSession(t), newSession(t)
+			writer.MustExec("delete from t where id=3")
+			reader.MustExec("set transaction isolation level read committed")
+			reader.MustExec("begin pessimistic")
+			reader.MustQuery("select id from t where " + column + "=3 for share").Check(testkit.Rows())
+			writer.MustExec("insert into t values (3,3,300)")
+			reader.MustQuery("select id from t where " + column + " in (3,999) for share").Check(testkit.Rows("3"))
+			checkLock(writer, "t", "3", true)
+			reader.MustExec("rollback")
+			writer.MustExec("delete from t where id=3")
+		})
+	}
+	for _, tc := range []struct {
+		name, query, table string
+	}{
+		{"partition OF", "select id from pt where v=100 for share of pt", "pt"},
+		{"self join OF", "select a.id from pt a join pt b on b.v=a.v+100 for share of a", "pt"},
+		{"EXISTS", "select exists(select 1 from t where v=100 for share)", "t"},
+		{"LIMIT", "select id from t where v=100 limit 1 for share", "t"},
+		{"outer LIMIT", "select id from (select id from t where v=100 for share) x limit 1", "t"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader, probe := newSession(t), newSession(t)
+			reader.MustExec("begin pessimistic")
+			reader.MustQuery(tc.query).Check(testkit.Rows("1"))
+			checkLock(probe, tc.table, "1", true)
+			checkLock(probe, tc.table, "2", false)
+		})
+	}
+	t.Run("scalar prepare", func(t *testing.T) {
+		reader, probe := newSession(t), newSession(t)
+		reader.MustExec("begin pessimistic")
+		reader.MustExec("prepare s from 'select (select sum(v) from pt for share)'")
+		checkLock(probe, "pt", "1", false)
+		reader.MustQuery("execute s").Check(testkit.Rows("300"))
+		checkLock(probe, "pt", "1", true)
+	})
+	t.Run("mixed union targets and modes", func(t *testing.T) {
+		reader, probe := newSession(t), newSession(t)
+		reader.MustExec("prepare s from '(select id from pt where v=100 for share of pt) union all (select id from t where v=100 for update)'")
+		reader.MustExec("set tidb_enable_noop_functions=on")
+		for _, tc := range []struct {
+			native, promoted string
+			shareLocked      bool
+		}{
+			{"on", "off", true}, {"off", "on", true}, {"off", "off", false},
+		} {
+			reader.MustExec("set tidb_enable_select_for_share=" + tc.native + ", tidb_enable_shared_lock_promotion=" + tc.promoted)
+			reader.MustExec("begin pessimistic")
+			reader.MustQuery("execute s").Check(testkit.Rows("1", "1"))
+			stats := reader.Session().GetSessionVars().StmtCtx.GetExecDetails()
+			require.NotNil(t, stats.LockKeysDetail)
+			require.Equal(t, tc.native == "on", stats.SharedLockKeysDetail != nil)
+			checkLock(probe, "t", "1", true)
+			checkLock(probe, "pt", "1", tc.shareLocked)
+			reader.MustExec("rollback")
+		}
+	})
+	t.Run("optimistic empty lookups", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("begin optimistic")
+		for _, query := range []string{"select * from t where id=999999999999999 for share",
+			"select * from pt partition(p0) where id=1 for share",
+			"select * from pt partition(p0) where id in(1,3) for share"} {
+			tk.MustGetErrCode(query, mysql.ErrNotSupportedYet)
+		}
+	})
+	t.Run("empty locking scan disables optimistic retry", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("begin optimistic")
+		tk.MustQuery("select id from t where v=999 for update").Check(testkit.Rows())
+		require.EqualValues(t, 1, tk.Session().GetSessionVars().TxnCtx.ForUpdate)
+	})
+	t.Run("shared lock stats", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("select id from t where v=100 for share").Check(testkit.Rows("1"))
+		stats := tk.Session().GetSessionVars().StmtCtx.GetExecDetails()
+		require.NotNil(t, stats.SharedLockKeysDetail)
+		require.Positive(t, stats.SharedLockKeysDetail.LockKeys)
+		require.Nil(t, stats.LockKeysDetail)
+	})
+	t.Run("SELECT privilege", func(t *testing.T) {
+		admin.MustExec("create user reader@'%'")
+		admin.MustExec("grant select on test.t to reader@'%'")
+		tk := newSession(t)
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "reader", Hostname: "localhost"}, nil, nil, nil))
+		tk.MustExec("begin pessimistic")
+		for _, pred := range []string{"id=1", "id in(1,999)", "v=100"} {
+			sql := "select id from t where " + pred
+			tk.MustQuery(sql + " for share").Check(testkit.Rows("1"))
+			tk.MustExec("prepare s from '" + sql + " for share'")
+			tk.MustQuery("execute s").Check(testkit.Rows("1"))
+			tk.MustGetErrCode(sql+" for update", mysql.ErrTableaccessDenied)
+		}
+	})
+	t.Run("dropped unique index", func(t *testing.T) {
+		reader, writer := newSession(t), newSession(t)
+		writer.MustExec("set global tidb_enable_metadata_lock=off")
+		defer writer.MustExec("set global tidb_enable_metadata_lock=on")
+		writer.MustExec("create table dropped_idx(id int primary key,u int unique)")
+		writer.MustExec("insert into dropped_idx values(1,10)")
+		reader.MustExec("set session transaction isolation level read committed")
+		reader.MustExec("begin pessimistic")
+		reader.MustQuery("select id from dropped_idx where id=1").Check(testkit.Rows("1"))
+		writer.MustExec("alter table dropped_idx drop index u")
+		writer.MustExec("insert into dropped_idx values(2,20)")
+		reader.MustQuery("select id from dropped_idx where u in(20,30) for share").Check(testkit.Rows("2"))
+		reader.MustExec("rollback")
+	})
+	t.Run("cached lock timeout", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("set tidb_enable_prepared_plan_cache=on")
+		var observed atomic.Int64
+		ctx := interceptor.WithRPCInterceptor(context.Background(), interceptor.NewRPCInterceptor("lock wait timeout", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+				if req.Type == tikvrpc.CmdPessimisticLock {
+					observed.Store(req.PessimisticLock().WaitTimeout)
+				}
+				return next(target, req)
+			}
+		}))
+		for _, pred := range []string{"id=?", "id in(?,999)"} {
+			for _, clause := range []string{"for share", "for share nowait", "for update wait 7"} {
+				tk.MustExec("prepare s from 'select /*+ use_plan_cache() */ id from t where " + pred + " " + clause + "'")
+				for i, timeout := range []int64{60, 30} {
+					tk.MustExec(fmt.Sprintf("set innodb_lock_wait_timeout=%d", timeout))
+					tk.MustExec("set @id=1")
+					tk.MustExec("begin pessimistic")
+					observed.Store(0)
+					tk.MustQueryWithContext(ctx, "execute s using @id").Check(testkit.Rows("1"))
+					require.Equal(t, i > 0, tk.Session().GetSessionVars().FoundInPlanCache)
+					wait := observed.Load()
+					switch clause {
+					case "for share nowait":
+						require.EqualValues(t, -1, wait)
+					case "for update wait 7":
+						require.Positive(t, wait)
+						require.LessOrEqual(t, wait, int64(7000))
+					default:
+						require.Greater(t, wait, (timeout-10)*1000)
+						require.LessOrEqual(t, wait, timeout*1000)
+					}
+					tk.MustExec("rollback")
+				}
+			}
+		}
+	})
 }

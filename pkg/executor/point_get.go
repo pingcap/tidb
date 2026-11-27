@@ -56,6 +56,13 @@ func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executo
 		return nil
 	}
 
+	if p.Lock && p.TblInfo.TempTableType == model.TempTableNone {
+		b.recordSelectLock(p.InShareMode)
+		if b.err != nil {
+			return nil
+		}
+	}
+
 	isTableDual, err := p.PrunePartitions(b.sctx)
 	if err != nil {
 		b.err = err
@@ -105,10 +112,6 @@ func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executo
 		if cacheTable := b.getCacheTable(p.TblInfo, snapshotTS); cacheTable != nil {
 			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
 		}
-	}
-
-	if e.lock {
-		b.recordSelectLock(e.inShareMode)
 	}
 
 	return e
@@ -207,7 +210,7 @@ func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 	if e.tblInfo.TempTableType == model.TempTableNone {
 		e.lock = p.Lock
 		e.inShareMode = p.InShareMode
-		e.lockWaitTime = p.LockWaitTime
+		e.lockWaitTime = physicalop.ResolveLockWaitTime(p.LockWaitTime, e.Ctx().GetSessionVars().LockWaitTimeout)
 	} else {
 		// Temporary table should not do any lock operations
 		e.lock = false
@@ -629,9 +632,10 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
-		lockCtx.IterateValuesNotLocked(func(k, v []byte) {
-			seVars.TxnCtx.SetPessimisticLockCache(k, v)
-		})
+		// An RC miss has no lock to keep the cached absence valid in the next statement.
+		if v, ok := lockCtx.Values[string(key)]; ok && !v.AlreadyLocked && (!lockOnlyIfExists || v.Exists) {
+			seVars.TxnCtx.SetPessimisticLockCache(key, v.Value)
+		}
 		if len(e.handleVal) > 0 {
 			seVars.TxnCtx.SetPessimisticLockCache(e.idxKey, e.handleVal)
 		}

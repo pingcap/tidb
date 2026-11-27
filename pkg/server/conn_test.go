@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	serverutil "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -1419,6 +1420,41 @@ func TestPrefetchPointKeys4Update(t *testing.T) {
 	require.Equal(t, 6, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("set tidb_enable_noop_functions=on")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("select c from prefetch where a=1 and b=1").Check(testkit.Rows("3"))
+		require.NoError(t, cc.handleQuery(ctx, "set tidb_enable_select_for_share=on; select c from prefetch where a=1 and b=1 for share"))
+		plan, ok := tk.Session().GetSessionVars().StmtCtx.GetPlan().(*physicalop.PointGetPlan)
+		require.True(t, ok)
+		require.True(t, plan.Lock)
+		require.True(t, plan.InShareMode)
+		tk.MustExec("rollback")
+	}
+}
+
+func TestMigratePreparedSharedRead(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("native shared reads are Classic-only")
+	}
+	store := testkit.CreateMockStore(t)
+	drv := NewTiDBDriver(store)
+	open := func(id uint64) *testkit.TestKit {
+		tc, err := drv.OpenCtx(id, 0, uint8(mysql.DefaultCollationID), "", nil, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { tc.Close() })
+		return testkit.NewTestKitWithSession(t, store, tc.Session)
+	}
+	src, dst := open(101), open(102)
+	src.MustQuery("select @@global.tidb_enable_select_for_share").Check(testkit.Rows("0"))
+	src.MustExec("use test")
+	src.MustExec("create table t(id int primary key)")
+	src.MustExec("set tidb_enable_select_for_share=on")
+	src.MustExec("prepare s from 'select id from t for share'")
+	var states sessionstates.SessionStates
+	require.NoError(t, src.Session().EncodeStates(context.Background(), &states))
+	require.NoError(t, dst.Session().DecodeStates(context.Background(), &states))
+	dst.MustQuery("execute s").Check(testkit.Rows())
 }
 
 func TestPrefetchPointKeys4Delete(t *testing.T) {

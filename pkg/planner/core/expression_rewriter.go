@@ -1199,7 +1199,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		semiJoinRewrite = false
 	}
 
-	if b.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
+	if b.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || requiresSubqueryExecution(np) {
 		planCtx.plan, er.err = b.buildSemiApply(planCtx.plan, np, nil, er.asScalar, v.Not, semiJoinRewrite, noDecorrelate)
 		if er.err != nil || !er.asScalar {
 			return true
@@ -1538,7 +1538,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	correlatedColumn := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	noDecorrelate := isNoDecorrelate(planCtx, correlatedColumn, hintFlags, handlingScalarSubquery)
 
-	if planCtx.builder.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
+	if planCtx.builder.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || requiresSubqueryExecution(np) {
 		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, base.LeftOuterJoin, noDecorrelate)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
@@ -1643,11 +1643,13 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	return true
 }
 
-func hasCTEConsumerInSubPlan(p base.LogicalPlan) bool {
-	if _, ok := p.(*logicalop.LogicalCTE); ok {
+// CTE consumers depend on their producer, and locking reads must run with the executing transaction.
+func requiresSubqueryExecution(p base.LogicalPlan) bool {
+	switch p.(type) {
+	case *logicalop.LogicalCTE, *logicalop.LogicalLock:
 		return true
 	}
-	return slices.ContainsFunc(p.Children(), hasCTEConsumerInSubPlan)
+	return slices.ContainsFunc(p.Children(), requiresSubqueryExecution)
 }
 
 func initConstantRepertoire(ctx expression.EvalContext, c *expression.Constant) {

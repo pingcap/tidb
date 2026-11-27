@@ -334,12 +334,12 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 	paramTypes := parseParamTypes(sctx, params)
 	if stmtCtx.UseCache() {
-		plan, outputCols, stmtHints, lockTableIDs, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
+		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
 		if hit && instancePlanCacheEnabled(ctx) {
 			plan, hit = clonePlanForInstancePlanCache(ctx, sctx, stmt, plan)
 		}
 		if hit {
-			if plan, ok, err := adjustCachedPlan(ctx, sctx, plan, stmtHints, lockTableIDs, isNonPrepared, binding, is, stmt); err != nil || ok {
+			if plan, ok, err := adjustCachedPlan(ctx, sctx, plan, stmtHints, isNonPrepared, binding, is, stmt); err != nil || ok {
 				return plan, outputCols, err
 			}
 		}
@@ -384,7 +384,7 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 }
 
 func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string,
-	paramTypes []*types.FieldType) (plan base.Plan, outputCols types.NameSlice, stmtHints *hint.StmtHints, lockTableIDs map[int64]struct{}, hit bool) {
+	paramTypes []*types.FieldType) (plan base.Plan, outputCols types.NameSlice, stmtHints *hint.StmtHints, hit bool) {
 	useInstanceCache := instancePlanCacheEnabled(ctx)
 	defer func(begin time.Time) {
 		if hit {
@@ -398,15 +398,15 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 		v, hit = sctx.GetSessionPlanCache().Get(cacheKey, paramTypes)
 	}
 	if !hit {
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, false
 	}
 	pcv := v.(*PlanCacheValue)
 	sctx.GetSessionVars().PlanCacheValue = pcv
-	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, pcv.lockTableIDs, true
+	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, true
 }
 
 func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
-	plan base.Plan, stmtHints *hint.StmtHints, lockTableIDs map[int64]struct{}, isNonPrepared bool,
+	plan base.Plan, stmtHints *hint.StmtHints, isNonPrepared bool,
 	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (
 	base.Plan, bool, error) {
 	sessVars := sctx.GetSessionVars()
@@ -416,14 +416,6 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 	}
 	if !RebuildPlan4CachedPlan(plan) {
 		return nil, false, nil
-	}
-	// Keep cached metadata immutable when the statement context is cleared for the next execution.
-	clear(stmtCtx.LockTableIDs)
-	if len(lockTableIDs) > 0 && stmtCtx.LockTableIDs == nil {
-		stmtCtx.LockTableIDs = make(map[int64]struct{}, len(lockTableIDs))
-	}
-	for tableID := range lockTableIDs {
-		stmtCtx.LockTableIDs[tableID] = struct{}{}
 	}
 	sessVars.FoundInPlanCache = true
 	if len(bindSQL) > 0 { // We're using binding, set this to true.

@@ -3344,7 +3344,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		AccessConditions: candidate.path.AccessConds,
 		DBName:           ds.DBName.L,
 		TblInfo:          ds.TableInfo,
-		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,
+		LockWaitTime:     physicalop.SessionLockWaitTimeout,
 		Columns:          ds.Columns,
 	}
 	pointGetPlan.SetSchema(ds.Schema().Clone())

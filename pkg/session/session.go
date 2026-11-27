@@ -6028,17 +6028,7 @@ func (s *session) CheckCanMigrateStates() error {
 
 func (s *session) DecodeStates(ctx context.Context,
 	sessionStates *sessionstates.SessionStates) error {
-	// Decode prepared statements and sql bindings.
-	for _, handler := range s.sessionStatesHandlers {
-		if err := handler.DecodeSessionStates(ctx, s, sessionStates); err != nil {
-			return err
-		}
-	}
-
-	// Decode session variables.
-	names := variable.OrderByDependency(sessionStates.SystemVars)
-	// Some variables must be set before others, e.g. tidb_enable_noop_functions should be before noop variables.
-	for _, name := range names {
+	restoreVar := func(name string) {
 		val := sessionStates.SystemVars[name]
 		// Experimental system variables may change scope, data types, or even be removed.
 		// We just ignore the errors and continue.
@@ -6046,6 +6036,30 @@ func (s *session) DecodeStates(ctx context.Context,
 			logutil.Logger(ctx).Warn("set session variable during decoding session states error",
 				zap.String("name", name), zap.String("value", val), zap.Error(err))
 		}
+	}
+
+	// PREPARE validates shared locking syntax against the session's current mode.
+	// Preserve the existing restore order for other variables, including sql_mode.
+	names := variable.OrderByDependency(sessionStates.SystemVars)
+	remaining := names[:0]
+	for _, name := range names {
+		switch name {
+		case vardef.TiDBEnableSelectForShare, vardef.TiDBEnableSharedLockPromotion, vardef.TiDBEnableNoopFuncs:
+			restoreVar(name)
+		default:
+			remaining = append(remaining, name)
+		}
+	}
+
+	// Decode prepared statements and sql bindings.
+	for _, handler := range s.sessionStatesHandlers {
+		if err := handler.DecodeSessionStates(ctx, s, sessionStates); err != nil {
+			return err
+		}
+	}
+
+	for _, name := range remaining {
+		restoreVar(name)
 	}
 
 	// Put resource group privilege check from sessionVars to session to avoid circular dependency.

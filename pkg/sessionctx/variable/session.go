@@ -4006,8 +4006,8 @@ func (s *SessionVars) UseSelectForShare(lock *ast.SelectLockInfo) bool {
 // PessimisticLockEligible indicates whether pessimistic lock should not be ignored for the current
 // statement execution. There are cases the `for update` clause should not take effect, like being
 // executed in an autocommit session.
-func (s *SessionVars) PessimisticLockEligible() bool {
-	if s.StmtCtx.ForShareLockEnabledByNoop {
+func (s *SessionVars) PessimisticLockEligible(lock *ast.SelectLockInfo) bool {
+	if lock.IsForShare() && s.StmtCtx.ForShareLockEnabledByNoop {
 		return false
 	}
 	// Pessimistic locks is needed for DML statements even they are executed in auto-commit mode.

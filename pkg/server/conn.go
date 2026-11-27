@@ -2048,10 +2048,10 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
-		if _, ok := stmt.(*ast.UseStmt); ok {
-			// If there is a "use db" statement, we shouldn't cache even if it's possible.
-			// Consider the scenario where there are statements that could execute on multiple
-			// schemas, but the schema is actually different.
+		switch stmt.(type) {
+		case *ast.UpdateStmt, *ast.DeleteStmt, *ast.SelectStmt:
+		default:
+			// A change of database, session variables, or transaction can invalidate later plans.
 			return nil, nil
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.

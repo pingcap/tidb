@@ -27,6 +27,8 @@ type TableNameW struct {
 	*ast.TableName
 	DBInfo    *model.DBInfo
 	TableInfo *model.TableInfo
+	// LockTargetName is the visible name of the FROM reference bound to an OF target.
+	LockTargetName ast.CIStr
 }
 
 // NodeW is a wrapper around ast.Node to store resolve context.

@@ -101,10 +101,14 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 				p = nil
 			}
 		}()
+		privs := []mysql.PrivilegeType{mysql.SelectPriv}
+		if x.LockInfo != nil && logicalop.IsSelectForUpdateLockType(x.LockInfo.LockType) {
+			privs = append(privs, mysql.DeletePriv|mysql.UpdatePriv|mysql.LockTablesPriv)
+		}
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
-		if fp := tryWhereIn2BatchPointGet(ctx, x, node.GetResolveContext()); fp != nil {
-			if checkFastPlanPrivilege(ctx, fp.DBName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
+		if fp := tryWhereIn2BatchPointGet(ctx, x, node.GetResolveContext(), isForUpdateReadSelectLock(ctx, x.LockInfo)); fp != nil {
+			if checkFastPlanPrivilege(ctx, fp.DBName, fp.TblInfo.Name.L, privs...) != nil {
 				return
 			}
 			if metadef.IsMemDB(fp.DBName) {
@@ -116,13 +120,17 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 			return
 		}
 		if fp := tryPointGetPlan(ctx, x, node.GetResolveContext(), isForUpdateReadSelectLock(ctx, x.LockInfo)); fp != nil {
-			if checkFastPlanPrivilege(ctx, fp.DBName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
+			if checkFastPlanPrivilege(ctx, fp.DBName, fp.TblInfo.Name.L, privs...) != nil {
 				return nil
 			}
 			if metadef.IsMemDB(fp.DBName) {
 				return nil
 			}
 			if fp.IsTableDual {
+				if ctx.GetSessionVars().UseSelectForShare(x.LockInfo) {
+					// Preserve the lock operator so execution validates the transaction mode.
+					return nil
+				}
 				tableDual := physicalop.PhysicalTableDual{}
 				tableDual.SetOutputNames(fp.OutputNames())
 				tableDual.SetSchema(fp.Schema())
@@ -150,9 +158,9 @@ func getLockWaitTime(ctx base.PlanContext, lockInfo *ast.SelectLockInfo) (lock b
 			// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
 			// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 			sessVars := ctx.GetSessionVars()
-			if sessVars.PessimisticLockEligible() {
+			if sessVars.PessimisticLockEligible(lockInfo) {
 				lock = true
-				waitTime = sessVars.LockWaitTimeout
+				waitTime = physicalop.SessionLockWaitTimeout
 				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
 					waitTime = int64(lockInfo.WaitSec * 1000)
 				} else if lockInfo.LockType == ast.SelectLockForUpdateNoWait || lockInfo.LockType == ast.SelectLockForShareNoWait {
@@ -408,7 +416,7 @@ func newBatchPointGetPlan(
 	return p.Init(ctx, statsInfo, schema, names, 0)
 }
 
-func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *resolve.Context) *physicalop.BatchPointGetPlan {
+func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *resolve.Context, checkLatest bool) *physicalop.BatchPointGetPlan {
 	if selStmt.OrderBy != nil || selStmt.GroupBy != nil ||
 		selStmt.Limit != nil || selStmt.Having != nil || selStmt.Distinct ||
 		len(selStmt.WindowSpecs) > 0 {
@@ -512,6 +520,17 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 	)
 	if p == nil {
 		return nil
+	}
+	if p.IndexInfo != nil && ctx.GetSessionVars().ConnectionID > 0 &&
+		(checkLatest || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)) {
+		latest, changed, err := domainmisc.GetLatestIndexInfo(ctx, tbl.ID, 0)
+		if err != nil {
+			logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
+			return nil
+		}
+		if idx := latest[p.IndexInfo.ID]; changed && (idx == nil || idx.State != model.StatePublic) {
+			return nil
+		}
 	}
 	p.DBName = dbName
 
@@ -763,7 +782,7 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 		Plan:         baseimpl.NewBasePlan(ctx, plancodec.TypePointGet, 0),
 		DBName:       dbName,
 		TblInfo:      tbl,
-		LockWaitTime: ctx.GetSessionVars().LockWaitTimeout,
+		LockWaitTime: physicalop.SessionLockWaitTimeout,
 	}
 	p.SetSchema(schema)
 	p.SetOutputNames(names)
@@ -1207,7 +1226,7 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 		}
 		return buildPointUpdatePlan(ctx, pointGet, pointGet.DBName, pointGet.TblInfo, updateStmt, resolveCtx)
 	}
-	batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx)
+	batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx, true)
 	if batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
@@ -1369,7 +1388,7 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 		}
 		return buildPointDeletePlan(ctx, pointGet, pointGet.DBName, pointGet.TblInfo, delStmt.IgnoreErr)
 	}
-	if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx); batchPointGet != nil {
+	if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx, true); batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}

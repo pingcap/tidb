@@ -49,6 +49,17 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// SessionLockWaitTimeout defers the default timeout until executor construction.
+const SessionLockWaitTimeout int64 = -2
+
+// ResolveLockWaitTime returns the effective timeout of a point locking read.
+func ResolveLockWaitTime(waitTime, sessionDefault int64) int64 {
+	if waitTime == SessionLockWaitTimeout {
+		return sessionDefault
+	}
+	return waitTime
+}
+
 // PointGetPlan is a fast plan for simple point get.
 // When we detect that the statement has a unique equal access condition, this plan is used.
 // This plan is much faster to build and to execute because it avoids the optimization and coprocessor cost.

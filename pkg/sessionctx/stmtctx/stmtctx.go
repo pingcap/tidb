@@ -76,7 +76,6 @@ type LogicalPlanBuildState struct {
 	extraWarnings        []SQLWarn
 	tables               []TableEntry
 	tableStats           map[int64]any
-	lockTableIDs         map[int64]struct{}
 	tblInfo2UnionScan    map[*model.TableInfo]bool
 	useDynamicPruneMode  bool
 	viewDepth            int32
@@ -391,8 +390,7 @@ type StatementContext struct {
 	plan any
 
 	Tables            []TableEntry
-	lockWaitStartTime int64              // LockWaitStartTime stores the pessimistic lock wait start time
-	LockTableIDs      map[int64]struct{} // table IDs need to be locked, empty for lock all tables
+	lockWaitStartTime int64 // LockWaitStartTime stores the pessimistic lock wait start time
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	TaskID            uint64 // unique ID for an execution of a statement
 	TaskMapBakTS      uint64 // counter for
@@ -637,7 +635,6 @@ func (sc *StatementContext) Reset() bool {
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
-		LockTableIDs:        sc.LockTableIDs,
 		TableStats:          sc.TableStats,
 		RelatedTableIDs:     sc.RelatedTableIDs,
 		TblInfo2UnionScan:   sc.TblInfo2UnionScan,
@@ -678,7 +675,6 @@ func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 		extraWarnings:        slices.Clone(sc.GetExtraWarnings()),
 		tables:               slices.Clone(sc.Tables),
 		tableStats:           maps.Clone(sc.TableStats),
-		lockTableIDs:         maps.Clone(sc.LockTableIDs),
 		tblInfo2UnionScan:    maps.Clone(sc.TblInfo2UnionScan),
 		useDynamicPruneMode:  sc.UseDynamicPruneMode,
 		viewDepth:            sc.ViewDepth,
@@ -698,7 +694,6 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.SetExtraWarnings(slices.Clone(state.extraWarnings))
 	sc.Tables = slices.Clone(state.tables)
 	sc.TableStats = maps.Clone(state.tableStats)
-	sc.LockTableIDs = maps.Clone(state.lockTableIDs)
 	sc.TblInfo2UnionScan = maps.Clone(state.tblInfo2UnionScan)
 	sc.UseDynamicPruneMode = state.useDynamicPruneMode
 	sc.ViewDepth = state.viewDepth

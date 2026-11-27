@@ -1323,7 +1323,6 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 	tryLockKeys := func(e exec.Executor, keys []kv.Key, shared bool) (exec.Executor, error) {
 		seVars := sctx.GetSessionVars()
 		keys = filterTemporaryTableKeys(seVars, keys)
-		keys = filterLockTableKeys(seVars.StmtCtx, keys)
 		if len(keys) == 0 {
 			return nil, nil
 		}

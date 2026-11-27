@@ -619,6 +619,8 @@ func TestRejectSkipLocked(t *testing.T) {
 		for _, suffix := range []string{"for update skip locked", "for share skip locked"} {
 			tk.MustGetErrCode("select * from t where id = 7 "+suffix, mysql.ErrNotSupportedYet)
 			tk.MustGetErrCode("select * from t "+suffix, mysql.ErrNotSupportedYet)
+			tk.MustGetErrCode("prepare s from 'select * from t "+suffix+"'", mysql.ErrNotSupportedYet)
+			tk.MustGetErrCode("create view v as select * from t "+suffix, mysql.ErrNotSupportedYet)
 		}
 	}
 }

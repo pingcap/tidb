@@ -841,7 +841,7 @@ func (b *executorBuilder) buildSelectLock(v *physicalop.PhysicalLock) exec.Execu
 	if b.err != nil {
 		return nil
 	}
-	if !b.sctx.GetSessionVars().PessimisticLockEligible() {
+	if !b.sctx.GetSessionVars().PessimisticLockEligible(v.Lock) {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -851,10 +851,10 @@ func (b *executorBuilder) buildSelectLock(v *physicalop.PhysicalLock) exec.Execu
 	// If the `PhysicalLock` is not ignored by the above logic, set the `hasLock` flag.
 	b.recordSelectLock(b.sctx.GetSessionVars().UseSelectForShare(v.Lock))
 	e := &SelectLockExec{
-		BaseExecutor:       exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID(), src),
-		Lock:               v.Lock,
-		tblID2Handle:       v.TblID2Handle,
-		tblID2PhysTblIDCol: v.TblID2PhysTblIDCol,
+		BaseExecutor:      exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID(), src),
+		Lock:              v.Lock,
+		tblID2Handle:      v.TblID2Handle,
+		physIDColByHandle: v.PhysIDColByHandle,
 	}
 
 	// filter out temporary tables because they do not store any record in tikv and should not write any lock
@@ -6229,6 +6229,13 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		return nil
 	}
 
+	if plan.Lock && plan.TblInfo.TempTableType == model.TempTableNone {
+		b.recordSelectLock(plan.InShareMode)
+		if b.err != nil {
+			return nil
+		}
+	}
+
 	if plan.Lock && !b.inSelectLockStmt {
 		b.inSelectLockStmt = true
 		defer func() {
@@ -6261,7 +6268,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		desc:               plan.Desc,
 		lock:               plan.Lock,
 		inShareMode:        plan.InShareMode,
-		waitTime:           plan.LockWaitTime,
+		waitTime:           physicalop.ResolveLockWaitTime(plan.LockWaitTime, b.sctx.GetSessionVars().LockWaitTimeout),
 		columns:            plan.Columns,
 		handles:            handles,
 		idxVals:            plan.IndexValues,
@@ -6313,9 +6320,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		e.waitTime = 0
 	}
 
-	if e.lock {
-		b.recordSelectLock(e.inShareMode)
-	}
 	if pi := plan.TblInfo.GetPartitionInfo(); pi != nil && len(plan.PartitionIdxs) > 0 {
 		defs := plan.TblInfo.GetPartitionInfo().Definitions
 		if plan.SinglePartition {

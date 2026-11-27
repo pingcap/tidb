@@ -1473,6 +1473,9 @@ func (p *preprocessor) checkCreateViewWithSelect(stmt ast.Node) {
 			return
 		}
 		if s.LockInfo != nil && s.LockInfo.LockType != ast.SelectLockNone {
+			if p.rejectSkipLocked(s.LockInfo) {
+				return
+			}
 			s.LockInfo.LockType = ast.SelectLockNone
 			return
 		}
@@ -1744,13 +1747,17 @@ func (p *preprocessor) checkConstraintGrammar(stmt *ast.Constraint) {
 	p.err = checkIndexSpecs(stmt.Option, stmt.Keys)
 }
 
+func (p *preprocessor) rejectSkipLocked(lock *ast.SelectLockInfo) bool {
+	if lock != nil && (lock.LockType == ast.SelectLockForUpdateSkipLocked || lock.LockType == ast.SelectLockForShareSkipLocked) {
+		p.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SKIP LOCKED")
+		return true
+	}
+	return false
+}
+
 func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
-	if stmt.LockInfo != nil {
-		switch stmt.LockInfo.LockType {
-		case ast.SelectLockForUpdateSkipLocked, ast.SelectLockForShareSkipLocked:
-			p.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SKIP LOCKED")
-			return
-		}
+	if p.rejectSkipLocked(stmt.LockInfo) {
+		return
 	}
 	if stmt.LockInfo.IsForShare() {
 		p.err = checkForShareMode(p.sctx.GetSessionVars())
@@ -2416,11 +2423,16 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lock
 			continue
 		}
 		hasResolvedLockTarget = true
+		targetName := matched.alias
+		if targetName.L == "" {
+			targetName = matched.table.Name
+		}
 
 		p.resolveCtx.AddTableName(&resolve.TableNameW{
-			TableName: ref,
-			DBInfo:    tNameW.DBInfo,
-			TableInfo: tNameW.TableInfo,
+			TableName:      ref,
+			LockTargetName: targetName,
+			DBInfo:         tNameW.DBInfo,
+			TableInfo:      tNameW.TableInfo,
 		})
 	}
 	if p.err != nil {

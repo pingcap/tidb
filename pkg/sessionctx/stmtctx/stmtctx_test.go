@@ -237,7 +237,6 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	sc.AppendExtraWarning(errors.New("baseline extra warning"))
 	sc.Tables = []stmtctx.TableEntry{{DB: "test", Table: "t"}}
 	sc.TableStats = map[int64]any{42: "baseline stats"}
-	sc.LockTableIDs = map[int64]struct{}{1: {}}
 	tblInfo := &model.TableInfo{ID: 42}
 	sc.TblInfo2UnionScan = map[*model.TableInfo]bool{tblInfo: true}
 	sc.UseDynamicPruneMode = true
@@ -252,7 +251,6 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	sc.AppendExtraWarning(errors.New("candidate extra warning"))
 	sc.Tables = []stmtctx.TableEntry{{DB: "candidate", Table: "t2"}}
 	sc.TableStats = map[int64]any{99: "candidate stats"}
-	sc.LockTableIDs[2] = struct{}{}
 	sc.TblInfo2UnionScan = map[*model.TableInfo]bool{{ID: 99}: false}
 	sc.UseDynamicPruneMode = false
 	sc.ViewDepth = 9
@@ -271,7 +269,6 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 
 	require.Equal(t, []stmtctx.TableEntry{{DB: "test", Table: "t"}}, sc.Tables)
 	require.Equal(t, map[int64]any{42: "baseline stats"}, sc.TableStats)
-	require.Equal(t, map[int64]struct{}{1: {}}, sc.LockTableIDs)
 	require.Equal(t, map[*model.TableInfo]bool{tblInfo: true}, sc.TblInfo2UnionScan)
 	require.True(t, sc.UseDynamicPartitionPrune())
 	require.Equal(t, int32(2), sc.ViewDepth)

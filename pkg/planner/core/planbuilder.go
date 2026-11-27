@@ -1640,9 +1640,35 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 }
 
 func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLockInfo) (*logicalop.LogicalLock, error) {
-	var tblID2PhysTblIDCol map[int64]*expression.Column
+	handles := b.handleHelper.tailMap()
+	if len(lock.Tables) != 0 {
+		selected := make(map[int64][]util.HandleCols)
+		foundTarget := false
+		for _, target := range lock.Tables {
+			ref := b.resolveCtx.GetTableName(target)
+			if ref == nil {
+				continue
+			}
+			foundTarget = true
+			id := ref.TableInfo.ID
+			for _, hc := range handles[id] {
+				if hc == nil {
+					continue
+				}
+				i := src.Schema().ColumnIndex(hc.GetCol(0))
+				if i >= 0 && src.OutputNames()[i].TblName.L == ref.LockTargetName.L && !slices.Contains(selected[id], hc) {
+					selected[id] = append(selected[id], hc)
+				}
+			}
+		}
+		// Retain the existing fallback when OF contains only CTE references.
+		if foundTarget {
+			handles = selected
+		}
+	}
+	var physIDColByHandle map[int64]*expression.Column
 	if len(b.partitionedTable) > 0 {
-		tblID2PhysTblIDCol = make(map[int64]*expression.Column)
+		physIDColByHandle = make(map[int64]*expression.Column)
 		// If a chunk row is read from a partitioned table, which partition the row
 		// comes from is unknown. With the existence of Join, the situation could be
 		// even worse: SelectLock have to know the `pid` to construct the lock key.
@@ -1651,27 +1677,27 @@ func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLock
 		// For dynamic prune mode, it is filled in from the tableID in the key by storage.
 		// For static prune mode it is also filled in from the tableID in the key by storage.
 		// since it would otherwise be lost in the PartitionUnion executor.
-		setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
+		setExtraPhysTblIDColsOnDataSource(src, physIDColByHandle)
 	}
 	selectLock := logicalop.LogicalLock{
-		Lock:               lock,
-		TblID2Handle:       b.handleHelper.tailMap(),
-		TblID2PhysTblIDCol: tblID2PhysTblIDCol,
+		Lock:              lock,
+		TblID2Handle:      handles,
+		PhysIDColByHandle: physIDColByHandle,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock, nil
 }
 
-func setExtraPhysTblIDColsOnDataSource(p base.LogicalPlan, tblID2PhysTblIDCol map[int64]*expression.Column) {
+func setExtraPhysTblIDColsOnDataSource(p base.LogicalPlan, physIDColByHandle map[int64]*expression.Column) {
 	switch ds := p.(type) {
 	case *logicalop.DataSource:
 		if ds.TableInfo.GetPartitionInfo() == nil {
 			return
 		}
-		tblID2PhysTblIDCol[ds.TableInfo.ID] = addExtraPhysTblIDColumn4DS(ds)
+		physIDColByHandle[ds.HandleCols.GetCol(0).UniqueID] = addExtraPhysTblIDColumn4DS(ds)
 	default:
 		for _, child := range p.Children() {
-			setExtraPhysTblIDColsOnDataSource(child, tblID2PhysTblIDCol)
+			setExtraPhysTblIDColsOnDataSource(child, physIDColByHandle)
 		}
 	}
 }
