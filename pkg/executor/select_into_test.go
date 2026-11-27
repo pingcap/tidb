@@ -329,4 +329,10 @@ func TestYearType(t *testing.T) {
 
 	tk.MustExec(fmt.Sprintf("select * from t into outfile '%v' fields terminated by ',' optionally enclosed by '\"' lines terminated by '\\n';", outfile))
 	cmpAndRm("2010\n2011\n2012\n2030\n", outfile, t)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, y year)")
+	tk.MustExec("insert into t values (1, 0), (2, '0000'), (3, 1901), (4, 2155), (5, null)")
+	tk.MustExec(fmt.Sprintf("select * from t order by id into outfile '%v'", outfile))
+	cmpAndRm("1\t0000\n2\t0000\n3\t1901\n4\t2155\n5\t\\N\n", outfile, t)
 }

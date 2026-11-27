@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"os"
 	"strconv"
@@ -162,8 +163,10 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 			}
 			s.fieldBuf = s.fieldBuf[:0]
 			switch col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).GetType() {
-			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeYear:
+			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
 				s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
+			case mysql.TypeYear:
+				s.fieldBuf = fmt.Appendf(s.fieldBuf, "%04d", row.GetInt64(j))
 			case mysql.TypeLonglong:
 				if mysql.HasUnsignedFlag(col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).GetFlag()) {
 					s.fieldBuf = strconv.AppendUint(s.fieldBuf, row.GetUint64(j), 10)
