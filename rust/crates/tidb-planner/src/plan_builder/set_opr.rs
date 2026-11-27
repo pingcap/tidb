@@ -143,11 +143,12 @@ fn set_bin_flag_or_bin_str(source: &FieldType, target: &mut FieldType) {
 /// does.
 #[must_use]
 pub fn union_join_field_type(a: &FieldType, b: &FieldType) -> FieldType {
-    // "We ignore the pure NULL type."
-    if a.code() == FieldTypeCode::Null {
-        return b.clone();
-    } else if b.code() == FieldTypeCode::Null {
-        return a.clone();
+    // A pure NULL branch does not change the value type, but makes the union
+    // nullable. Do not rely on branch CASTs mutating the shared result type.
+    if a.code() == FieldTypeCode::Null || b.code() == FieldTypeCode::Null {
+        let mut result = if a.code() == FieldTypeCode::Null { b.clone() } else { a.clone() };
+        result.del_flag(FieldTypeFlags::NOT_NULL);
+        return result;
     }
     let mut result = agg_field_type(&[a.clone(), b.clone()]);
     if result.code() == FieldTypeCode::NewDecimal {

@@ -11363,3 +11363,81 @@ fn test_rule_agg_elimination_4_join_collation() {
         assert_eq!(row_text(tk.run(sql)), [["1", "2"]], "{sql}");
     }
 }
+
+/// Go `TestUnionAllCorrelatedQuantifiedPredicate` (2b2fddf8b68): a
+/// correlated quantified predicate over a UNION ALL view plans and answers
+/// (Go's UNION ALL FD set had a nil expression map).
+#[test]
+fn test_union_all_correlated_quantified_predicate() {
+    let mut tk = Session::new();
+    let rows = |tk: &mut Session, sql: &str| {
+        let result = tk.run(sql);
+        if let Err(error) = &result {
+            panic!("{sql}: {error:?}");
+        }
+        row_text(result)
+    };
+    tk.run("create table t_union_fd (id bigint)").unwrap();
+    tk.run("create view v_union_fd as select * from t_union_fd union all select * from t_union_fd").unwrap();
+    let query = "select 1 from v_union_fd as t1 where (t1.id < all (select 1)) in (select t1.id)";
+    assert!(rows(&mut tk, query).is_empty());
+    rows(&mut tk, &format!("explain {query}"));
+    let corr_all_query = "select t1.id from v_union_fd as t1 where t1.id <= all (select t1.id)";
+    assert!(rows(&mut tk, corr_all_query).is_empty());
+    rows(&mut tk, &format!("explain {corr_all_query}"));
+    tk.run("insert into t_union_fd values (null), (-1), (0), (1), (2)").unwrap();
+    assert!(rows(&mut tk, query).is_empty());
+    assert_eq!(
+        rows(&mut tk, "select t1.id from v_union_fd as t1 where (t1.id <= all (select 1)) in (select t1.id)"),
+        [["1"], ["1"]]
+    );
+    let mut sorted = rows(&mut tk, corr_all_query);
+    sorted.sort();
+    assert_eq!(sorted, [["-1"], ["-1"], ["0"], ["0"], ["1"], ["1"], ["2"], ["2"]]);
+}
+
+/// Go `TestUnionStringCastLength` (3a3d5ef359b): a pure NULL branch makes the
+/// union nullable without changing its value type, and one branch's CAST
+/// does not narrow the shared UNION type or the other branches' casts.
+#[test]
+fn test_union_string_cast_length() {
+    let mut tk = crate::testkit::TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("create table union_text(v longtext)");
+    tk.must_query("select 2 in (select 5 union select null)").check(["<nil>"]);
+    tk.must_query("select 2 in (select null union select 5)").check(["<nil>"]);
+    tk.must_exec("create view nullable_union as select 'a' c union all select null");
+    tk.must_query("show fields from nullable_union").check(["c varchar(1) YES  <nil> "]);
+    tk.must_exec("drop view nullable_union");
+    tk.must_exec("create view nullable_union as select null c union select 'a'");
+    tk.must_query("show fields from nullable_union").check(["c varchar(1) YES  <nil> "]);
+    tk.must_exec("drop view nullable_union");
+    tk.must_exec("insert into union_text values(repeat('z',1592)),(repeat('界',600)),(null)");
+    tk.must_query("select 2 in (select 5 union select null) from union_text").check(["<nil>", "<nil>", "<nil>"]);
+    let short = "select cast('q' as char(255)) as v where false";
+    let text = "select v from union_text";
+    let numeric = "select cast(10 as double)*cast(10 as double) as v where false";
+    let z = "z".repeat(1592);
+    let jie = "界".repeat(600);
+    for sql in [
+        format!("{short} union all {text} union all {numeric}"),
+        format!("{numeric} union all {short} union all {text}"),
+        format!("({short} union all {text}) union all {numeric}"),
+    ] {
+        // Go `tk.Exec(sql)` and `rs.Fields()`.
+        let (result, error) = tk.exec_rs(&sql);
+        assert!(error.is_none(), "{sql}: {error:?}");
+        let field_type = &result.fields()[0].field_type;
+        let flen = field_type.flen.map_or_else(
+            || tidb_mysql::util::default_field_length_and_decimal(field_type.code.mysql_type()).0,
+            i64::from,
+        );
+        assert!(flen >= 1592, "{sql}: flen {flen}");
+        result.sort().check(["<nil>", z.as_str(), jie.as_str()]);
+    }
+    tk.must_query(
+        "select char_length(v) from (select cast('q' as char(255)) v where false union all select repeat('z',1592) \
+         union all select cast(10 as double)*cast(10 as double) where false)u",
+    )
+    .check(["1592"]);
+}

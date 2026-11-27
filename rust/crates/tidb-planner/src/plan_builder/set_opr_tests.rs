@@ -427,12 +427,16 @@ fn test_union_join_field_type_matches_gos_own_cases() {
     // TRANSCREATED from `unionJoinFieldType`'s own body (`:2001`) and the
     // `AggFieldType` table it calls.
 
-    // "We ignore the pure NULL type": the other side is returned WHOLE.
+    // A pure NULL side keeps the other side's value type, made nullable.
     let null = FieldType::new(FieldTypeCode::Null);
-    let joined = union_join_field_type(&null, &bigint());
+    let mut not_null = bigint();
+    not_null.add_flags(FieldTypeFlags::NOT_NULL);
+    let joined = union_join_field_type(&null, &not_null);
     assert_eq!(joined.code(), FieldTypeCode::LongLong);
-    let joined = union_join_field_type(&bigint(), &null);
+    assert!(!joined.has_flag(FieldTypeFlags::NOT_NULL));
+    let joined = union_join_field_type(&not_null, &null);
     assert_eq!(joined.code(), FieldTypeCode::LongLong);
+    assert!(!joined.has_flag(FieldTypeFlags::NOT_NULL));
 
     // "Non-decimal results will be unsigned when a,b both unsigned."
     let mut unsigned = bigint();
