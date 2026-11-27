@@ -129,7 +129,7 @@ require (
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.142
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a
-	github.com/tikv/client-go/v2 v2.0.8-0.20261125052045-89d3a9a85c75
+	github.com/tikv/client-go/v2 v2.0.8-0.20261127033738-c947e8472d4f
 	github.com/tikv/pd/client v0.0.0-20261106103153-dbc621c03214
 	github.com/timakin/bodyclose v0.0.0-20260723120731-857993a2939c
 	github.com/twmb/murmur3 v1.1.6
