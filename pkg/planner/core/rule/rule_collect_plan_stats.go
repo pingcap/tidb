@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
-	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -64,6 +63,17 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
 	}
 
+	// Prune indexes before collecting sync indices to avoid loading stats for indexes that will be pruned.
+	// This must happen after InterestingColumns is set (which happens in CollectColumnStatsUsage).
+	keptIndexIDs := c.pruneIndexesForAllDataSources(plan)
+
+	// Sync/async histogram loading only applies when Domain.StatsHandle() is available.
+	dom := domain.GetDomain(plan.SCtx())
+	if dom == nil || dom.StatsHandle() == nil {
+		return plan, planChanged, nil
+	}
+	statsHandle := dom.StatsHandle()
+
 	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and trigger extra sync/async
 	// stats loading for the determinate mode.
 	is := plan.SCtx().GetLatestInfoSchema()
@@ -76,15 +86,11 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 		tblID2TblInfo[int64(physicalTblID)] = tblInfo
 	})
 
-	c.markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, tblID2TblInfo, predicateColumns, syncLoadEnabled)
+	c.markAtLeastOneFullStatsLoadForEachTable(statsHandle, visitedPhysTblIDs, tblID2TblInfo, predicateColumns, syncLoadEnabled)
 	histNeededColumns := make([]model.StatsLoadItem, 0, len(predicateColumns))
 	for item, fullLoad := range predicateColumns {
 		histNeededColumns = append(histNeededColumns, model.StatsLoadItem{TableItemID: item, FullLoad: fullLoad})
 	}
-
-	// Prune indexes before collecting sync indices to avoid loading stats for indexes that will be pruned.
-	// This must happen after InterestingColumns is set (which happens in CollectColumnStatsUsage).
-	keptIndexIDs := c.pruneIndexesForAllDataSources(plan)
 
 	// collect needed virtual columns from already needed columns
 	// Note that we use the dependingVirtualCols only to collect needed index stats, but not to trigger stats loading on
@@ -92,14 +98,11 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	// indexes, which are indexes on virtual columns, have statistics. We don't waste the resource here now.
 	dependingVirtualCols := CollectDependingVirtualCols(tblID2TblInfo, histNeededColumns)
 
-	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo, keptIndexIDs)
+	histNeededIndices := collectSyncIndices(statsHandle, append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo, keptIndexIDs)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	// TODO: this part should be removed once we don't support the static pruning mode.
 	histNeededItems = c.expandStatsNeededColumnsForStaticPruning(histNeededItems, tid2pids)
 	if len(histNeededItems) == 0 {
-		return plan, planChanged, nil
-	}
-	if dom := domain.GetDomain(plan.SCtx()); dom == nil || dom.StatsHandle() == nil {
 		return plan, planChanged, nil
 	}
 	if syncLoadEnabled {
@@ -117,21 +120,12 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 // markAtLeastOneFullStatsLoadForEachTable marks at least one full stats load for each table.
 // It should be called after we use c.predicateCols to update the usage of predicate columns.
 func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
-	sctx planctx.PlanContext,
+	statsProvider stats.PhysicalTableStatsProvider,
 	visitedPhysTblIDs *intset.FastIntSet,
 	tblID2TblInfo map[int64]*model.TableInfo,
 	predicateCols map[model.TableItemID]bool,
 	histNeeded bool,
 ) {
-	statsProvider := stats.GetStatsProvider(sctx)
-	if statsProvider == nil {
-		// If there's no stats provider, return directly.
-		return
-	}
-	hasDomainStatsHandle := false
-	if dom := domain.GetDomain(sctx); dom != nil && dom.StatsHandle() != nil {
-		hasDomainStatsHandle = true
-	}
 	physTblIDsWithNeededCols := intset.NewFastIntSet()
 	for neededCol, fullLoad := range predicateCols {
 		if !fullLoad {
@@ -206,7 +200,7 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		}
 		if histNeeded {
 			predicateCols[*colToTriggerLoad] = true
-		} else if hasDomainStatsHandle {
+		} else {
 			asyncload.AsyncLoadHistogramNeededItems.Insert(*colToTriggerLoad, true)
 		}
 	})
@@ -361,12 +355,8 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 		}
 	})
 	var timeout = time.Duration(syncWait * time.Millisecond.Nanoseconds())
-	dom := domain.GetDomain(ctx)
-	if dom == nil || dom.StatsHandle() == nil {
-		return nil
-	}
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	err := dom.StatsHandle().SyncLoad().SendLoadRequests(stmtCtx, neededHistItems, timeout)
+	err := domain.GetDomain(ctx).StatsHandle().SyncLoad().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if vardef.StatsLoadPseudoTimeout.Load() {
@@ -387,15 +377,11 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	if len(stmtCtx.StatsLoad.NeededItems) <= 0 {
 		return nil
 	}
-	dom := domain.GetDomain(plan.SCtx())
-	if dom == nil || dom.StatsHandle() == nil {
-		return nil
-	}
 	defer func(begin time.Time) {
 		// track the time spent in sync wait stats load, which might take a long time.
 		plan.SCtx().GetSessionVars().DurationOptimizer.StatsSyncWait = time.Since(begin)
 	}(time.Now())
-	err := dom.StatsHandle().SyncLoad().SyncWaitStatsLoad(stmtCtx)
+	err := domain.GetDomain(plan.SCtx()).StatsHandle().SyncLoad().SyncWaitStatsLoad(stmtCtx)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if vardef.StatsLoadPseudoTimeout.Load() {
@@ -495,16 +481,12 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]*model.TableInfo, neededIte
 // composed up by A column, then we thought the idx_a should be collected
 // 2. The stats condition of idx_a can't meet IsFullLoad, which means its stats was evicted previously
 // 3. The index must be in keptIndexIDs if provided (to avoid loading stats for indexes that will be pruned)
-func collectSyncIndices(ctx base.PlanContext,
+func collectSyncIndices(statsProvider stats.PhysicalTableStatsProvider,
 	histNeededColumns []model.StatsLoadItem,
 	tblID2Tbl map[int64]*model.TableInfo,
 	keptIndexIDs map[int64]map[int64]struct{},
 ) map[model.TableItemID]struct{} {
 	histNeededIndices := make(map[model.TableItemID]struct{})
-	statsProvider := stats.GetStatsProvider(ctx)
-	if statsProvider == nil {
-		return histNeededIndices
-	}
 	for _, column := range histNeededColumns {
 		if column.IsIndex {
 			continue

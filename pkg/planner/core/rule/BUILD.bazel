@@ -34,7 +34,6 @@ go_library(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/rule/util",
         "//pkg/planner/core/stats",
-        "//pkg/planner/planctx",
         "//pkg/planner/util",
         "//pkg/planner/util/fixcontrol",
         "//pkg/planner/util/utilfuncp",
