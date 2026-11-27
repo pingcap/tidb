@@ -976,13 +976,21 @@ fn drop_table_object<E: ExecutorStore>(
     context: &DdlContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
     use tidb_ddl_build::table_lifecycle::{drop_objects, DropObjectsError};
-    let names = paths
+    let mut names = paths
         .iter()
         .map(|path| {
             split_name(path, current_db, "table")
                 .map_err(|e| SqlQueryError::from(e.to_mysql_error()))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // Go `orderDropTableObjectsByForeignKey`, under foreign_key_checks, for
+    // table objects only.
+    if object == ObjectType::Table && context.as_ref().foreign_key_checks() {
+        names = crate::cluster_ddl::drop_object::order_drop_table_objects_by_foreign_key(
+            &executor.latest_schema(),
+            &names,
+        );
+    }
     let mut last = ClusterDdlReport::AlreadySatisfied {
         detail: "no existing DROP targets".into(),
         warnings: Vec::new(),
@@ -1031,6 +1039,10 @@ fn drop_table_object<E: ExecutorStore>(
         match result {
             Ok(report) => {
                 last = report;
+                tidb_failpoint::inject_call(
+                    "github.com/pingcap/tidb/pkg/ddl/afterDropTableObject",
+                    &mut tidb_hack::go_to_lower(name),
+                );
                 Ok(true)
             }
             Err(error) if error.code == missing_error.to_sql_error().code => Ok(false),

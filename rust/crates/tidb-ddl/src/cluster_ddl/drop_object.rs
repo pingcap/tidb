@@ -120,6 +120,9 @@ pub fn drop_table<S: MetaSnapshot>(
         return missing();
     }
     let db_id = database.read().id;
+    // The owner may ignore a self-reference, but it must not assume that
+    // later objects in this statement have already been dropped.
+    let fullti = [(database.read().name.original().to_owned(), stored.name.original().to_owned())];
     drop_table_like(
         snapshot,
         &catalog,
@@ -128,10 +131,78 @@ pub fn drop_table<S: MetaSnapshot>(
         db_id,
         schema,
         &stored,
-        &identifiers,
+        &fullti,
         (start_ts, upgrading),
     )
 }
+
+/// Go `orderDropTableObjectsByForeignKey`: orders children before their
+/// referenced parents. Each table is dropped by an independent DDL job, so
+/// this prevents a referring child from being renamed between an earlier
+/// parent job and its own later job. Cycles retain their input order and are
+/// rejected by the owner-side foreign-key check unless foreign_key_checks is
+/// disabled.
+pub(crate) fn order_drop_table_objects_by_foreign_key(
+    catalog: &SessionExtendedInfoSchema,
+    objects: &[(String, String)],
+) -> Vec<(String, String)> {
+    let key = |schema: &str, table: &str| (tidb_hack::go_to_lower(schema), tidb_hack::go_to_lower(table));
+    let object_index: std::collections::HashMap<(String, String), usize> = objects
+        .iter()
+        .enumerate()
+        .map(|(i, (schema, table))| (key(schema, table), i))
+        .collect();
+
+    let mut children = vec![Vec::new(); objects.len()];
+    let mut indegree = vec![0usize; objects.len()];
+    let mut edges = std::collections::HashSet::new();
+    for (child_idx, (schema, table)) in objects.iter().enumerate() {
+        let Some((_, child_table)) = catalog.table_info_by_name(schema, table) else {
+            continue;
+        };
+        for fk in child_table.read().foreign_keys.iter_deref() {
+            let fk = fk.read();
+            if fk.version < tidb_model::table::FK_VERSION1 {
+                continue;
+            }
+            let parent_schema = if fk.ref_schema.lowercase().is_empty() {
+                tidb_hack::go_to_lower(schema)
+            } else {
+                fk.ref_schema.lowercase().to_owned()
+            };
+            let Some(&parent_idx) = object_index.get(&(parent_schema, fk.ref_table.lowercase().to_owned())) else {
+                continue;
+            };
+            if child_idx == parent_idx || !edges.insert((child_idx, parent_idx)) {
+                continue;
+            }
+            children[child_idx].push(parent_idx);
+            indegree[parent_idx] += 1;
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(objects.len());
+    let mut processed = vec![false; objects.len()];
+    while ordered.len() < objects.len() {
+        let Some(selected) = (0..objects.len()).find(|&i| !processed[i] && indegree[i] == 0) else {
+            ordered.extend(
+                objects
+                    .iter()
+                    .zip(&processed)
+                    .filter(|(_, processed)| !**processed)
+                    .map(|(object, _)| object.clone()),
+            );
+            break;
+        };
+        processed[selected] = true;
+        ordered.push(objects[selected].clone());
+        for &parent_idx in &children[selected] {
+            indegree[parent_idx] -= 1;
+        }
+    }
+    ordered
+}
+
 
 /// Go master `executor.dropTableObject` for a materialized view log
 /// (`materializedViewLogObject`, `action` DROP MATERIALIZED VIEW LOG) or a

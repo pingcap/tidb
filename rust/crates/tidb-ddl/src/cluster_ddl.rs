@@ -4447,22 +4447,13 @@ fn plan_persisted_drop_table_job_step(
         let args = tidb_model::get_drop_table_args(&mut active.job)
             .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
             .unwrap_or_else(|| GoShared::new(tidb_model::DropTableArgs::default()));
-        let (ignored, fk_check) = {
-            let args = args.read();
-            let ignored: Vec<(String, String)> = args
-                .identifiers
-                .iter()
-                .map(|ident| {
-                    (
-                        ident.schema.original().to_owned(),
-                        ident.name.original().to_owned(),
-                    )
-                })
-                .collect();
-            (ignored, args.fk_check)
-        };
+        // DROP TABLE jobs commit independently. Only a self-reference is
+        // safe to ignore; another table named in the statement may survive a
+        // later job.
+        let fk_check = args.read().fk_check;
         let schema_name = active.job.schema_name.to_string();
         let table_name = active.job.table_name.to_string();
+        let ignored = [(schema_name.clone(), table_name.clone())];
         if let Some(referred) = crate::foreign_key_build::check_table_has_foreign_key_referred(
             catalog,
             &schema_name,

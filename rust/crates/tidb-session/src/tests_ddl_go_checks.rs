@@ -996,3 +996,48 @@ fn test_partial_index_is_no_primary_key() {
     tk.run("create table t4 (a int not null, unique index uk(a) where a > 0)").unwrap();
     tk.run("alter table t4 alter index uk invisible").unwrap();
 }
+
+/// Go `TestTruncateOrDropTableWithForeignKeyReferred`'s rows from
+/// 4fdca3d058f: a multi-table DROP TABLE drops foreign-key children before
+/// their parents, each job ignoring only its own table, so a child cannot be
+/// renamed away between the parent's job and its own; a cycle is refused
+/// under foreign_key_checks without dropping either table.
+#[test]
+fn test_drop_tables_with_foreign_keys_drop_children_first() {
+    use std::sync::{Arc, Mutex};
+    let mut tk = Session::new();
+    tk.run("set @@foreign_key_checks=1").unwrap();
+    tk.run("create table p (id int primary key)").unwrap();
+    tk.run("create table c (id int primary key, pid int, foreign key (pid) references p(id))").unwrap();
+    let domain = crate::domain::mock_store::domain_of(&tk).expect("a mock store session");
+    let rename_failed = Arc::new(Mutex::new(None));
+    let seen = Arc::clone(&rename_failed);
+    let hook = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/afterDropTableObject",
+        move |name: &mut dyn std::any::Any| {
+            if name.downcast_ref::<String>().is_some_and(|name| name == "p") {
+                let mut tk2 = domain.new_session().expect("a second session");
+                tk2.run("use test").unwrap();
+                *seen.lock().unwrap() = Some(tk2.run("rename table c to c_survivor").is_err());
+            }
+        },
+    );
+    tk.run("drop table if exists p, c").unwrap();
+    drop(hook);
+    assert_eq!(*rename_failed.lock().unwrap(), Some(true), "the child survived the parent's drop");
+    for table in ["p", "c", "c_survivor"] {
+        let error = tk.run(&format!("show create table {table}")).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1146, "{table}: {}", error.message);
+    }
+
+    // A cycle cannot be safely dropped through independent jobs while FK
+    // checks are enabled. Reject it without making either parent disappear.
+    tk.run("create table cycle_a (id int primary key, pid int)").unwrap();
+    tk.run("create table cycle_b (id int primary key, pid int, foreign key(pid) references cycle_a(id))").unwrap();
+    tk.run("alter table cycle_a add foreign key(pid) references cycle_b(id)").unwrap();
+    assert!(tk.run("drop table cycle_a, cycle_b").is_err());
+    assert_eq!(row_text(tk.run("select count(*) from cycle_a")), [["0"]]);
+    assert_eq!(row_text(tk.run("select count(*) from cycle_b")), [["0"]]);
+    tk.run("set @@foreign_key_checks=0").unwrap();
+    tk.run("drop table cycle_a, cycle_b").unwrap();
+}
