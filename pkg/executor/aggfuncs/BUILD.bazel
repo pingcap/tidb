@@ -87,6 +87,7 @@ go_test(
         "func_value_test.go",
         "func_varpop_test.go",
         "func_varsamp_test.go",
+        "group_concat_order_truncate_test.go",
         "main_test.go",
         "row_number_test.go",
         "spill_helper_test.go",
