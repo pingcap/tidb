@@ -2418,6 +2418,8 @@ github.com/tikv/client-go/v2 v2.0.8-0.20261118060352-2e737721f509 h1:ghGOAXTLSkp
 github.com/tikv/client-go/v2 v2.0.8-0.20261118060352-2e737721f509/go.mod h1:9PRG3r0nm23DK1lrzneYRFefRRXWYH+8O06rxSrSxRc=
 github.com/tikv/pd/client v0.0.0-20261106103153-dbc621c03214 h1:MNQV0KF3mmTrvMSN6ysujB3R1guH3WS3RpY5DWnIf3s=
 github.com/tikv/pd/client v0.0.0-20261106103153-dbc621c03214/go.mod h1:aX1PhWkbwxA8Ps2qAInxkiPVijwGKm5iORrbqzrcOHM=
+github.com/tikv/pd/client v0.0.0-20261127111241-9de8977ba632 h1:EYWlpG8ZCxBgtKp/6F9QEysMn93uNmUXc0hW2GJOhq0=
+github.com/tikv/pd/client v0.0.0-20261127111241-9de8977ba632/go.mod h1:AY8E4YgwG2LwpGeunktleUptZ22HVPT32YuA+bwsz9c=
 github.com/timakin/bodyclose v0.0.0-20260723120731-857993a2939c h1:d/FUP8GD4QiY/rdFzZmBu3KqL9eBNVzMu7W/5pGkaMM=
 github.com/timakin/bodyclose v0.0.0-20260723120731-857993a2939c/go.mod h1:sDHLK7rb/59v/ZxZ7KtymgcoxuUMxjXq8gtu9VMOK8M=
 github.com/tjfoc/gmsm v1.3.2/go.mod h1:HaUcFuY0auTiaHB9MHFGCPx5IaLhTUd2atbCFBQXn9w=
