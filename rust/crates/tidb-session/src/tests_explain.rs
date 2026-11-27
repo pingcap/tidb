@@ -11497,3 +11497,107 @@ fn test_prefix_index_inner_aggregation() {
         tk.run("drop table t0,t1").unwrap();
     }
 }
+
+/// Go master `partialindex.test`'s index-join cases (b7806e885b0, issue
+/// 69524): a partial index whose predicate the join implies serves an
+/// IndexJoin probe -- inner and left outer equality joins on `idx1(a) where
+/// a is not null` -- while one the join does not imply (`idx2(b) where b >
+/// 2`) or a NULL-safe equality leaves a HashJoin.
+#[test]
+fn partial_indexes_serve_index_join_probes_their_predicate_admits() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t (a int, b int, c int, index idx1(a) where a is not null, index idx2(b) where b > 2, unique index idx3(c) where b > 10)",
+        "create table tt (a int, b int, c int, index idx1(a), index idx2(b), unique index idx3(c))",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let plan = |session: &mut Session, sql: &str| -> Vec<String> {
+        row_text(session.run(&format!("explain format='plan_tree' {sql}")))
+            .into_iter()
+            .map(|row| format!("{} {}", row[0], row[2]))
+            .collect()
+    };
+    assert_eq!(
+        plan(&mut session, "select /*+ inl_join(t2) */ t1.a, t2.b from t t1, t t2 where t1.a=t2.b"),
+        [
+            "HashJoin ",
+            "├─TableReader(Build) ",
+            "│ └─Selection ",
+            "│   └─TableFullScan table:t2",
+            "└─IndexReader(Probe) ",
+            "  └─IndexFullScan table:t1, index:idx1(a)",
+        ]
+    );
+    assert_eq!(
+        plan(&mut session, "select /*+ inl_join(t2) */ t1.a, t2.b from tt t1, tt t2 where t1.a=t2.b"),
+        [
+            "IndexJoin ",
+            "├─IndexReader(Build) ",
+            "│ └─IndexFullScan table:t1, index:idx1(a)",
+            "└─IndexReader(Probe) ",
+            "  └─Selection ",
+            "    └─IndexRangeScan table:t2, index:idx2(b)",
+        ]
+    );
+    session.run("insert into t values (1, 100, 10), (2, 200, 20), (null, 999, 30)").unwrap();
+    let join_probe = |join: &str| {
+        vec![
+            "Projection ".to_owned(),
+            "└─Sort ".to_owned(),
+            format!("  └─{join} "),
+            "    ├─TableReader(Build) ".to_owned(),
+        ]
+    };
+    let inner = plan(
+        &mut session,
+        "select /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 join t t2 on t1.a = t2.a order by t1.c",
+    );
+    assert_eq!(inner[..4], join_probe("IndexJoin")[..]);
+    assert_eq!(inner.last().unwrap(), "        └─IndexRangeScan table:t2, index:idx1(a)");
+    assert_eq!(
+        row_text(session.run("select /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 join t t2 on t1.a = t2.a order by t1.c")),
+        vec![vec!["1", "100", "1"], vec!["2", "200", "2"]]
+    );
+    let left = plan(
+        &mut session,
+        "select /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 left join t t2 on t1.a = t2.a order by t1.c",
+    );
+    assert_eq!(left[..4], join_probe("IndexJoin")[..]);
+    assert_eq!(left.last().unwrap(), "        └─IndexRangeScan table:t2, index:idx1(a)");
+    assert_eq!(
+        row_text(session.run("select /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 left join t t2 on t1.a = t2.a order by t1.c")),
+        vec![vec!["1", "100", "1"], vec!["2", "200", "2"], vec!["NULL", "999", "NULL"]]
+    );
+    let null_safe = plan(
+        &mut session,
+        "select /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 join t t2 on t1.a <=> t2.a order by t1.c, t2.a",
+    );
+    assert_eq!(null_safe[..4], join_probe("HashJoin")[..]);
+    assert_eq!(
+        row_text(session.run("select /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 join t t2 on t1.a <=> t2.a order by t1.c, t2.a")),
+        vec![vec!["1", "100", "1"], vec!["2", "200", "2"], vec!["NULL", "999", "NULL"]]
+    );
+}
+
+/// Go master `TestPartialIndexWithPlanCache`'s issue 69524 tail
+/// (`casetest/index/index_test.go`, b7806e885b0): a prepared INL_JOIN probing
+/// a partial index answers each parameter and is served from the plan cache.
+#[test]
+fn a_prepared_partial_index_join_reuses_its_cached_plan() {
+    let mut session = Session::new();
+    for sql in [
+        "create table pi_pc_outer(a int, b int)",
+        "create table pi_pc_inner(a int, b int, index idx_a(a) where a is not null)",
+        "insert into pi_pc_outer values (1, 10), (2, 20), (null, 30), (3, 40)",
+        "insert into pi_pc_inner values (1, 100), (2, 200), (null, 999), (3, 300)",
+        "prepare stmt from 'select /* issue:69524 */ /*+ INL_JOIN(pi_pc_inner) */ pi_pc_outer.a, pi_pc_inner.b from pi_pc_outer join pi_pc_inner on pi_pc_outer.a = pi_pc_inner.a where pi_pc_inner.a = ? order by pi_pc_outer.b'",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for (value, expected) in [("1", ["1", "100"]), ("2", ["2", "200"]), ("3", ["3", "300"])] {
+        session.run(&format!("set @a = {value}")).unwrap();
+        assert_eq!(row_text(session.run("execute stmt using @a")), vec![expected.to_vec()]);
+    }
+    assert_eq!(row_text(session.run("select @@last_plan_from_cache")), vec![vec!["1"]]);
+}

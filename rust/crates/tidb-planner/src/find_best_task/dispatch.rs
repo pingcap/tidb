@@ -2733,9 +2733,10 @@ fn build_index_join_path_result(
     };
     let source_index = match path.index_info() {
         Some(source_index) => {
-            // Go `IsIndexJoinUnapplicable`: an MV or partial index is
-            // reachable only through IndexMerge or its own condition.
-            if source_index.read().mv_index || !source_index.read().condition_expr_string.is_empty() {
+            // Go `IsIndexJoinUnapplicable`: an MV index is reachable only
+            // through IndexMerge. A partial index path that remains here has
+            // already passed its predicate check (b7806e885b0).
+            if source_index.read().mv_index {
                 return Ok(IndexJoinPathAnswer::NotApplicable);
             }
             Some(source_index)
