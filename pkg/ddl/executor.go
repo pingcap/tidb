@@ -3416,6 +3416,16 @@ func checkVisibleColumnCnt(t table.Table, addCnt, dropCnt int) error {
 	return dbterror.ErrCantRemoveAllFields
 }
 
+<<<<<<< HEAD
+=======
+func isCharsetAllowingDirectCollationChange(origCharset, toCharset string) bool {
+	return (origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
+		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
+		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) ||
+		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8MB4)
+}
+
+>>>>>>> 307fb3d6ead (ddl: centralize modify column conversion rules (#73708))
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
 // needRewriteCollationData is used when trying to modify the collation of a column, it is true when the column is with
 // index because index of a string column is collation-aware.

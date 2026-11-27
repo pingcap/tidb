@@ -30,23 +30,72 @@ Job execution (owner worker):
 
 ## Modify type selection (what decides “reorg”)
 
-Modify-column behavior is driven by `args.ModifyColumnType`:
+Modify-column behavior is driven by `args.ModifyColumnType`, with all conversion
+validation, storage/index classification, execution-time restrictions, and
+`VARCHAR -> CHAR` precheck selection centralized in `pkg/ddl/modify_column_change.go`:
 
-- Selection logic: `pkg/ddl/modify_column.go:getModifyColumnType`
-- Fast-path predicate: `pkg/ddl/modify_column.go:noReorgDataStrict` (strong check: “no reorg no matter what data is”)
+- Submission analysis: `pkg/ddl/modify_column_change.go:analyzeModifyColumn`
+- Initial execution resolution: `pkg/ddl/modify_column_change.go:resolveModifyColumnType`
+- Post-precheck resolution: `pkg/ddl/modify_column_change.go:resolveModifyColumnTypeAfterPrecheck`
+- Fast-path predicate: `pkg/ddl/modify_column_change.go:isMetaOnlyChange` (strong check: “no reorg no matter what data is”)
 
-High-level rules (read `getModifyColumnType` for the exact gates):
+Submission calls `analyzeModifyColumn` and initial execution calls
+`resolveModifyColumnType`, each using its own metadata snapshot. Conversion
+analysis is structured into three layers:
 
-- If `noReorgDataStrict(...)` is true:
-  - Not NULL → NULL? / type range superset, etc. → `ModifyTypeNoReorg`
+1. **Storage & index classification (`classifyColumnChange`)**: checks safe
+   charset compatibility (`isCharsetMetadataCompatible`: ENUM/SET ordinals and
+   UTF8/Latin1 -> UTF8MB4 widening), then classifies row storage by type family
+   in `classifyByRowValue` / `classifyByStringRowValue` (integer ranges ignore
+   display width; DECIMAL requires identical precision/scale/sign; ENUM/SET
+   preserve member ordinals; BINARY length changes require padding changes;
+   vector dimensions must match unless target is unconstrained). Nonbinary
+   CHAR/VARCHAR to TEXT/BLOB can skip data validation if the maximum source byte
+   length fits the target byte limit. With the same charset, a conversion that
+   requires validation checks the byte length of existing rows. For indexed
+   columns it checks index key/restored-data encoding via `needsIndexReorg`
+   (including incompatible collation changes under new collation and
+   `NeedRestoredData` changes such as `CHAR -> VARCHAR` with `_bin` collations,
+   routing non-integer/non-char types like `TEXT` with prefix indexes to
+   `ModifyTypeReorg`). `isMetaOnlyChange`
+   uses the same classification for dependent-object checks; nullability remains
+   a separate check.
+2. **Support validation (`validateModifyColumn`)**: validates the target
+   charset/collation pair, cross-type support (`isCrossTypeChangeSupported`), the
+   GBK charset/collation change restriction, and primary-key restrictions
+   (`change != ModifyTypeNoReorg`). Non-GBK charset and collation changes are
+   allowed and routed by `classifyColumnChange` to the appropriate execution
+   path instead of being gated by type-only heuristics.
+3. **Execution-time restrictions & precheck (`applyExecutionRestrictions` +
+   `needsVarcharToCharPrecheck`)**: promotes `ModifyTypeNoReorg` to
+   `ModifyTypeNoReorgWithCheck` on `NULL -> NOT NULL`, applies legacy
+   `mysql.TypeNull` compatibility, partition/TiFlash, stats-encoding, and
+   non-strict SQL mode fallbacks, and wraps `VARCHAR -> CHAR` validation/index
+   paths into `ModifyTypePrecheck` on initial resolution.
+
+New MODIFY/CHANGE COLUMN jobs set `NeedReorg=true`, including metadata-only changes,
+so scheduling and reorg settings do not rely on the submission snapshot. This also
+applies to MODIFY COLUMN sub-jobs in multi-schema changes. Initial execution still
+selects the actual conversion from current metadata; the flag does not force data
+rewriting, and distributed-reorg validation (`IsDistReorg && !IsFastReorg`) is
+deferred to `initForReorgIndexes` so metadata-only changes keep working when
+`tidb_enable_dist_task=ON` and `tidb_ddl_enable_fast_reorg=OFF`. Lightweight
+modifications can therefore wait behind reorg jobs. Already queued jobs retain
+their stored scheduling flags. Pure RENAME COLUMN jobs retain general-pool
+scheduling.
+
+High-level rules (read `applyExecutionRestrictions` for the exact gates):
+
+- If a legacy job (`ModifyTypeNone` or `mysql.TypeNull`) already has `ChangingColumn != nil` → stay on `ModifyTypeReorg` in `onModifyColumn` so both resume and rollback clean up its temporary column and indexes
+- If `classifyColumnChange(...) == ModifyTypeNoReorg`:
+  - Not NULL → NOT NULL → `ModifyTypeNoReorg`
   - NULL → NOT NULL → `ModifyTypeNoReorgWithCheck` (requires validating existing rows)
 - Otherwise:
-  - Partitioned tables / TiFlash replica → force `ModifyTypeReorg` (see the `FIXME` gate in `getModifyColumnType`)
+  - Legacy `mysql.TypeNull` stored type → force `ModifyTypeReorg`
+  - Partitioned tables / TiFlash replica → force `ModifyTypeReorg` (see the `FIXME` gate in `applyExecutionRestrictions`)
+  - Incompatible stats encoding (integer sign toggle / incompatible collation) → force `ModifyTypeReorg`
   - Non-strict SQL mode → `ModifyTypeReorg`
-  - If row rewrite is required → `ModifyTypeReorg` (`needRowReorg`)
-  - Else:
-    - No related indexes or index rewrite not needed → `ModifyTypeNoReorgWithCheck`
-    - Index rewrite needed → `ModifyTypeIndexReorg` (`needIndexReorg`)
+  - Otherwise keep base classification (`ModifyTypeNoReorgWithCheck`, `ModifyTypeIndexReorg`, or `ModifyTypeReorg`), wrapping `VARCHAR -> CHAR` check/index-reorg into `ModifyTypePrecheck` on initial resolution.
 
 Special-case: `VARCHAR` → `CHAR` may start as `ModifyTypePrecheck` and then “downgrade” to a no-reorg type if data is safe:
 
@@ -95,10 +144,10 @@ doc-level rule simple and use the code as the source of truth:
   path in the partition expression and only accepts a few known-safe forms
   (`col`, `TO_DAYS(col)`, `EXTRACT(... FROM col)`) and a few safe changes.
 
-This gate decides whether the modify is allowed at all. If it is allowed,
-partitioned tables still follow the normal modify-column flow, and
-`getModifyColumnType` still conservatively routes partitioned tables to
-`ModifyTypeReorg`.
+This gate decides whether the change is allowed. For allowed changes,
+`applyExecutionRestrictions` returns early for a `ModifyTypeNoReorg` base
+classification, with validation for a `NULL` to `NOT NULL` change. On partitioned
+tables, other base classifications require `ModifyTypeReorg`.
 
 ## No-reorg paths (metadata-only / metadata+check)
 
@@ -216,8 +265,9 @@ nullability, default/comment, and pruning regressions)
 
 ## Common pitfalls checklist
 
-- Partitioned table / TiFlash replica paths are conservatively forced into full reorg (`getModifyColumnType`); don’t assume “fast path” applies.
+- When `baseType != ModifyTypeNoReorg`, `applyExecutionRestrictions` forces full
+  reorg for partitioned tables and tables with a positive TiFlash replica count.
 - Partition-column modify has an extra allowlist plus partition-definition revalidation; if you change allowed cases, update `checkPartitionColumnModifiable` and the partition regression matrix together.
 - Forgetting to persist mid-flight identifiers (changing column/index IDs) → job can’t resume after retry/owner transfer.
 - Missing schema-sync boundary between state transitions → other nodes may apply incompatible DML rules.
-- Job args compatibility: `ModifyColumnType` and args decoding must remain backward compatible (`getModifyColumnType`’s compat comments).
+- Job args compatibility: `ModifyColumnType` and args decoding must remain backward compatible (`applyExecutionRestrictions`’s compat comments).
