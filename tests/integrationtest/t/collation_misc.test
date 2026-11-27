@@ -10,8 +10,9 @@ insert into t values ("t_value");
 alter table t modify column a varchar(20) charset latin1;
 select * from t;
 
---error 8200
 alter table t modify column a varchar(20) charset utf8;
+admin check table t;
+select * from t;
 
 drop table t;
 create table t(a varchar(20) charset latin1);
@@ -30,8 +31,9 @@ select * from t;
 drop table t;
 create table t(a varchar(20) charset latin1);
 insert into t values ("t_value");
---error 8200
 alter table t modify column a varchar(20) charset utf8 collate utf8_bin;
+admin check table t;
+select * from t;
 --error 1273
 alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin;
 --error 1302, 1273
