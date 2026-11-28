@@ -13,6 +13,7 @@ go_library(
         "row_size.go",
         "selectivity.go",
         "trace.go",
+        "virtual_column.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/cardinality",
     visibility = ["//visibility:public"],

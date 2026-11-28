@@ -15,6 +15,7 @@
 package cardinality
 
 import (
+	"bytes"
 	"cmp"
 	"maps"
 	"math"
@@ -113,6 +114,10 @@ func Selectivity(
 			// multi-valued indexes over them are analyzed), so they contribute no
 			// selectivity. Skip them to avoid recording a meaningless, stats-load-
 			// timing-dependent status that surfaces as stats:partial[<json col>:...].
+			continue
+		}
+		if node := virtualColumnStatsNode(ctx, coll, col, remainedExprs); node != nil {
+			nodes = append(nodes, node)
 			continue
 		}
 		id := col.UniqueID
@@ -913,6 +918,19 @@ func getMaskAndSelectivityForMVIndex(
 // GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
 // Currently, this method can only handle expressions involving a single column.
 func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters expression.Expression) (ok bool, selectivity float64, err error) {
+	return getSelectivityByFilter(sctx, coll, filters, 0)
+}
+
+// getSelectivityByFilter is GetSelectivityByFilter with one extra input: when
+// histPoints > 0, the filter is expected to select about histPoints distinct
+// values outside the TopN, so the histogram part is capped at histPoints values
+// of average size. Evaluating the bucket bounds samples the histogram at only
+// 2 * buckets points, which can't estimate a few rare values: one matching
+// bound already counts as a whole bucket. The cap doesn't apply when more
+// distinct bound values match than there are points. Matching values strictly
+// inside a bucket are invisible to the bounds either way, so the cap can
+// underestimate a point that many distinct values map to.
+func getSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters expression.Expression, histPoints int) (ok bool, selectivity float64, err error) {
 	// 1. Make sure the expressions
 	//   (1) are safe to be evaluated here,
 	//   (2) involve only one column,
@@ -1028,7 +1046,11 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 		if err != nil {
 			return false, 0, err
 		}
-		var bucketRepeatTotalCnt, bucketRepeatSelectedCnt, lowerBoundMatchCnt int64
+		var bucketRepeatTotalCnt, bucketRepeatSelectedCnt, lowerBoundMatchCnt, upperBoundMatchCnt int64
+		// The number of distinct values among the matching bounds: the lower and
+		// upper bounds of a single-value bucket are the same value.
+		var matchedBoundValues int64
+		boundsCol := histBounds.Column(0)
 		for i := range hist.Buckets {
 			bucketRepeatTotalCnt += hist.Buckets[i].Repeat
 			if len(selected) < 2*i {
@@ -1037,9 +1059,14 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 			}
 			if selected[2*i] {
 				lowerBoundMatchCnt++
+				matchedBoundValues++
 			}
 			if selected[2*i+1] {
+				upperBoundMatchCnt++
 				bucketRepeatSelectedCnt += hist.Buckets[i].Repeat
+				if !selected[2*i] || !bytes.Equal(boundsCol.GetRaw(2*i), boundsCol.GetRaw(2*i+1)) {
+					matchedBoundValues++
+				}
 			}
 		}
 		var lowerBoundsRatio, upperBoundsRatio, lowerBoundsSel, upperBoundsSel float64
@@ -1050,6 +1077,18 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 		}
 		lowerBoundsSel = float64(lowerBoundMatchCnt) / float64(histBucketsLen)
 		histSel = lowerBoundsSel*lowerBoundsRatio + upperBoundsSel*upperBoundsRatio
+		// Cap at histPoints values, unless more distinct bound values match than
+		// there are points: then several values map to one point and the sampled
+		// estimate stands. A matching upper bound counts with its exact frequency
+		// (Repeat), the other points with the average frequency of the histogram
+		// values. hist.NDV also counts the TopN values, whose rows are not in
+		// histTotalCnt, so they are excluded from the average.
+		histNDV := hist.NDV - int64(topNLen)
+		if histPoints > 0 && histNDV > 0 && matchedBoundValues <= int64(histPoints) {
+			otherPoints := max(int64(histPoints)-upperBoundMatchCnt, 0)
+			capSel := float64(bucketRepeatSelectedCnt)/histTotalCnt + float64(otherPoints)/float64(histNDV)
+			histSel = min(histSel, capSel)
+		}
 		histSel *= histTotalCnt / totalCnt
 	}
 

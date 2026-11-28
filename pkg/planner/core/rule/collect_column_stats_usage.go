@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/filter"
@@ -147,6 +148,12 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 		}
 		tblColID := model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}
 		c.colMap[col.UniqueID] = map[model.TableItemID]struct{}{tblColID: {}}
+		// A virtual generated column has no statistics of its own. Conditions on
+		// one that reads a single stored column are estimated from that column's
+		// statistics (see cardinality.VirtualColumnBaseColumn), so load them too.
+		if base := cardinality.VirtualColumnBaseColumn(col); base != nil && base.ID > 0 {
+			c.colMap[col.UniqueID][model.TableItemID{TableID: tblID, ID: base.ID, IsIndex: false}] = struct{}{}
+		}
 	}
 	// record the asked column group specific for each datasource table, which will be checked and converted to index needed in collectSyncIndices.
 	for _, group := range askedColGroups {
