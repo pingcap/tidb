@@ -3753,16 +3753,13 @@ fn find_best_task_4_logical_data_source_paths(
     }
     let mut empty_range = false;
     // Go `appendPrunedRangeCandidates` (1c0793ea576): the skyline survivors'
-    // shorter-prefix alternatives follow them; their index arm reads the
-    // derived path itself, not the logical one.
+    // shorter-prefix alternatives follow them.
     let pruned_paths;
-    let mut first_pruned_position = usize::MAX;
     if let Some(preparation) = preparation {
         ordinary_paths = preparation.paths;
         empty_range = preparation.empty_range;
         if !empty_range {
             pruned_paths = super::candidate::append_pruned_range_candidates(ds, &ordinary_paths, ctx);
-            first_pruned_position = ordinary_paths.len();
             ordinary_paths.extend(pruned_paths.iter());
         }
     }
@@ -4654,8 +4651,9 @@ fn find_best_task_4_logical_data_source_paths(
                     continue 'paths;
                 }
                 let path_key = (std::ptr::from_ref(ds).addr(), source_index.read().id);
-                let own_path: Option<&tidb_planner_util::path::AccessPath> =
-                    (path_position >= first_pruned_position).then_some(*path);
+                // Go reads `candidate.path`: the path this loop iterates, a
+                // logically filled one or a derived pruned-range alternative.
+                let own_path: Option<&tidb_planner_util::path::AccessPath> = Some(*path);
                 if partial_order.is_none() && ctx.forced_partial_order_paths.contains(&path_key) {
                     // The earlier match already proved this immutable path's
                     // ranges nonempty; do not rebuild them for a refused task.
@@ -4670,7 +4668,7 @@ fn find_best_task_4_logical_data_source_paths(
                 // unresolved position ends that prefix.
                 // A path derivation filled carries its `CountAfterIndex`.
                 let filled_path = prop.index_join_prop.is_none().then(|| {
-                    own_path.or_else(|| ds.path_by_index_id(source_index.read().id))
+                    own_path
                         .filter(|path| path.count_after_index.is_some())
                 }).flatten();
                 let filled_owner = filled_path;
@@ -4812,7 +4810,7 @@ fn find_best_task_4_logical_data_source_paths(
                 // reads the table rows back through an IndexLookUp double
                 // read (`BuildIndexLookUpTask` at conversion) — the cop task
                 // carries BOTH halves, exactly Go's shape.
-                let single_scan = own_path.or_else(|| ds.path_by_index_id(source_index.read().id))
+                let single_scan = own_path
                     .and_then(|path| path.is_single_scan)
                     .unwrap_or_else(|| {
                         index_path_is_single_scan(
@@ -4928,7 +4926,7 @@ fn find_best_task_4_logical_data_source_paths(
                     add_extra_phys_tbl_id_column(ctx, &mut index_columns, &mut index_schema);
                 }
                 // Go `is.SetNoncacheableReason(path.NoncacheableReason)`.
-                let noncacheable_reason = own_path.or_else(|| ds.path_by_index_id(source_index.read().id))
+                let noncacheable_reason = own_path
                     .and_then(|path| path.noncacheable_reason.clone());
                 if let Some(reason) = &noncacheable_reason {
                     base.base.set_noncacheable_reason(reason.clone());
@@ -4974,7 +4972,7 @@ fn find_best_task_4_logical_data_source_paths(
                         point_base.base.set_noncacheable_reason(reason.clone());
                     }
                     point_base.base.set_schema(ds.base.base.schema().cloned());
-                    let access_rows = own_path.or_else(|| ds.path_by_index_id(source_index.read().id))
+                    let access_rows = own_path
                         .and_then(|path| path.count_after_access())
                         .unwrap_or(ranges.len() as f64)
                         .min(ranges.len() as f64);
@@ -5083,7 +5081,7 @@ fn find_best_task_4_logical_data_source_paths(
                                 || range.high_val.len() > source_index.read().columns.len()
                         });
                 if detach.is_some() {
-                    count_after_access = own_path.or_else(|| ds.path_by_index_id(source_index.read().id))
+                    count_after_access = own_path
                         .and_then(|path| path.count_after_access())
                         .or_else(|| {
                             let base_stats = table_stats.as_ref()?;
@@ -5120,7 +5118,7 @@ fn find_best_task_4_logical_data_source_paths(
                     // Filled ordinary paths were adjusted during logical derivation.
                     // Runtime probes and unfilled sources retain this fallback.
                     let logically_adjusted = filled_path.is_some()
-                        && own_path.or_else(|| ds.path_by_index_id(source_index.read().id))
+                        && own_path
                             .is_some_and(|path| path.row_estimate.is_some());
                     if !logically_adjusted
                         && *count + tidb_planner_core_cost::TOLERANCE_FACTOR < ds_stats.row_count()
@@ -5482,7 +5480,7 @@ fn find_best_task_4_logical_data_source_paths(
                         } else if let Some(count_after_index) =
                             filled_path.and_then(|path| path.count_after_index)
                         {
-                            let access_rows = own_path.or_else(|| ds.path_by_index_id(source_index.read().id))
+                            let access_rows = own_path
                                 .and_then(|path| path.count_after_access())
                                 .unwrap_or(0.0);
                             let selectivity = if access_rows > 0.0 {
