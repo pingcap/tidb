@@ -185,6 +185,10 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
+	// The tracker only maintains btree indexes. Non-btree indexes are ignored
+	// so that tracked schemas stay constructible (e.g. FULLTEXT on TEXT columns).
+	s = withoutUnsupportedConstraints(s)
+
 	var (
 		referTbl *model.TableInfo
 		err      error
@@ -244,6 +248,10 @@ func (d *SchemaTracker) CreateTableWithInfo(
 	if schema == nil {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
 	}
+
+	// Keep the in-memory schema consistent with tables built from DDL text:
+	// only btree indexes are tracked.
+	info = withoutUnsupportedIndexes(info)
 
 	oldTable, _ := d.TableByName(context.Background(), dbName, info.Name)
 	if oldTable != nil {
@@ -539,6 +547,10 @@ func (d *SchemaTracker) DropView(_ sessionctx.Context, stmt *ast.DropTableStmt) 
 
 // CreateIndex implements the DDL interface.
 func (d *SchemaTracker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
+	// The tracker only maintains btree indexes, so other index types are ignored.
+	if isUnsupportedIndexKey(stmt.KeyType, stmt.IndexOption) {
+		return nil
+	}
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	return d.createIndex(ctx, ident, stmt.KeyType, ast.NewCIStr(stmt.IndexName),
 		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
@@ -605,6 +617,7 @@ func (d *SchemaTracker) createIndex(
 		unique,
 		model.ColumnarIndexTypeNA,
 		indexPartSpecifications,
+		nil,
 		indexOption,
 		model.StatePublic,
 	)
@@ -619,10 +632,96 @@ func (d *SchemaTracker) createIndex(
 	return nil
 }
 
+// isUnsupportedIndexType reports whether the index type is one that the
+// tracker does not maintain (anything other than btree).
+func isUnsupportedIndexType(indexType ast.IndexType) bool {
+	switch indexType {
+	case ast.IndexTypeVector, ast.IndexTypeInverted, ast.IndexTypeFulltext, ast.IndexTypeHNSW, ast.IndexTypeHypo:
+		return true
+	default:
+		return false
+	}
+}
+
+// isUnsupportedIndexOption reports whether the index option selects an index
+// type that the tracker does not maintain.
+func isUnsupportedIndexOption(option *ast.IndexOption) bool {
+	return option != nil && isUnsupportedIndexType(option.Tp)
+}
+
+// isUnsupportedConstraint reports whether the constraint defines an index type
+// that the tracker does not maintain.
+func isUnsupportedConstraint(constr *ast.Constraint) bool {
+	if constr == nil {
+		return false
+	}
+	switch constr.Tp {
+	case ast.ConstraintFulltext, ast.ConstraintColumnar:
+		return true
+	default:
+		return isUnsupportedIndexOption(constr.Option)
+	}
+}
+
+// withoutUnsupportedConstraints returns a statement without constraints that
+// define non-btree indexes. The original statement is left untouched.
+func withoutUnsupportedConstraints(stmt *ast.CreateTableStmt) *ast.CreateTableStmt {
+	if stmt == nil || len(stmt.Constraints) == 0 {
+		return stmt
+	}
+	constraints := make([]*ast.Constraint, 0, len(stmt.Constraints))
+	for _, constr := range stmt.Constraints {
+		if !isUnsupportedConstraint(constr) {
+			constraints = append(constraints, constr)
+		}
+	}
+	if len(constraints) == len(stmt.Constraints) {
+		return stmt
+	}
+	cloned := *stmt
+	cloned.Constraints = constraints
+	return &cloned
+}
+
+// isUnsupportedIndexKey reports whether a CREATE INDEX statement defines an
+// index type that the tracker does not maintain.
+func isUnsupportedIndexKey(keyType ast.IndexKeyType, option *ast.IndexOption) bool {
+	switch keyType {
+	case ast.IndexKeyTypeSpatial, ast.IndexKeyTypeFulltext, ast.IndexKeyTypeVector, ast.IndexKeyTypeColumnar:
+		return true
+	default:
+		return isUnsupportedIndexOption(option)
+	}
+}
+
+// withoutUnsupportedIndexes returns a table info without non-btree indexes.
+// The original table info is left untouched.
+func withoutUnsupportedIndexes(info *model.TableInfo) *model.TableInfo {
+	if info == nil || len(info.Indices) == 0 {
+		return info
+	}
+	indices := make([]*model.IndexInfo, 0, len(info.Indices))
+	for _, idx := range info.Indices {
+		// IsColumnarIndex covers full-text, vector and inverted indexes. The Tp
+		// check additionally covers types that only exist in the AST, such as
+		// hypothetical indexes (normally session-local and not persisted).
+		if idx.IsColumnarIndex() || isUnsupportedIndexType(idx.Tp) {
+			continue
+		}
+		indices = append(indices, idx)
+	}
+	if len(indices) == len(info.Indices) {
+		return info
+	}
+	cloned := *info
+	cloned.Indices = indices
+	return &cloned
+}
+
 // DropIndex implements the DDL interface.
 func (d *SchemaTracker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	err := d.dropIndex(ctx, ti, ast.NewCIStr(stmt.IndexName), stmt.IfExists)
+	err := d.dropIndex(ctx, ti, ast.NewCIStr(stmt.IndexName))
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && stmt.IfExists {
 		err = nil
 	}
@@ -630,7 +729,7 @@ func (d *SchemaTracker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStm
 }
 
 // dropIndex is shared by DropIndex and AlterTable.
-func (d *SchemaTracker) dropIndex(_ sessionctx.Context, ti ast.Ident, indexName ast.CIStr, ifExists bool) (err error) {
+func (d *SchemaTracker) dropIndex(_ sessionctx.Context, ti ast.Ident, indexName ast.CIStr) (err error) {
 	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
@@ -640,10 +739,9 @@ func (d *SchemaTracker) dropIndex(_ sessionctx.Context, ti ast.Ident, indexName 
 
 	indexInfo := tblInfo.FindIndexByName(indexName.L)
 	if indexInfo == nil {
-		if ifExists {
-			return nil
-		}
-		return dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+		// The tracker only maintains btree indexes; other index types are
+		// ignored on creation, so dropping them is a no-op.
+		return nil
 	}
 
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
@@ -928,6 +1026,11 @@ func (d *SchemaTracker) renameIndex(_ sessionctx.Context, ident ast.Ident, spec 
 		return nil
 	}
 	if err != nil {
+		if infoschema.ErrKeyNotExists.Equal(err) {
+			// The tracker only maintains btree indexes; other index types are
+			// ignored on creation, so renaming them is a no-op.
+			return nil
+		}
 		return err
 	}
 	ddl.RenameExpressionIndexColumns(tblInfo, spec.FromKey, spec.ToKey)
@@ -1041,6 +1144,7 @@ func (d *SchemaTracker) createPrimaryKey(
 		true,
 		model.ColumnarIndexTypeNA,
 		indexPartSpecifications,
+		nil,
 		indexOption,
 		model.StatePublic,
 	)
@@ -1094,26 +1198,28 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 		case ast.AlterTableDropColumn:
 			err = d.dropColumn(sctx, ident, spec)
 		case ast.AlterTableDropIndex:
-			err = d.dropIndex(sctx, ident, ast.NewCIStr(spec.Name), spec.IfExists)
+			err = d.dropIndex(sctx, ident, ast.NewCIStr(spec.Name))
 		case ast.AlterTableDropPrimaryKey:
-			err = d.dropIndex(sctx, ident, ast.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
+			err = d.dropIndex(sctx, ident, ast.NewCIStr(mysql.PrimaryKeyName))
 		case ast.AlterTableRenameIndex:
 			err = d.renameIndex(sctx, ident, spec)
 		case ast.AlterTableDropPartition:
 			err = d.dropTablePartitions(sctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
-			switch spec.Constraint.Tp {
+			if isUnsupportedConstraint(constr) {
+				continue
+			}
+			switch constr.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex:
 				err = d.createIndex(sctx, ident, ast.IndexKeyTypeNone, ast.NewCIStr(constr.Name),
-					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+					constr.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 				err = d.createIndex(sctx, ident, ast.IndexKeyTypeUnique, ast.NewCIStr(constr.Name),
-					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
+					constr.Keys, constr.Option, false) // IfNotExists should be not applied
 			case ast.ConstraintPrimaryKey:
-				err = d.createPrimaryKey(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				err = d.createPrimaryKey(sctx, ident, ast.NewCIStr(constr.Name), constr.Keys, constr.Option)
 			case ast.ConstraintForeignKey,
-				ast.ConstraintFulltext,
 				ast.ConstraintCheck:
 			default:
 				// Nothing to do now.
@@ -1199,7 +1305,10 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 			tblInfo = tblInfo.Clone()
 			idx := tblInfo.FindIndexByName(spec.IndexName.L)
 			if idx == nil {
-				return errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(spec.IndexName.O, ident.Name))
+				// The index may have been ignored when the table was tracked
+				// (e.g. a FULLTEXT index), so treat a missing index as a no-op
+				// like DROP/RENAME INDEX.
+				continue
 			}
 			idx.Invisible = spec.Visibility == ast.IndexVisibilityInvisible
 			_ = d.PutTable(ident.Schema, tblInfo)

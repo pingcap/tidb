@@ -294,11 +294,15 @@ func TestFTSIndexSyntax(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
 	}()
 
-	tk.MustContainErrMsg("create table t(title TEXT, body TEXT, FULLTEXT KEY (`title`, `body`))", `FULLTEXT index must specify one column name`)
-	tk.MustContainErrMsg("create table t(title TEXT, body TEXT, FULLTEXT KEY ((`title`)))", `FULLTEXT index must specify one column name`)
-	tk.MustContainErrMsg("create table t(title TEXT, body TEXT, FULLTEXT KEY (title(5)))", `FULLTEXT index does not support prefix length`)
-	tk.MustContainErrMsg("create table t(title TEXT, body TEXT, FULLTEXT KEY (title DESC))", `FULLTEXT index does not support DESC order`)
-	tk.MustContainErrMsg("create table t(title TEXT, body TEXT, c INT, FULLTEXT KEY (c))", `only support string type`)
+	// Multi-column FULLTEXT indexes are now accepted.
+	tk.MustExec("create table t(title TEXT, body TEXT, FULLTEXT KEY (`title`, `body`))")
+	tk.MustExec("drop table t")
+	// Expression keys, prefix length and ASC/DESC ordering are no longer part of the FULLTEXT grammar.
+	tk.MustContainErrMsg("create table t(title TEXT, body TEXT, FULLTEXT KEY ((`title`)))", `You have an error in your SQL syntax`)
+	tk.MustContainErrMsg("create table t(title TEXT, body TEXT, FULLTEXT KEY (title(5)))", `You have an error in your SQL syntax`)
+	tk.MustContainErrMsg("create table t(title TEXT, body TEXT, FULLTEXT KEY (title DESC))", `You have an error in your SQL syntax`)
+	tk.MustContainErrMsg("create table t(title TEXT, body TEXT, FULLTEXT KEY (title ASC))", `You have an error in your SQL syntax`)
+	tk.MustContainErrMsg("create table t(title TEXT, body TEXT, c INT, FULLTEXT KEY (c))", `can only be used on a non-binary string-like column`)
 	tk.MustContainErrMsg("create table t1(title TEXT, body TEXT, FULLTEXT KEY (title) WITH PARSER ngramx)", `Unsupported parser`)
 
 	tk.MustExec("create table t1(title TEXT, body TEXT, FULLTEXT KEY (title))")
@@ -309,10 +313,17 @@ func TestFTSIndexSyntax(t *testing.T) {
 	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("create table t4(title TEXT, body TEXT, FULLTEXT KEY `idx` (`title`))")
 	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("create table t5(title TEXT, body TEXT, FULLTEXT KEY `idx` (title ASC))")
+	tk.MustExec("create table t5(title TEXT, body TEXT, FULLTEXT KEY `idx` (title))")
 	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 CREATE TABLE `t5` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("create table t6(title TEXT, body TEXT, FULLTEXT KEY `idx` (title ASC) WITH PARSER standard)")
+	tk.MustExec("create table t6(title TEXT, body TEXT, FULLTEXT KEY `idx` (title) WITH PARSER standard)")
 	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 CREATE TABLE `t6` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// PATH_HIERARCHY delimiters must be escaped according to the session SQL mode.
+	tk.MustExec("set session sql_mode = 'NO_BACKSLASH_ESCAPES'")
+	tk.MustExec("create table t7(p TEXT, FULLTEXT KEY idx (p WITH (PATH_HIERARCHY(DELIMITER='a\\b'))))")
+	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 CREATE TABLE `t7` (\n  `p` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`p` WITH (PATH_HIERARCHY(DELIMITER = 'a\\b')))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("set session sql_mode = default")
+	tk.MustExec("drop table t7")
 
 	tk.MustExec("drop table t1, t2, t3, t4, t5, t6")
 	tk.MustExec("create table t1(title TEXT, body TEXT)")

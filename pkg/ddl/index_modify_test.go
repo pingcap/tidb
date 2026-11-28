@@ -1610,8 +1610,8 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	lastWarn := warnings[len(warnings)-1]
 	require.Truef(t, terror.ErrorEqual(dbterror.ErrDupKeyName, lastWarn.Err), "err %v", lastWarn.Err)
 	require.Equal(t, contextutil.WarnLevelNote, lastWarn.Level)
-	tk.MustContainErrMsg("alter table t add vector index if not exists idx((vec_cosine_distance(c))) USING HNSW;",
-		"[ddl:1061]vector index vecIdx function vec_cosine_distance already exist on column c")
+	// The index name already exists, so IF NOT EXISTS makes the statement a no-op.
+	tk.MustExec("alter table t add vector index if not exists idx((vec_cosine_distance(c))) USING HNSW;")
 
 	// normal test cases
 	tk.MustExec("drop table if exists t;")
@@ -1788,7 +1788,8 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	lastWarn := warnings[len(warnings)-1]
 	require.Truef(t, terror.ErrorEqual(dbterror.ErrDupKeyName, lastWarn.Err), "err %v", lastWarn.Err)
 	require.Equal(t, contextutil.WarnLevelNote, lastWarn.Level)
-	tk.MustContainErrMsg("alter table t add columnar index if not exists idx(c) USING INVERTED;", "[ddl:1061]inverted columnar index  already exist on column c")
+	// The index name already exists, so IF NOT EXISTS makes the statement a no-op.
+	tk.MustExec("alter table t add columnar index if not exists idx(c) USING INVERTED;")
 
 	// normal test cases
 	tk.MustExec("drop table if exists t;")

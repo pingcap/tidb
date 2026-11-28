@@ -2315,10 +2315,10 @@ func (e *executor) alterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex:
 				err = e.createIndex(sctx, ident, ast.IndexKeyTypeNone, ast.NewCIStr(constr.Name),
-					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+					spec.Constraint.Keys, nil, constr.Option, constr.IfNotExists)
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 				err = e.createIndex(sctx, ident, ast.IndexKeyTypeUnique, ast.NewCIStr(constr.Name),
-					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
+					spec.Constraint.Keys, nil, constr.Option, false) // IfNotExists should be not applied
 			case ast.ConstraintForeignKey:
 				// NOTE: we do not handle `symbol` and `index_name` well in the parser and we do not check ForeignKey already exists,
 				// so we just also ignore the `if not exists` check.
@@ -2332,7 +2332,8 @@ func (e *executor) alterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					err = e.CreateCheckConstraint(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint)
 				}
 			case ast.ConstraintColumnar:
-				err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+				err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys,
+					constr.FullTextIndexPartSpecifications, constr.Option, constr.IfNotExists)
 			default:
 				// Nothing to do now.
 			}
@@ -5788,7 +5789,9 @@ func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
 }
 
 func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
-	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	fullTextIndexPartSpecifications []*ast.FullTextIndexPartSpecification,
+	indexOption *ast.IndexOption, ifNotExists bool) error {
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
@@ -5828,6 +5831,10 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if indexName.L == "" {
+		// IF NOT EXISTS found the index, so there is nothing to add.
+		return nil
+	}
 
 	// Do some checks here to fast fail the DDL job.
 	var funcExpr string
@@ -5841,7 +5848,7 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 			return errors.Trace(err)
 		}
 	case model.ColumnarIndexTypeFulltext:
-		if _, err = buildFullTextInfoWithCheck(indexPartSpecifications, indexOption, tblInfo); err != nil {
+		if _, err = buildFullTextInfoWithCheck(fullTextIndexPartSpecifications, indexPartSpecifications, indexOption, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -5868,17 +5875,21 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	job.Type = model.ActionAddColumnarIndex
 	// indexPartSpecifications[0].Expr can not be unmarshaled, so we set it to nil.
 	indexPartSpecifications[0].Expr = nil
+	if columnarIndexType == model.ColumnarIndexTypeFulltext {
+		indexOption.FillLegacyFullTextParserName()
+	}
 
 	// TODO: support CDCWriteSource
 
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
-			IndexName:               indexName,
-			IndexPartSpecifications: indexPartSpecifications,
-			IndexOption:             indexOption,
-			FuncExpr:                funcExpr,
-			IsColumnar:              true,
-			ColumnarIndexType:       columnarIndexType,
+			IndexName:                       indexName,
+			IndexPartSpecifications:         indexPartSpecifications,
+			FullTextIndexPartSpecifications: fullTextIndexPartSpecifications,
+			IndexOption:                     indexOption,
+			FuncExpr:                        funcExpr,
+			IsColumnar:                      true,
+			ColumnarIndexType:               columnarIndexType,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -5912,7 +5923,7 @@ func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DB
 func (e *executor) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	return e.createIndex(ctx, ident, stmt.KeyType, ast.NewCIStr(stmt.IndexName),
-		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
+		stmt.IndexPartSpecifications, stmt.FullTextIndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
 }
 
 // addHypoIndexIntoCtx adds this index as a hypo-index into this ctx.
@@ -5941,13 +5952,15 @@ func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableNa
 }
 
 func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName ast.CIStr,
-	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	fullTextIndexPartSpecifications []*ast.FullTextIndexPartSpecification,
+	indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
 	switch keyType {
 	case ast.IndexKeyTypeSpatial:
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported")
 	case ast.IndexKeyTypeColumnar:
-		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, fullTextIndexPartSpecifications, indexOption, ifNotExists)
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
@@ -6021,7 +6034,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			}
 		}
 		indexInfo, err := BuildIndexInfo(metaBuildCtx, hypoTblInfo, indexName, false, unique, model.ColumnarIndexTypeNA,
-			indexPartSpecifications, indexOption, model.StatePublic)
+			indexPartSpecifications, nil, indexOption, model.StatePublic)
 		if err != nil {
 			return err
 		}
@@ -6292,7 +6305,7 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 			})
 		}
 		indexOption := &ast.IndexOption{}
-		err = e.createIndex(ctx, ti, ast.IndexKeyTypeNone, fkInfo.Name, indexPartSpecifications, indexOption, false)
+		err = e.createIndex(ctx, ti, ast.IndexKeyTypeNone, fkInfo.Name, indexPartSpecifications, nil, indexOption, false)
 		if err != nil {
 			return err
 		}

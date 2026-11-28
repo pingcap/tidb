@@ -136,6 +136,7 @@ var defaultExpectedReceivers = []string{
 	"FlushStmt",
 	"FrameBound",
 	"FrameClause",
+	"FullTextIndexPartSpecification",
 	"FuncCallExpr",
 	"FuncCastExpr",
 	"GetFormatSelectorExpr",
