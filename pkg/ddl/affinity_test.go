@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -42,9 +44,11 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/servicediscovery"
 )
 
 // Unit tests for keyrange building
@@ -1429,7 +1433,7 @@ func TestAffinityTruncatePartitionPreparation(t *testing.T) {
 				if scenario == "legacy finalization" {
 					errorLimit := vardef.GetDDLErrorCountLimit()
 					t.Cleanup(func() { vardef.SetDDLErrorCountLimit(errorLimit) })
-					s.tk.MustExec("set global tidb_ddl_error_count_limit = 1")
+					s.tk.MustExec("set global tidb_ddl_error_count_limit = 3")
 					ddl.SetWaitTimeWhenErrorOccurred(retryWait)
 				}
 				var finalAttemptsMu sync.Mutex
@@ -1503,11 +1507,14 @@ func TestAffinityTruncatePartitionPreparation(t *testing.T) {
 						}
 					}
 					if scenario == "legacy finalization" {
-						s.cli.notFoundCreates.Store(3)
+						s.cli.notFoundCreates.Store(5)
 					} else {
 						s.cli.notFoundCreates.Store(1)
 					}
 				})
+				// The label matches the error injected by notFoundCreates.
+				retryableErrors := metrics.RetryableErrorCount.WithLabelValues("request pd http api failed with status: '404 Not Found', body: 'unsupported affinity POST'")
+				retryableBefore := promtestutil.ToFloat64(retryableErrors)
 				err := s.tk.ExecToErr("alter table p truncate partition p0")
 				require.True(t, injected.Load())
 				after := s.persisted(t, before.ID)
@@ -1532,7 +1539,9 @@ func TestAffinityTruncatePartitionPreparation(t *testing.T) {
 						finalAttemptsMu.Lock()
 						times := slices.Clone(finalAttempts)
 						finalAttemptsMu.Unlock()
-						require.Len(t, times, 4)
+						require.Len(t, times, 6)
+						// Only failures that isRetryableJobError still accepts are counted, which is the first one with this limit.
+						require.EqualValues(t, 1, promtestutil.ToFloat64(retryableErrors)-retryableBefore)
 						for i := 1; i < len(times); i++ {
 							require.GreaterOrEqual(t, times[i].Sub(times[i-1]), retryWait,
 								"legacy finalization keeps backing off beyond the DDL error limit")
@@ -2007,4 +2016,64 @@ func TestAffinityPartitionRetryAfterAsyncNotify(t *testing.T) {
 			s.tk.MustExec("admin check table p")
 		})
 	}
+}
+
+func TestAffinityDDLFailsWhenPDDoesNotServeAffinityAPI(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_plain (a int)")
+	tk.MustExec("create table t_aff_old (a int) affinity = 'table'")
+	tk.MustExec("insert into t_aff_old values (1)")
+	tk.MustExec("create table p_aff_old (a int) affinity = 'partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	tk.MustExec("insert into p_aff_old values (1), (11)")
+	tableIDs := tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't_aff_old'").Rows()
+	partIDs := tk.MustQuery("select tidb_partition_id from information_schema.partitions where table_name = 'p_aff_old' order by partition_name").Rows()
+
+	usePD := func(handler http.HandlerFunc) {
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		discovery := servicediscovery.NewMockServiceDiscovery([]string{server.URL}, nil)
+		require.NoError(t, discovery.Init())
+		cli := pdhttp.NewClientWithServiceDiscovery("test", discovery)
+		t.Cleanup(cli.Close)
+		affinity.InitManager(cli)
+		t.Cleanup(func() { affinity.InitManager(nil) })
+	}
+	// The error must come from the HTTP status, whatever body PD sends.
+	const notFound = "status: '404 Not Found'"
+
+	// A PD without the affinity API answers 404 to every request.
+	usePD(http.NotFound)
+	tk.MustContainErrMsg("create table t_aff (a int) affinity = 'table'", notFound)
+	tk.MustQuery("show tables like 't_aff'").Check(testkit.Rows())
+	tk.MustContainErrMsg("alter table t_plain affinity = 'table'", notFound)
+	tk.MustQuery("select count(*) from information_schema.tables where table_name = 't_plain' and tidb_affinity is not null").Check(testkit.Rows("0"))
+	tk.MustContainErrMsg("truncate table t_aff_old", notFound)
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't_aff_old'").Check(tableIDs)
+	tk.MustQuery("select * from t_aff_old").Check(testkit.Rows("1"))
+	tk.MustContainErrMsg("alter table p_aff_old truncate partition p0", notFound)
+	tk.MustQuery("select tidb_partition_id from information_schema.partitions where table_name = 'p_aff_old' order by partition_name").Check(partIDs)
+	tk.MustQuery("select * from p_aff_old order by a").Check(testkit.Rows("1", "11"))
+
+	// A 404 on the fallback create after 409 and a lookup fails the DDL too.
+	var posts atomic.Int64
+	usePD(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && !r.URL.Query().Has("delete"):
+			if posts.Add(1) == 1 {
+				http.Error(w, "conflict", http.StatusConflict)
+				return
+			}
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"affinity_groups":{}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	tk.MustContainErrMsg("create table t_aff_fallback (a int) affinity = 'table'", notFound)
+	tk.MustQuery("show tables like 't_aff_fallback'").Check(testkit.Rows())
+	require.EqualValues(t, 2, posts.Load())
 }
