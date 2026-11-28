@@ -87,37 +87,87 @@ func requestError(ctx context.Context, operation string, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	var server *vtos.TosServerError
-	if goerrors.As(err, &server) {
-		return sanitizedStatusError(operation, server.StatusCode, server.Code, server.RequestID)
-	}
-	var stsErr volcengineerr.RequestFailure
-	if goerrors.As(err, &stsErr) && stsErr.StatusCode() > 0 {
-		return sanitizedStatusError(operation, stsErr.StatusCode(), stsErr.Code(), stsErr.RequestID())
-	}
-	// volcengineerr.Error exposes OrigErr() rather than Go's Unwrap(), so unwrap
-	// transport causes explicitly before checking url.Error / net.Error.
-	var veErr volcengineerr.Error
-	if goerrors.As(err, &veErr) && veErr.OrigErr() != nil {
-		err = veErr.OrigErr()
-	}
-	var clientErr *vtos.TosClientError
-	if goerrors.As(err, &clientErr) && clientErr.Cause != nil {
-		err = clientErr.Cause
-	}
-	var urlErr *url.Error
-	if goerrors.As(err, &urlErr) {
-		if urlErr.Err == nil {
+	// Walk one link at a time so a cycle cannot hang errors.As or Error().
+	// Discard everything through the last SDK or URL wrapper, including any
+	// net.Error above it that would print the URL.
+	const maxErrorDepth = 32
+	for cause, depth := err, 0; cause != nil && depth < maxErrorDepth; depth++ {
+		switch e := cause.(type) {
+		case *vtos.TosServerError:
+			if e.StatusCode > 0 {
+				return sanitizedStatusError(operation, e.StatusCode, e.Code, e.RequestID)
+			}
+			// In SDK v2.9.2, marshalOutput identifies body read errors only by
+			// this prefix. Replaying a list is safe even if the request succeeded.
+			if operation == "ListObjects" && strings.HasPrefix(e.Message, "tos: read body err:") {
+				return &temporaryTransportError{operation: operation}
+			}
+			return errors.Errorf("%s returned invalid or incomplete response", operation)
+		case volcengineerr.Error:
+			if sts, ok := e.(volcengineerr.RequestFailure); ok && sts.StatusCode() > 0 {
+				return sanitizedStatusError(operation, sts.StatusCode(), sts.Code(), sts.RequestID())
+			}
+			cause = e.OrigErr()
+		case *vtos.TosClientError:
+			cause = e.Cause
+		case *url.Error:
+			if e.Op == "parse" {
+				return errors.Errorf("%s request failed", operation)
+			}
+			cause = e.Err
+		case url.InvalidHostError, url.EscapeError, interface{ Unwrap() []error }:
+			// Invalid URL text and uninspected sibling errors may carry secrets.
 			return errors.Errorf("%s request failed", operation)
+		default:
+			if next := goerrors.Unwrap(cause); next != nil {
+				cause = next
+				continue
+			}
+			return sanitizedTransportError(operation, err)
 		}
-		err = urlErr.Err
+		err = cause
+	}
+	return errors.Errorf("%s request failed", operation)
+}
+
+// temporaryTransportError is the net.Error seen by Lightning's errors.Cause.
+// Unwrap preserves errors.Is for callers that check a safe sentinel.
+type temporaryTransportError struct {
+	operation string
+	cause     error
+}
+
+func (e *temporaryTransportError) Error() string {
+	if e.cause != nil {
+		return e.operation + " request failed: " + e.cause.Error()
+	}
+	return e.operation + " request failed"
+}
+
+func (*temporaryTransportError) Timeout() bool   { return false }
+func (*temporaryTransportError) Temporary() bool { return true }
+func (e *temporaryTransportError) Unwrap() error { return e.cause }
+
+func sanitizedTransportError(operation string, err error) error {
+	if goerrors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "net/http: request canceled") {
+		return errors.Errorf("%s request failed", operation)
+	}
+	for _, sentinel := range []error{errCredentialExpired, io.EOF, io.ErrUnexpectedEOF, net.ErrClosed} {
+		if goerrors.Is(err, sentinel) {
+			return &temporaryTransportError{operation: operation, cause: sentinel}
+		}
+	}
+	if s3like.IsHTTP2ConnAborted(err) || strings.Contains(msg, "server closed idle connection") ||
+		strings.Contains(msg, "use of closed network connection") {
+		return &temporaryTransportError{operation: operation}
 	}
 	var netErr net.Error
 	if goerrors.As(err, &netErr) {
 		return errors.Annotatef(netErr, "%s request failed", operation)
-	}
-	if goerrors.Is(err, errCredentialExpired) || goerrors.Is(err, io.EOF) || goerrors.Is(err, io.ErrUnexpectedEOF) {
-		return errors.Annotatef(err, "%s request failed", operation)
 	}
 	return errors.Errorf("%s request failed", operation)
 }
@@ -294,6 +344,9 @@ func (c *client) ListObjects(ctx context.Context, prefix, startAfter string, tok
 	if err != nil {
 		return nil, requestError(ctx, "ListObjects", err)
 	}
+	if out.IsTruncated && (out.NextContinuationToken == "" || out.NextContinuationToken == in.ContinuationToken) {
+		return nil, errors.New("TOS ListObjects truncated response did not advance continuation token")
+	}
 	result := &s3like.ListResp{IsTruncated: out.IsTruncated, Objects: make([]s3like.Object, 0, len(out.Contents))}
 	if out.NextContinuationToken != "" {
 		result.NextContinuationToken = &out.NextContinuationToken
@@ -424,10 +477,14 @@ func (w *multipartWriter) Close(ctx context.Context) error {
 		return w.PutObject(ctx, w.name, nil)
 	}
 	if _, w.err = w.creds.resolve(ctx); w.err == nil {
-		_, err := w.svc.CompleteMultipartUploadV2(ctx, &vtos.CompleteMultipartUploadV2Input{
+		out, err := w.svc.CompleteMultipartUploadV2(ctx, &vtos.CompleteMultipartUploadV2Input{
 			Bucket: w.Bucket, Key: w.ObjectKey(w.name), UploadID: w.id, Parts: w.parts,
 		})
-		w.err = requestError(ctx, "CompleteMultipartUpload", err)
+		if err != nil {
+			w.err = requestError(ctx, "CompleteMultipartUpload", err)
+		} else if out == nil || out.ETag == "" {
+			w.err = errors.New("TOS CompleteMultipartUpload did not confirm completion")
+		}
 	}
 	if w.err != nil {
 		w.abort(ctx)

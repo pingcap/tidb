@@ -154,6 +154,34 @@ func TestObjectRequests(t *testing.T) {
 	require.Equal(t, "more", *list.NextContinuationToken)
 	require.Equal(t, []s3like.Object{{Key: "backup/prefix", Size: 12}}, list.Objects)
 
+	const secret = "private-list-prefix"
+	for _, tc := range []struct {
+		name      string
+		body      io.Reader
+		wantError string
+		temporary bool
+	}{
+		{"empty next token", strings.NewReader(`{"IsTruncated":true}`), "did not advance continuation token", false},
+		{"repeated next token", strings.NewReader(`{"IsTruncated":true,"NextContinuationToken":"resume"}`), "did not advance continuation token", false},
+		{"interrupted list body", iotest.ErrReader(errors.New(secret)), "ListObjects request failed", true},
+		{"malformed list JSON", strings.NewReader(`{"Contents":`), "invalid or incomplete response", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handle = func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK, Body: io.NopCloser(tc.body), ContentLength: -1,
+				}, nil
+			}
+			page, err := c.ListObjects(ctx, secret, "", &token, 2)
+			require.ErrorContains(t, err, tc.wantError)
+			require.Nil(t, page)
+			require.NotContains(t, err.Error(), secret)
+			require.NotContains(t, err.Error(), "HTTP 0")
+			netErr, ok := pingcaperrors.Cause(err).(net.Error)
+			require.Equal(t, tc.temporary, ok && netErr.Temporary())
+		})
+	}
+
 	handle = func(req *http.Request) (*http.Response, error) {
 		require.Equal(t, "/backup/copied", req.URL.Path)
 		require.Equal(t, "/source/src%2Fkey", req.Header.Get("X-Tos-Copy-Source"))
@@ -241,6 +269,80 @@ func TestPermissionRequests(t *testing.T) {
 	require.True(t, ok)
 	bareURL := requestError(ctx, "GetObject", &url.Error{Op: "Get", URL: "https://bucket.tos.test/?sig=private-value"})
 	require.NotContains(t, bareURL.Error(), "private-value")
+
+	const secret = "proxy-secret"
+	const proxyURL = "http://proxy-user:" + secret + "@bad host"
+	wrapTransport := func(cause error) error {
+		return &vtos.TosClientError{Cause: &url.Error{Op: "Get", URL: "https://bucket/?sig=" + secret, Err: cause}}
+	}
+	checkRedacted := func(t *testing.T, err error) {
+		t.Helper()
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), secret)
+		var urlErr *url.Error
+		require.False(t, errors.As(err, &urlErr))
+	}
+	for _, tc := range []struct {
+		cause    error
+		sentinel bool
+	}{
+		{errCredentialExpired, true},
+		{io.EOF, true},
+		{io.ErrUnexpectedEOF, true},
+		{net.ErrClosed, true},
+		{errors.New("http2: server sent GOAWAY and closed the connection"), false},
+		{errors.New("http: server closed idle connection"), false},
+		{errors.New("use of closed network connection"), false},
+	} {
+		t.Run(tc.cause.Error(), func(t *testing.T) {
+			err := requestError(ctx, "GetObject", wrapTransport(fmt.Errorf("%s: %w", secret, tc.cause)))
+			checkRedacted(t, err)
+			cause := pingcaperrors.Cause(pingcaperrors.Annotate(pingcaperrors.Trace(err), "read"))
+			netErr, ok := cause.(net.Error)
+			require.True(t, ok)
+			require.True(t, netErr.Temporary())
+			require.False(t, netErr.Timeout())
+			if tc.sentinel {
+				require.ErrorIs(t, err, tc.cause)
+			} else {
+				require.Nil(t, errors.Unwrap(cause))
+			}
+		})
+	}
+	checkPermanent := func(t *testing.T, err error) {
+		t.Helper()
+		checkRedacted(t, err)
+		if netErr, ok := pingcaperrors.Cause(err).(net.Error); ok {
+			require.False(t, netErr.Temporary())
+			require.False(t, netErr.Timeout())
+		}
+	}
+	cycle := &url.Error{Op: "Get", URL: proxyURL}
+	cycle.Err = cycle
+	var deep error = io.EOF
+	for range 100 {
+		deep = wrapTransport(deep)
+	}
+	for _, cause := range []error{
+		cycle, deep,
+		&url.Error{Op: "parse", URL: proxyURL, Err: io.ErrUnexpectedEOF},
+		url.InvalidHostError("server closed idle connection " + secret),
+		url.EscapeError("unexpected EOF " + secret),
+		context.Canceled,
+		errors.New("net/http: request canceled: use of closed network connection"),
+		errors.New("unknown " + secret),
+	} {
+		checkPermanent(t, requestError(ctx, "GetObject", wrapTransport(cause)))
+	}
+	t.Run("STS malformed proxy", func(t *testing.T) {
+		// http.Client.Do and the STS SDK each wrap the proxy's parse error.
+		hc := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			_, err := url.Parse(proxyURL)
+			return nil, err
+		})}
+		_, err := assumeRole(ctx, "cn-beijing", "role", vtos.Credential{AccessKeyID: "id", AccessKeySecret: "sk"}, hc)
+		checkPermanent(t, err)
+	})
 }
 
 func TestMultipartWriter(t *testing.T) {
@@ -276,7 +378,7 @@ func TestMultipartWriter(t *testing.T) {
 			var payload struct{ Parts []vtos.UploadedPartV2 }
 			require.NoError(t, json.NewDecoder(req.Body).Decode(&payload))
 			require.Equal(t, []vtos.UploadedPartV2{{PartNumber: 1, ETag: "etag-1"}, {PartNumber: 2, ETag: "etag-2"}}, payload.Parts)
-			return response(200, "{}"), nil
+			return response(200, `{"ETag":"completed"}`), nil
 		default:
 			calls = append(calls, "put")
 			checkWriteHeaders(t, req)
@@ -302,6 +404,37 @@ func TestMultipartWriter(t *testing.T) {
 	}
 	require.NoError(t, w.Close(ctx))
 	require.Equal(t, []string{"start", "part 1", "part 2", "finish"}, calls)
+
+	const secret = "private-object-key"
+	for _, tc := range []struct {
+		name      string
+		body      io.Reader
+		wantError string
+	}{
+		{"missing completion ETag", strings.NewReader("{}"), "did not confirm completion"},
+		{"interrupted completion body", iotest.ErrReader(errors.New(secret)), "invalid or incomplete response"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var methods []string
+			c := testClient(t, func(req *http.Request) (*http.Response, error) {
+				methods = append(methods, req.Method)
+				if req.Method == http.MethodDelete {
+					return response(204, ""), nil
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK, Body: io.NopCloser(tc.body), ContentLength: -1,
+				}, nil
+			})
+			w := &multipartWriter{client: c, name: secret, id: "id", parts: []vtos.UploadedPartV2{{PartNumber: 1, ETag: "etag-1"}}}
+			err := w.Close(ctx)
+			require.ErrorContains(t, err, tc.wantError)
+			require.NotContains(t, err.Error(), secret)
+			require.NotContains(t, err.Error(), "HTTP 0")
+			netErr, ok := pingcaperrors.Cause(err).(net.Error)
+			require.False(t, ok && netErr.Temporary())
+			require.Equal(t, []string{http.MethodPost, http.MethodDelete}, methods)
+		})
+	}
 }
 
 func TestMultipartUploader(t *testing.T) {
@@ -362,7 +495,7 @@ func TestMultipartUploader(t *testing.T) {
 				require.Equal(t, i+1, part.PartNumber)
 				require.Equal(t, strconv.Itoa(i+1), part.ETag)
 			}
-			return response(200, "{}"), nil
+			return response(200, `{"ETag":"completed"}`), nil
 		}
 	})
 	require.NoError(t, c.MultipartUploader("key", 4, 2).Upload(context.Background(), strings.NewReader("abcdefghij")))
@@ -533,6 +666,8 @@ func TestTruncatedMultipartInput(t *testing.T) {
 	})
 
 	t.Run("reader error cancels in-flight part upload", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		partStarted := make(chan struct{})
 		partCanceled := make(chan struct{})
 		var aborted atomic.Int32
@@ -554,19 +689,29 @@ func TestTruncatedMultipartInput(t *testing.T) {
 			}
 		})
 		reader, writer := io.Pipe()
-		defer reader.Close()
+		defer writer.Close()
+		stop := context.AfterFunc(ctx, func() { _ = reader.CloseWithError(ctx.Err()) })
+		defer stop()
 		done := make(chan error, 1)
 		go func() {
-			done <- c.MultipartUploader("key", 4, 2).Upload(context.Background(), reader)
+			err := c.MultipartUploader("key", 4, 2).Upload(ctx, reader)
+			_ = reader.CloseWithError(err)
+			done <- err
 		}()
 		_, err := writer.Write([]byte("abcde"))
 		require.NoError(t, err)
-		<-partStarted
+		select {
+		case <-partStarted:
+		case err := <-done:
+			t.Fatalf("upload returned before a part started: %v", err)
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for the part upload to start")
+		}
 		require.NoError(t, writer.CloseWithError(io.ErrUnexpectedEOF))
 		select {
 		case err := <-done:
 			require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-		case <-time.After(3 * time.Second):
+		case <-ctx.Done():
 			t.Fatal("in-flight part upload was not canceled on reader error")
 		}
 		select {
