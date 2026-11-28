@@ -196,7 +196,10 @@ fn fixture(
             gate: gate.clone(),
             opens: opens.clone(),
             closes: closes.clone(),
-            fail: if id == 0 { failure } else { 0 },
+            // Every worker fails: which worker takes an outer row is the
+            // scheduler's choice, so a failure on one worker alone can miss
+            // every row.
+            fail: failure,
         };
         let joiner = new_joiner(
             context.clone(),
