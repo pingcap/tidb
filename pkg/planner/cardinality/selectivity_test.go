@@ -1072,6 +1072,20 @@ func TestVirtualColumnEstimatedFromBaseColumn(t *testing.T) {
 	estRows = getTableReaderEstRows(t, tk, "select * from t6 where g = '7'")
 	require.GreaterOrEqual(t, estRows, 100.0)
 
+	// The average frequency used by the cap excludes the TopN values: 100 TopN
+	// values of 200 rows each, and a one-bucket histogram [alpha, zulu] of 100
+	// rows each. Counting the TopN values in the NDV would estimate 2 rows.
+	tk.MustExec(`create table t7(id int primary key, c varchar(32) collate utf8mb4_bin,
+		lc varchar(32) collate utf8mb4_bin as (lower(c)) virtual)`)
+	tk.MustExec(`insert into t7(id, c)
+		select (x.a - 1) * 100 + y.b, case when x.a <= 200 then concat('top-', mod(x.a, 100)) when x.a = 201 then 'alpha' else 'zulu' end
+		from (with recursive x as (select 1 as a union all select a + 1 from x where a < 202) select a from x) as x,
+			(with recursive y as (select 1 as b union all select b + 1 from y where b < 100) select b from y) as y`)
+	tk.MustExec("analyze table t7 all columns with 1 buckets, 100 topn")
+	estRows = getTableReaderEstRows(t, tk, "select * from t7 where lc = 'alpha'")
+	require.GreaterOrEqual(t, estRows, 50.0)
+	require.LessOrEqual(t, estRows, 150.0)
+
 	// Only index statistics on the base column: their histogram bounds are
 	// encoded index keys, not values of c's type, so they must not be evaluated
 	// (all of them would fail lower(c) = 'alpha'). lc keeps the default

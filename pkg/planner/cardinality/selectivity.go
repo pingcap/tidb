@@ -1080,10 +1080,13 @@ func getSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 		// Cap at histPoints values, unless more distinct bound values match than
 		// there are points: then several values map to one point and the sampled
 		// estimate stands. A matching upper bound counts with its exact frequency
-		// (Repeat), the other points with the average frequency.
-		if histPoints > 0 && hist.NDV > 0 && matchedBoundValues <= int64(histPoints) {
+		// (Repeat), the other points with the average frequency of the histogram
+		// values. hist.NDV also counts the TopN values, whose rows are not in
+		// histTotalCnt, so they are excluded from the average.
+		histNDV := hist.NDV - int64(topNLen)
+		if histPoints > 0 && histNDV > 0 && matchedBoundValues <= int64(histPoints) {
 			otherPoints := max(int64(histPoints)-upperBoundMatchCnt, 0)
-			capSel := float64(bucketRepeatSelectedCnt)/histTotalCnt + float64(otherPoints)/float64(hist.NDV)
+			capSel := float64(bucketRepeatSelectedCnt)/histTotalCnt + float64(otherPoints)/float64(histNDV)
 			histSel = min(histSel, capSel)
 		}
 		histSel *= histTotalCnt / totalCnt
