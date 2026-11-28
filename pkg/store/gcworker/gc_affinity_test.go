@@ -1039,6 +1039,10 @@ func TestCheckPrepareReplacementLeaderAbortsRetryWhenSQLSafePointPersistFails(t 
 		spAVal := []byte(spATime.Format(tikvutil.GCTimeFormat))
 		pausedOld := make(chan struct{})
 		releaseOld := make(chan struct{})
+		var releaseOnce sync.Once
+		release := func() { releaseOnce.Do(func() { close(releaseOld) }) }
+		// Unblock a writer paused in the hook even if the subtest fails early.
+		t.Cleanup(release)
 		var pausedOnce atomic.Bool
 		var h handler = func(_ string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 			if prewrite, ok := req.Req.(*kvrpcpb.PrewriteRequest); ok {
@@ -1054,9 +1058,11 @@ func TestCheckPrepareReplacementLeaderAbortsRetryWhenSQLSafePointPersistFails(t 
 		s.client.prewriteHandler.Store(&h)
 		t.Cleanup(func() { s.client.prewriteHandler.Store(nil) })
 
+		writeCtx, cancelWrites := context.WithCancel(ctx)
+		t.Cleanup(cancelWrites)
 		oldDone := make(chan error, 1)
 		go func() {
-			oldDone <- oldWorker.saveTimeIfNewer(ctx, gcSafePointKey, spATime)
+			oldDone <- oldWorker.saveTimeIfNewer(writeCtx, gcSafePointKey, spATime)
 		}()
 
 		select {
@@ -1067,15 +1073,21 @@ func TestCheckPrepareReplacementLeaderAbortsRetryWhenSQLSafePointPersistFails(t 
 
 		newDone := make(chan error, 1)
 		go func() {
-			newDone <- newWorker.saveTimeIfNewer(ctx, gcSafePointKey, spBTime)
+			newDone <- newWorker.saveTimeIfNewer(writeCtx, gcSafePointKey, spBTime)
 		}()
 
 		// Give newWorker time to contend on the locked mysql.tidb row before releasing oldWorker.
 		time.Sleep(50 * time.Millisecond)
-		close(releaseOld)
+		release()
 
-		require.NoError(t, <-oldDone)
-		require.NoError(t, <-newDone)
+		for _, done := range []chan error{oldDone, newDone} {
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-time.After(30 * time.Second):
+				t.Fatal("timed out waiting for concurrent saveTimeIfNewer")
+			}
+		}
 		s.client.prewriteHandler.Store(nil)
 
 		savedSP, err := newWorker.loadTime(gcSafePointKey)
