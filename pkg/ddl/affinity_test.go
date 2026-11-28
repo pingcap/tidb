@@ -2193,10 +2193,10 @@ func TestShowAffinityAndDDLOnOldPDWithoutAffinityAPI(t *testing.T) {
 		testkit.Rows("test t_existing_aff <nil> <nil> <nil> <nil> <nil> <nil>"),
 	)
 
-	// Affinity-creating DDL reports explicit upgrade-PD error.
-	tk.MustContainErrMsg("create table t_new_aff(a int) affinity='table'", affinity.ErrPDNotSupportAffinity.Error())
+	// Affinity-creating DDL fails with the PD 404 instead of succeeding without groups.
+	tk.MustContainErrMsg("create table t_new_aff(a int) affinity='table'", "404 page not found")
 	tk.MustQuery("show tables like 't_new_aff'").Check(testkit.Rows())
-	tk.MustContainErrMsg("alter table t_plain affinity='table'", affinity.ErrPDNotSupportAffinity.Error())
+	tk.MustContainErrMsg("alter table t_plain affinity='table'", "404 page not found")
 
 	// Reconciler recognizes unsupported PD and skips silently without error.
 	require.NoError(t, ddl.ReconcileAffinityOnceForTest(context.Background(), dom.DDL(), tk.Session()))

@@ -54,7 +54,7 @@ func TestAffinityCreateRetry(t *testing.T) {
 		{"503_then_success", []error{pdStatusErr(http.StatusServiceUnavailable)}, 2},
 		{"network_then_success", []error{errors.New("connection reset")}, 2},
 		{"client_error", []error{pdStatusErr(http.StatusBadRequest)}, 1},
-		{"unsupported_pd", []error{ErrPDNotSupportAffinity}, 1},
+		{"unsupported_pd", []error{pdStatusErr(http.StatusNotFound)}, 1},
 		{"retry_limit", []error{pdStatusErr(503), pdStatusErr(503), pdStatusErr(503), pdStatusErr(503)}, maxRetryTimes + 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -132,7 +132,6 @@ func TestGetAllGroupsAndIsUnsupportedError(t *testing.T) {
 	require.Contains(t, all, "g1")
 
 	require.False(t, IsUnsupportedError(nil))
-	require.True(t, IsUnsupportedError(ErrPDNotSupportAffinity))
 	require.True(t, IsUnsupportedError(pdStatusErr(http.StatusNotFound)))
 	require.True(t, IsUnsupportedError(pdStatusErr(http.StatusMethodNotAllowed)))
 	require.True(t, IsUnsupportedError(pdStatusErr(http.StatusNotImplemented)))

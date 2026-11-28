@@ -16,7 +16,6 @@ package affinity
 
 import (
 	"context"
-	stderrors "errors"
 	"net/http"
 	"strings"
 	"time"
@@ -91,7 +90,7 @@ func retryTransientError(ctx context.Context, operation func(context.Context) er
 }
 
 func isRetryableError(err error) bool {
-	if err == nil || stderrors.Is(err, ErrPDNotSupportAffinity) {
+	if err == nil {
 		return false
 	}
 	if _, ok := err.(*affinityGroupCreateConflict); ok {
@@ -174,9 +173,6 @@ func GetAllGroups(ctx context.Context) (map[string]*pdhttp.AffinityGroupState, e
 func IsUnsupportedError(err error) bool {
 	if err == nil {
 		return false
-	}
-	if stderrors.Is(err, ErrPDNotSupportAffinity) {
-		return true
 	}
 	if code, ok := extractPDHTTPStatusCode(err); ok {
 		return code == http.StatusNotFound ||

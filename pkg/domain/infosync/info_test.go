@@ -589,19 +589,17 @@ func (m *mockAffinityStatusPDHTTPClient) GetAllAffinityGroups(_ context.Context)
 	if m.lastCallerID != nil {
 		*m.lastCallerID = m.callerID
 	}
-	code := *m.statusCode
-	body := *m.body
-	if m.respHandler != nil {
-		req := httptest.NewRequest(http.MethodGet, "http://pd/pd/api/v1/affinity-groups", nil)
-		rec := httptest.NewRecorder()
-		rec.WriteHeader(code)
-		_, _ = rec.WriteString(body)
-		resp := rec.Result()
-		resp.Request = req
-		var res map[string]*pdhttp.AffinityGroupState
-		return res, m.respHandler(resp, &res)
+	if m.respHandler == nil {
+		return nil, fmt.Errorf("affinity request sent without pdResponseHandler")
 	}
-	return nil, fmt.Errorf("request pd http api failed with status: '%d %s', body: '%s'", code, http.StatusText(code), body)
+	req := httptest.NewRequest(http.MethodGet, "http://pd"+pdhttp.AffinityGroups, nil)
+	rec := httptest.NewRecorder()
+	rec.WriteHeader(*m.statusCode)
+	_, _ = rec.WriteString(*m.body)
+	resp := rec.Result()
+	resp.Request = req
+	var res map[string]*pdhttp.AffinityGroupState
+	return res, m.respHandler(resp, &res)
 }
 
 func (m *mockAffinityStatusPDHTTPClient) GetAffinityGroups(ctx context.Context, _ []string) (map[string]*pdhttp.AffinityGroupState, error) {
@@ -637,8 +635,9 @@ func TestGlobalInfoSyncerInitPreservesPDHTTPStatusForAffinity(t *testing.T) {
 	require.Equal(t, "tidb-info-syncer", isCli.callerID)
 	require.NotNil(t, isCli.respHandler)
 
-	// Affinity receives the raw client without pdResponseHandler, so 404 is preserved:
-	// - CreateGroupsIfNotExists reports ErrPDNotSupportAffinity.
+	// Affinity shares this client. pdResponseHandler keeps the PD status on
+	// affinity API errors, so a 404 is classified as unsupported:
+	// - CreateGroupsIfNotExists fails with the 404.
 	// - GetGroups / GetGroupStates (SHOW AFFINITY) return empty map without error.
 	// - DeleteGroups (force) is an idempotent no-op.
 	// - GetAllGroups returns unsupported error so reconciler skips silently.
@@ -646,8 +645,9 @@ func TestGlobalInfoSyncerInitPreservesPDHTTPStatusForAffinity(t *testing.T) {
 		"_tidb_t_1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
 	}
 	err = affinity.CreateGroupsIfNotExists(context.Background(), groups)
-	require.ErrorIs(t, err, affinity.ErrPDNotSupportAffinity)
-	require.Equal(t, "tidb-affinity", lastCallerID)
+	require.Error(t, err)
+	require.True(t, affinity.IsUnsupportedError(err))
+	require.Equal(t, "tidb-info-syncer", lastCallerID)
 
 	got, err := affinity.GetGroups(context.Background(), []string{"_tidb_t_1"})
 	require.NoError(t, err)

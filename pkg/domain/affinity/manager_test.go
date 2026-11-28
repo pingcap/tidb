@@ -642,13 +642,13 @@ func TestPDWithoutAffinityAPI(t *testing.T) {
 	mgr := &pdManager{Client: client}
 	notFound := pdStatusErr(http.StatusNotFound)
 
-	// Creation reports explicit upgrade-PD error.
+	// Creation fails with the 404, which callers classify as unsupported.
 	groups := map[string][]pdhttp.AffinityGroupKeyRange{
 		"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
 	}
 	client.On("CreateAffinityGroups", mock.Anything, groups, 1).Return(nil, notFound).Once()
 	err := mgr.CreateAffinityGroupsIfNotExists(ctx, groups)
-	require.ErrorIs(t, err, ErrPDNotSupportAffinity)
+	require.ErrorIs(t, err, notFound)
 	require.True(t, IsUnsupportedError(err))
 
 	// Point and multi-batch reads (used by SHOW AFFINITY) return empty map without error.

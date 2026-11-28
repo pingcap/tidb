@@ -55,9 +55,6 @@ func NewPDManager(client pdhttp.Client) Manager {
 	return &pdManager{client}
 }
 
-// ErrPDNotSupportAffinity is returned when PD does not serve the affinity API.
-var ErrPDNotSupportAffinity = stderrors.New("PD does not support affinity groups, please upgrade PD")
-
 // CreateAffinityGroupsIfNotExists creates affinity groups in PD.
 // It first uses skip_exist_check and validates the returned state for every group.
 // On conflict, it looks up existing groups and accepts them only if they have key ranges.
@@ -69,9 +66,6 @@ func (m *pdManager) CreateAffinityGroupsIfNotExists(ctx context.Context, groups 
 	states, err := m.Client.CreateAffinityGroups(ctx, groups, pdhttp.WithSkipExistCheck())
 	if err == nil {
 		return validateCreatedAffinityGroups(groups, states)
-	}
-	if isPDHTTPStatusError(err, http.StatusNotFound) {
-		return ErrPDNotSupportAffinity
 	}
 	if !isPDHTTPStatusError(err, http.StatusConflict) {
 		return err
@@ -191,9 +185,6 @@ func (m *pdManager) createAffinityGroupsIfNotExistsByFiltering(ctx context.Conte
 			}
 		}
 		return nil
-	}
-	if isPDHTTPStatusError(err, http.StatusNotFound) {
-		return ErrPDNotSupportAffinity
 	}
 	if err != nil {
 		return err
