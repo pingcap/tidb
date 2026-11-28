@@ -77,8 +77,12 @@ Rolling back the DDL transaction does not undo changes a step has made in PD.
 Affinity groups follow two rules:
 
 - Groups that the new metadata replaces stay until the job commits as done.
-  TRUNCATE TABLE and ALTER TABLE ... AFFINITY delete the old groups in the
-  done-job branch of `transitOneJobStep`.
+  `ALTER TABLE ... AFFINITY` deletes the old groups in the done-job branch of
+  `transitOneJobStep`. `DROP TABLE` (including materialized views and logs),
+  `DROP DATABASE`, `TRUNCATE TABLE`, `TRUNCATE PARTITION`, and materialized view
+  out-of-place cutover record the retired group IDs in `OldAffinityGroupIDs` on
+  the finished job arguments so they remain intact through the GC window and
+  `GCWorker.doGCAffinityGroups` deletes them in PD after the GC safe point.
 - When a CREATE TABLE, materialized view shadow creation, batch create,
   TRUNCATE TABLE, TRUNCATE PARTITION, or ALTER TABLE ... AFFINITY job ends
   cancelled, `deleteAffinityGroupsOfCancelledJob` runs before cancellation commits. It
@@ -95,7 +99,8 @@ Affinity groups follow two rules:
   error count limit.
   PD deletion is best effort and uses a 10-second timeout from the DDL owner's
   context. If deletion fails or times out, the worker logs the failure and
-  continues cancellation, so unused groups may remain in PD.
+  continues cancellation; any leftover orphan groups in PD are later reclaimed
+  by the DDL owner's background affinity reconciler (`pkg/ddl/affinity_reconcile.go`).
 
 ## Schema version + diff and cluster-wide synchronization
 

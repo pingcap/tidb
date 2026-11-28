@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -235,6 +236,10 @@ func (c *truncateAffinityPDClient) GetAffinityGroups(ctx context.Context, ids []
 	return c.manager.GetAffinityGroups(ctx, ids)
 }
 
+func (c *truncateAffinityPDClient) GetAllAffinityGroups(ctx context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
+	return c.manager.GetAllAffinityGroups(ctx)
+}
+
 type affinityDDLTest struct {
 	store    kv.Storage
 	dom      *domain.Domain
@@ -332,14 +337,18 @@ func TestAffinityMViewOutOfPlaceCutoverCleanup(t *testing.T) {
 				123456789, sources, nil, 0, true, nil, false,
 			))
 			s.cli.failDelete.Store(false)
-			require.Equal(t, shadow.ID, s.tableInfo(t, "mv").ID, "cleanup failure must not undo cutover")
+			require.Equal(t, shadow.ID, s.tableInfo(t, "mv").ID, "cutover must promote shadow table")
+			require.Zero(t, s.cli.deleteCalls.Load(), "cutover must defer affinity group deletion to delete-range GC")
+			cutoverJob := latestHistoryJobByType(t, s.tk, model.ActionMViewRefreshOutOfPlaceCutover)
+			cutoverArgs, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(cutoverJob)
+			require.NoError(t, err)
+			require.Equal(t, tc.oldAffinity, cutoverArgs.OldMViewHasAffinity)
 			if tc.oldAffinity {
-				require.Positive(t, s.cli.deleteCalls.Load())
-				require.False(t, s.cli.nilDeleteContext.Load())
-				require.True(t, s.cli.deleteHasDeadline.Load(), "post-commit cleanup must have a deadline")
-				requireAffinityGroupsWithLabelRules(t, s.cli, s.groupsOf(t, oldMV), tc.failDelete, "only the retired MV's group is eligible for cleanup")
+				expectedGroupID := ddl.GetTableAffinityGroupID(s.store.GetCodec(), oldMV.ID)
+				require.Equal(t, []string{expectedGroupID}, cutoverArgs.OldAffinityGroupIDs)
+				requireAffinityGroupsWithLabelRules(t, s.cli, s.groupsOf(t, oldMV), true, "retired MV's group must stay until delete-range GC")
 			} else {
-				require.Zero(t, s.cli.deleteCalls.Load(), "an MV without affinity must not issue deletion RPCs")
+				require.Empty(t, cutoverArgs.OldAffinityGroupIDs)
 			}
 			if tc.shadowAffinity {
 				requireAffinityGroupsWithLabelRules(t, s.cli, s.groupsOf(t, shadow), true, "cutover must preserve the replacement MV's group")
@@ -881,7 +890,7 @@ func TestAffinityTruncateTableCancelKeepsOriginalGroups(t *testing.T) {
 				s.tk.MustExec("truncate table t")
 				s.tk.MustQuery("select * from t").Check(testkit.Rows())
 				requireAffinityGroupsWithLabelRules(t, s.cli, s.groupsOf(t, s.tableInfo(t, "t")), true, "committed truncate must create the new groups")
-				requireAffinityGroupsWithLabelRules(t, s.cli, originalGroups, false, "committed truncate must delete the original groups")
+				requireAffinityGroupsWithLabelRules(t, s.cli, originalGroups, true, "committed truncate must keep the original groups until delete-range GC")
 			})
 		}
 	}
@@ -1018,7 +1027,7 @@ func TestAffinityTruncateTablePartitionGrowth(t *testing.T) {
 					require.Equal(t, original.ID, after.ID)
 					s.tk.MustQuery("select * from p").Check(testkit.Rows("1"))
 				}
-				requireAffinityGroupsWithLabelRules(t, s.cli, originalGroups, !rollbackReservation, "old groups follow the metadata commit")
+				requireAffinityGroupsWithLabelRules(t, s.cli, originalGroups, true, "old groups stay until delete-range GC")
 				requireAffinityGroupsWithLabelRules(t, s.cli, created, rollbackReservation, "all replacement groups follow the DDL outcome")
 			})
 		}
@@ -1313,7 +1322,7 @@ func TestAffinityTruncatePartitionFailure(t *testing.T) {
 	oldID := ddl.GetPartitionAffinityGroupID(store.GetCodec(), beforeMeta.ID, beforeMeta.Partition.Definitions[0].ID)
 	groups, err := affinity.GetGroups(context.Background(), []string{oldID})
 	require.NoError(t, err)
-	require.Empty(t, groups)
+	require.Contains(t, groups, oldID, "old partition affinity group must stay until delete-range GC")
 	require.Eventually(t, func() bool {
 		rows := tk.MustQuery(fmt.Sprintf("select count(*) from (select end_key from mysql.gc_delete_range union all select end_key from mysql.gc_delete_range_done) ranges_to_delete where end_key='%x'", []byte(tablecodec.EncodeTablePrefix(beforeMeta.Partition.Definitions[0].ID+1)))).Rows()
 		return rows[0][0] == "1"
@@ -1768,11 +1777,17 @@ func checkAffinityGroupsInPD(t *testing.T, do *domain.Domain, dbName, tbName str
 }
 
 func TestAffinityPDInteraction(t *testing.T) {
+	ddlutil.EmulatorGCDisable()
+	t.Cleanup(ddlutil.EmulatorGCEnable)
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	cli := &truncateAffinityPDClient{manager: affinity.NewMockManager()}
 	affinity.InitManager(cli)
 	t.Cleanup(func() { affinity.InitManager(nil) })
 	tk := testkit.NewTestKit(t, store)
+	safePoint := time.Now().Add(-48 * time.Hour).Format("20060102-15:04:05 -0700 MST")
+	tk.MustExec("insert into mysql.tidb values ('tikv_gc_safe_point', ?, '') on duplicate key update variable_value = values(variable_value)", safePoint)
+	tk.MustExec("insert into mysql.tidb values ('tikv_gc_enable', 'true', '') on duplicate key update variable_value = values(variable_value)")
 	tk.MustExec("use test")
 	dropTable := func() {
 		tk.MustExec("drop table if exists t1, t2, t3, tp1, tp2, tp3")
@@ -1819,53 +1834,63 @@ func TestAffinityPDInteraction(t *testing.T) {
 	tk.MustExec("alter table t1 affinity = 'table'")
 	checkAffinityGroupsInPD(t, dom, "test", "t1", true)
 
-	// Test 5: Drop table should clean up affinity groups
-	// Get table ID before drop
+	// Test 5: Drop table defers affinity group cleanup to GC and records OldAffinityGroupIDs.
 	t1Info, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	t1ID := t1Info.Meta().ID
+	t1GroupID := ddl.GetTableAffinityGroupID(dom.Store().GetCodec(), t1ID)
 
 	tk.MustExec("drop table t1")
-	// Verify affinity groups are deleted
 	ctx := context.Background()
-	groups, err := affinity.GetGroups(ctx, []string{ddl.GetTableAffinityGroupID(dom.Store().GetCodec(), t1ID)})
+	groups, err := affinity.GetGroups(ctx, []string{t1GroupID})
 	require.NoError(t, err)
-	require.Empty(t, groups, "affinity groups should be deleted after dropping table")
+	require.Contains(t, groups, t1GroupID, "affinity groups should remain until GC after dropping table")
+	dropJob := latestHistoryJobByType(t, tk, model.ActionDropTable)
+	dropArgs, err := model.GetFinishedDropTableArgs(dropJob)
+	require.NoError(t, err)
+	require.Equal(t, []string{t1GroupID}, dropArgs.OldAffinityGroupIDs)
 
-	// Test 6: TRUNCATE TABLE should preserve affinity
+	// Recovering the table within the GC window keeps its original affinity group intact.
+	tk.MustExec("recover table t1")
+	checkAffinityGroupsInPD(t, dom, "test", "t1", true)
+
+	// Test 6: TRUNCATE TABLE creates new affinity group and defers deleting old group to GC.
 	tk.MustExec("create table t2(a int) affinity = 'table'")
 	checkAffinityGroupsInPD(t, dom, "test", "t2", true)
 
 	t2Info, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	oldTableID := t2Info.Meta().ID
+	oldTableGroupID := ddl.GetTableAffinityGroupID(dom.Store().GetCodec(), oldTableID)
 
-	cli.deleteHasDeadline.Store(false)
 	tk.MustExec("truncate table t2")
-	if !cli.deleteHasDeadline.Load() {
-		t.Error("post-commit TRUNCATE cleanup must have a deadline")
-	}
 	checkAffinityGroupsInPD(t, dom, "test", "t2", true)
-	// Old table ID's affinity group should be deleted
-	groups, err = affinity.GetGroups(ctx, []string{ddl.GetTableAffinityGroupID(dom.Store().GetCodec(), oldTableID)})
+	groups, err = affinity.GetGroups(ctx, []string{oldTableGroupID})
 	require.NoError(t, err)
-	require.Empty(t, groups, "old table's affinity groups should be deleted after truncate")
+	require.Contains(t, groups, oldTableGroupID, "old table's affinity groups should remain until GC after truncate")
+	truncJob := latestHistoryJobByType(t, tk, model.ActionTruncateTable)
+	truncArgs, err := model.GetFinishedTruncateTableArgs(truncJob)
+	require.NoError(t, err)
+	require.Equal(t, []string{oldTableGroupID}, truncArgs.OldAffinityGroupIDs)
 
-	// Test 7: TRUNCATE PARTITION should preserve affinity
+	// Test 7: TRUNCATE PARTITION creates new partition group and defers deleting old group to GC.
 	tk.MustExec("create table tp2(a int) affinity = 'partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
 	checkAffinityGroupsInPD(t, dom, "test", "tp2", true)
 
-	// Get partition ID before truncate
 	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp2"))
 	require.NoError(t, err)
 	oldPartitionID := tblInfo.Meta().Partition.Definitions[0].ID
+	oldPartGroupID := ddl.GetPartitionAffinityGroupID(dom.Store().GetCodec(), tblInfo.Meta().ID, oldPartitionID)
 
 	tk.MustExec("alter table tp2 truncate partition p0")
 	checkAffinityGroupsInPD(t, dom, "test", "tp2", true)
-	// Old partition's affinity group should be deleted
-	groups, err = affinity.GetGroups(ctx, []string{ddl.GetPartitionAffinityGroupID(dom.Store().GetCodec(), tblInfo.Meta().ID, oldPartitionID)})
+	groups, err = affinity.GetGroups(ctx, []string{oldPartGroupID})
 	require.NoError(t, err)
-	require.Empty(t, groups, "old partition's affinity group should be deleted after truncate partition")
+	require.Contains(t, groups, oldPartGroupID, "old partition's affinity group should remain until GC after truncate partition")
+	truncPartJob := latestHistoryJobByType(t, tk, model.ActionTruncateTablePartition)
+	truncPartArgs, err := model.GetFinishedTruncateTableArgs(truncPartJob)
+	require.NoError(t, err)
+	require.Equal(t, []string{oldPartGroupID}, truncPartArgs.OldAffinityGroupIDs)
 
 	// Test 8: ALTER TABLE AFFINITY idempotency - partition -> partition
 	tk.MustExec("create table tp3(a int) affinity = 'partition' partition by hash(a) partitions 3")
@@ -1883,8 +1908,14 @@ func TestAffinityPDInteraction(t *testing.T) {
 }
 
 func TestAffinityDropDatabase(t *testing.T) {
+	ddlutil.EmulatorGCDisable()
+	t.Cleanup(ddlutil.EmulatorGCEnable)
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	safePoint := time.Now().Add(-48 * time.Hour).Format("20060102-15:04:05 -0700 MST")
+	tk.MustExec("insert into mysql.tidb values ('tikv_gc_safe_point', ?, '') on duplicate key update variable_value = values(variable_value)", safePoint)
+	tk.MustExec("insert into mysql.tidb values ('tikv_gc_enable', 'true', '') on duplicate key update variable_value = values(variable_value)")
 
 	tk.MustExec("drop database if exists test_affinity_db")
 	tk.MustExec("create database test_affinity_db")
@@ -1907,7 +1938,7 @@ func TestAffinityDropDatabase(t *testing.T) {
 	tp1Info, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test_affinity_db"), ast.NewCIStr("tp1"))
 	require.NoError(t, err)
 
-	// Drop database should clean up all affinity groups
+	// Drop database defers affinity group cleanup to GC and records OldAffinityGroupIDs.
 	tk.MustExec("drop database test_affinity_db")
 
 	ctx := context.Background()
@@ -1918,10 +1949,123 @@ func TestAffinityDropDatabase(t *testing.T) {
 	for _, def := range tp1Info.Meta().Partition.Definitions {
 		groupIDs = append(groupIDs, ddl.GetPartitionAffinityGroupID(codec, tp1Info.Meta().ID, def.ID))
 	}
+	slices.Sort(groupIDs)
 
 	groups, err := affinity.GetGroups(ctx, groupIDs)
 	require.NoError(t, err)
-	require.Empty(t, groups, "all affinity groups should be deleted after dropping database")
+	require.Len(t, groups, len(groupIDs), "all affinity groups should remain until GC after dropping database")
+
+	dropDBJob := latestHistoryJobByType(t, tk, model.ActionDropSchema)
+	dropDBArgs, err := model.GetFinishedDropSchemaArgs(dropDBJob)
+	require.NoError(t, err)
+	require.Equal(t, groupIDs, dropDBArgs.OldAffinityGroupIDs)
+
+	// Recovering the database within the GC window keeps all original affinity groups intact.
+	tk.MustExec("flashback database test_affinity_db")
+	checkAffinityGroupsInPD(t, dom, "test_affinity_db", "t1", true)
+	checkAffinityGroupsInPD(t, dom, "test_affinity_db", "t2", true)
+	checkAffinityGroupsInPD(t, dom, "test_affinity_db", "tp1", true)
+}
+
+func latestHistoryJobByType(t *testing.T, tk *testkit.TestKit, action model.ActionType) *model.Job {
+	t.Helper()
+	rows := tk.MustQuery("select job_meta from mysql.tidb_ddl_history order by job_id desc limit 20").Rows()
+	for _, row := range rows {
+		var job model.Job
+		require.NoError(t, job.Decode([]byte(row[0].(string))))
+		if job.Type == action {
+			return &job
+		}
+	}
+	require.FailNowf(t, "history job not found", "action=%s", action)
+	return nil
+}
+
+func TestParseAffinityGroupID(t *testing.T) {
+	ks42, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+	})
+	require.NoError(t, err)
+	ks43, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 43},
+	})
+	require.NoError(t, err)
+
+	var validCodec tikv.Codec = &mockCodec{}
+	if kerneltype.IsNextGen() {
+		validCodec = ks42
+	}
+
+	const maxID int64 = 1<<63 - 1
+	tableID := int64(123)
+	partID := int64(456)
+	tblGroup := ddl.GetTableAffinityGroupID(validCodec, tableID)
+	partGroup := ddl.GetPartitionAffinityGroupID(validCodec, tableID, partID)
+	maxPartGroup := ddl.GetPartitionAffinityGroupID(validCodec, maxID, maxID)
+
+	gotTID, gotPID, isPart, ok := ddl.ParseAffinityGroupID(validCodec, tblGroup)
+	require.True(t, ok)
+	require.False(t, isPart)
+	require.Equal(t, tableID, gotTID)
+	require.Zero(t, gotPID)
+
+	gotTID, gotPID, isPart, ok = ddl.ParseAffinityGroupID(validCodec, partGroup)
+	require.True(t, ok)
+	require.True(t, isPart)
+	require.Equal(t, tableID, gotTID)
+	require.Equal(t, partID, gotPID)
+
+	gotTID, gotPID, isPart, ok = ddl.ParseAffinityGroupID(validCodec, maxPartGroup)
+	require.True(t, ok)
+	require.True(t, isPart)
+	require.Equal(t, maxID, gotTID)
+	require.Equal(t, maxID, gotPID)
+
+	invalidIDs := []string{
+		"",
+		"_tidb_",
+		"_tidb_t_",
+		"_tidb_t_0",
+		"_tidb_t_-1",
+		"_tidb_t_+1",
+		"_tidb_t_01",
+		"_tidb_t_1_extra",
+		"_tidb_t_9223372036854775808",
+		"_tidb_pt_1",
+		"_tidb_pt_1_p0",
+		"_tidb_pt_0_p1",
+		"_tidb_pt_01_p2",
+		"_tidb_pt_1_p02",
+		"_tidb_pt_1_p2_p3",
+		"_tidb_pt_1_p-2",
+		"custom_group_1",
+		"user_t_123",
+	}
+	if kerneltype.IsNextGen() {
+		invalidIDs = append(invalidIDs,
+			"_tidb_t_123",
+			"_tidb_pt_123_p456",
+			ddl.GetTableAffinityGroupID(ks43, tableID),
+			ddl.GetPartitionAffinityGroupID(ks43, tableID, partID),
+			"_tidb_ks042_t_123",
+			"_tidb_ks42_t_0",
+			"_tidb_ks42_t_01",
+			"_tidb_ks42_pt_123_p0",
+			"_tidb_ks42_pt_0123_p456",
+		)
+	} else {
+		invalidIDs = append(invalidIDs,
+			"_tidb_ks42_t_123",
+			"_tidb_ks42_pt_123_p456",
+		)
+	}
+	for _, id := range invalidIDs {
+		tid, pid, isP, valid := ddl.ParseAffinityGroupID(validCodec, id)
+		require.False(t, valid, "group ID %q must be rejected", id)
+		require.Zero(t, tid)
+		require.Zero(t, pid)
+		require.False(t, isP)
+	}
 }
 
 func TestAffinityCreateTransient503(t *testing.T) {
@@ -2007,4 +2151,195 @@ func TestAffinityPartitionRetryAfterAsyncNotify(t *testing.T) {
 			s.tk.MustExec("admin check table p")
 		})
 	}
+}
+
+type affinity404PDClient struct {
+	pdhttp.Client
+}
+
+func (*affinity404PDClient) notFoundErr() error {
+	return fmt.Errorf("request pd http api failed with status: '%d %s', body: '404 page not found'", http.StatusNotFound, http.StatusText(http.StatusNotFound))
+}
+
+func (c *affinity404PDClient) CreateAffinityGroups(context.Context, map[string][]pdhttp.AffinityGroupKeyRange, ...pdhttp.CreateAffinityGroupsOption) (map[string]*pdhttp.AffinityGroupState, error) {
+	return nil, c.notFoundErr()
+}
+
+func (c *affinity404PDClient) GetAffinityGroups(context.Context, []string) (map[string]*pdhttp.AffinityGroupState, error) {
+	return nil, c.notFoundErr()
+}
+
+func (c *affinity404PDClient) GetAllAffinityGroups(context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
+	return nil, c.notFoundErr()
+}
+
+func (c *affinity404PDClient) BatchDeleteAffinityGroups(context.Context, []string, bool) error {
+	return c.notFoundErr()
+}
+
+func TestShowAffinityAndDDLOnOldPDWithoutAffinityAPI(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_existing_aff(a int) affinity='table'")
+	tk.MustExec("create table t_plain(a int)")
+
+	// Switch to an old PD that does not serve the affinity HTTP API (returns 404).
+	affinity.InitManager(&affinity404PDClient{})
+	t.Cleanup(func() { affinity.InitManager(nil) })
+
+	// SHOW AFFINITY preserves empty/NULL PD state instead of returning a SQL error.
+	tk.MustQuery("show affinity like 't_existing_aff'").Check(
+		testkit.Rows("test t_existing_aff <nil> <nil> <nil> <nil> <nil> <nil>"),
+	)
+
+	// Affinity-creating DDL fails with the PD 404 instead of succeeding without groups.
+	tk.MustContainErrMsg("create table t_new_aff(a int) affinity='table'", "404 page not found")
+	tk.MustQuery("show tables like 't_new_aff'").Check(testkit.Rows())
+	tk.MustContainErrMsg("alter table t_plain affinity='table'", "404 page not found")
+
+	// Reconciler recognizes unsupported PD and skips silently without error.
+	require.NoError(t, ddl.ReconcileAffinityOnceForTest(context.Background(), dom.DDL(), tk.Session()))
+}
+
+func TestAffinityDropDatabaseBoundedJobPayload(t *testing.T) {
+	t.Run("700 affinity tables under 11000-byte entry limit and reconciler cleans overflow", func(t *testing.T) {
+		ddlutil.EmulatorGCDisable()
+		t.Cleanup(ddlutil.EmulatorGCEnable)
+
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		cli := newReconcilePDClient()
+		affinity.InitManager(cli)
+		t.Cleanup(func() { affinity.InitManager(nil) })
+
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create database db_700_aff")
+		tk.MustExec("use db_700_aff")
+
+		// Create 700 affinity tables via concurrent sessions to keep runtime fast.
+		const tableCount = 700
+		const workers = 10
+		errCh := make(chan error, tableCount)
+		var nextIdx atomic.Int32
+		var wg sync.WaitGroup
+		for range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				wtk := testkit.NewTestKit(t, store)
+				wtk.MustExec("use db_700_aff")
+				for {
+					idx := int(nextIdx.Add(1) - 1)
+					if idx >= tableCount {
+						return
+					}
+					if _, err := wtk.Exec(fmt.Sprintf("create table t_%03d(a int) affinity='table'", idx)); err != nil {
+						errCh <- err
+						return
+					}
+				}
+			}()
+		}
+		wg.Wait()
+		close(errCh)
+		for err := range errCh {
+			require.NoError(t, err)
+		}
+
+		codec := store.GetCodec()
+		allGroupIDs := make([]string, 0, tableCount)
+		for i := range tableCount {
+			tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("db_700_aff"), ast.NewCIStr(fmt.Sprintf("t_%03d", i)))
+			require.NoError(t, err)
+			gid := ddl.GetTableAffinityGroupID(codec, tbl.Meta().ID)
+			require.True(t, cli.hasGroup(gid))
+			allGroupIDs = append(allGroupIDs, gid)
+		}
+
+		// Apply a tight 11,000-byte entry-size limit before DROP DATABASE.
+		origLimit := kv.TxnEntrySizeLimit.Load()
+		kv.TxnEntrySizeLimit.Store(11000)
+		t.Cleanup(func() { kv.TxnEntrySizeLimit.Store(origLimit) })
+
+		tk.MustExec("drop database db_700_aff")
+
+		dropDBJob := latestHistoryJobByType(t, tk, model.ActionDropSchema)
+		encoded, err := dropDBJob.Encode(false)
+		require.NoError(t, err)
+		require.Less(t, len(encoded), 11000, "DROP DATABASE job_meta must stay below 11,000-byte entry limit")
+		dropDBArgs, err := model.GetFinishedDropSchemaArgs(dropDBJob)
+		require.NoError(t, err)
+		require.Len(t, dropDBArgs.AllDroppedTableIDs, tableCount)
+		require.Less(t, len(dropDBArgs.OldAffinityGroupIDs), tableCount, "OldAffinityGroupIDs must be bounded under 11,000-byte entry limit")
+
+		// Restore entry limit and simulate GC completing delete ranges for the dropped DB.
+		kv.TxnEntrySizeLimit.Store(origLimit)
+		if len(dropDBArgs.OldAffinityGroupIDs) > 0 {
+			require.NoError(t, affinity.DeleteGroups(context.Background(), dropDBArgs.OldAffinityGroupIDs))
+		}
+		tk.MustExec("delete from mysql.gc_delete_range where job_id = ?", dropDBJob.ID)
+
+		// Reconciler must clean up all overflow groups in two consecutive rounds.
+		zeroGrace := time.Duration(0)
+		restore := ddl.ConfigureAffinityReconcilerForTest(dom.DDL(), ddl.AffinityReconcilerConfigForTest{
+			GracePeriod: &zeroGrace,
+		})
+		t.Cleanup(restore)
+		require.NoError(t, ddl.ReconcileAffinityOnceForTest(context.Background(), dom.DDL(), tk.Session()))
+		require.NoError(t, ddl.ReconcileAffinityOnceForTest(context.Background(), dom.DDL(), tk.Session()))
+		for _, gid := range allGroupIDs {
+			require.False(t, cli.hasGroup(gid), "overflow group %s must be cleaned up by reconciler after GC", gid)
+		}
+	})
+
+	t.Run("1024 tables x 256 partitions stays well below 6 MiB in V1 and V2", func(t *testing.T) {
+		const (
+			tables     = 1024
+			partitions = 256
+			totalIDs   = tables * (partitions + 1)
+			sixMiB     = 6 * 1024 * 1024
+		)
+		allDroppedTableIDs := make([]int64, 0, totalIDs)
+		allGroupIDs := make([]string, 0, tables*partitions)
+		nextID := int64(10000)
+		for range tables {
+			tid := nextID
+			nextID++
+			allDroppedTableIDs = append(allDroppedTableIDs, tid)
+			for range partitions {
+				pid := nextID
+				nextID++
+				allDroppedTableIDs = append(allDroppedTableIDs, pid)
+				allGroupIDs = append(allGroupIDs, fmt.Sprintf("_tidb_pt_%d_p%d", tid, pid))
+			}
+		}
+
+		for _, ver := range []model.JobVersion{model.JobVersion1, model.JobVersion2} {
+			job := &model.Job{
+				ID:         99999,
+				Version:    ver,
+				Type:       model.ActionDropSchema,
+				SchemaID:   42,
+				SchemaName: "db_large_aff",
+				State:      model.JobStateDone,
+			}
+			args := &model.DropSchemaArgs{AllDroppedTableIDs: allDroppedTableIDs}
+			job.FillFinishedArgs(args)
+			args.OldAffinityGroupIDs = ddl.BoundOldAffinityGroupIDsForJobForTest(job, allGroupIDs)
+			job.FillFinishedArgs(args)
+
+			encoded, err := job.Encode(true)
+			require.NoError(t, err)
+			require.NotEmpty(t, args.OldAffinityGroupIDs)
+			require.Less(t, len(args.OldAffinityGroupIDs), len(allGroupIDs))
+			require.Less(t, len(encoded), 3*1024*1024, "version=%v encoded job (%d bytes) must stay well below 6 MiB (%d)", ver, len(encoded), sixMiB)
+
+			var decoded model.Job
+			require.NoError(t, decoded.Decode(encoded))
+			decodedArgs, err := model.GetFinishedDropSchemaArgs(&decoded)
+			require.NoError(t, err)
+			require.Len(t, decodedArgs.AllDroppedTableIDs, totalIDs)
+			require.Equal(t, args.OldAffinityGroupIDs, decodedArgs.OldAffinityGroupIDs)
+		}
+	})
 }

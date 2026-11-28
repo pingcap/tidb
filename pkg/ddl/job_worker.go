@@ -95,6 +95,7 @@ type jobContext struct {
 	eventPublishStore             notifier.Store
 	sysTblMgr                     systable.Manager
 	storageClassTransitionManager *storageClassTransitionManager
+	affinityPDGate                *affinityPDGate
 
 	// per job fields, they are not changed in the life cycle of this context.
 
@@ -780,8 +781,6 @@ func (w *worker) transitOneJobStep(
 			switch job.Type {
 			case model.ActionMViewRefreshOutOfPlaceCutover:
 				w.cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx, job)
-			case model.ActionTruncateTable:
-				cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx, job)
 			case model.ActionAlterTableAffinity:
 				cleanupAlterTableAffinityGroupsAfterCommit(jobCtx, job)
 			}

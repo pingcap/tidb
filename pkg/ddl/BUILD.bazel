@@ -13,6 +13,7 @@ go_library(
     srcs = [
         "add_column.go",
         "affinity.go",
+        "affinity_reconcile.go",
         "backfill_metrics.go",
         "backfilling.go",
         "backfilling_clean_s3.go",
@@ -257,6 +258,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "affinity_internal_test.go",
+        "affinity_reconcile_test.go",
         "affinity_test.go",
         "attributes_sql_test.go",
         "backfill_metrics_test.go",

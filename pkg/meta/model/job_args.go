@@ -144,7 +144,8 @@ type DropSchemaArgs struct {
 	// this is the args for job submission, it's invalid if the job is finished.
 	FKCheck bool `json:"fk_check,omitempty"`
 	// this is the args for finished job. this list include all partition IDs too.
-	AllDroppedTableIDs []int64 `json:"all_dropped_table_ids,omitempty"`
+	AllDroppedTableIDs  []int64  `json:"all_dropped_table_ids,omitempty"`
+	OldAffinityGroupIDs []string `json:"old_affinity_group_ids,omitempty"`
 }
 
 func (a *DropSchemaArgs) getArgsV1(*Job) []any {
@@ -152,6 +153,9 @@ func (a *DropSchemaArgs) getArgsV1(*Job) []any {
 }
 
 func (a *DropSchemaArgs) getFinishedArgsV1(*Job) []any {
+	if len(a.OldAffinityGroupIDs) > 0 {
+		return []any{a.AllDroppedTableIDs, a.OldAffinityGroupIDs}
+	}
 	return []any{a.AllDroppedTableIDs}
 }
 
@@ -167,11 +171,17 @@ func GetDropSchemaArgs(job *Job) (*DropSchemaArgs, error) {
 // GetFinishedDropSchemaArgs gets the args for drop schema job after the job is finished.
 func GetFinishedDropSchemaArgs(job *Job) (*DropSchemaArgs, error) {
 	if job.Version == JobVersion1 {
-		var physicalTableIDs []int64
-		if err := job.decodeArgs(&physicalTableIDs); err != nil {
+		var (
+			physicalTableIDs    []int64
+			oldAffinityGroupIDs []string
+		)
+		if err := job.decodeArgs(&physicalTableIDs, &oldAffinityGroupIDs); err != nil {
 			return nil, err
 		}
-		return &DropSchemaArgs{AllDroppedTableIDs: physicalTableIDs}, nil
+		return &DropSchemaArgs{
+			AllDroppedTableIDs:  physicalTableIDs,
+			OldAffinityGroupIDs: oldAffinityGroupIDs,
+		}, nil
 	}
 	return getOrDecodeArgsV2[*DropSchemaArgs](job)
 }
@@ -328,9 +338,10 @@ type DropTableArgs struct {
 	FKCheck     bool        `json:"fk_check,omitempty"`
 
 	// below fields are finished job args
-	StartKey        []byte   `json:"start_key,omitempty"`
-	OldPartitionIDs []int64  `json:"old_partition_ids,omitempty"`
-	OldRuleIDs      []string `json:"old_rule_ids,omitempty"`
+	StartKey            []byte   `json:"start_key,omitempty"`
+	OldPartitionIDs     []int64  `json:"old_partition_ids,omitempty"`
+	OldRuleIDs          []string `json:"old_rule_ids,omitempty"`
+	OldAffinityGroupIDs []string `json:"old_affinity_group_ids,omitempty"`
 }
 
 func (a *DropTableArgs) getArgsV1(job *Job) []any {
@@ -343,6 +354,9 @@ func (a *DropTableArgs) getArgsV1(job *Job) []any {
 }
 
 func (a *DropTableArgs) getFinishedArgsV1(*Job) []any {
+	if len(a.OldAffinityGroupIDs) > 0 {
+		return []any{a.StartKey, a.OldPartitionIDs, a.OldRuleIDs, a.OldAffinityGroupIDs}
+	}
 	return []any{a.StartKey, a.OldPartitionIDs, a.OldRuleIDs}
 }
 
@@ -363,17 +377,19 @@ func GetDropTableArgs(job *Job) (*DropTableArgs, error) {
 func GetFinishedDropTableArgs(job *Job) (*DropTableArgs, error) {
 	if job.Version == JobVersion1 {
 		var (
-			startKey        []byte
-			oldPartitionIDs []int64
-			oldRuleIDs      []string
+			startKey            []byte
+			oldPartitionIDs     []int64
+			oldRuleIDs          []string
+			oldAffinityGroupIDs []string
 		)
-		if err := job.decodeArgs(&startKey, &oldPartitionIDs, &oldRuleIDs); err != nil {
+		if err := job.decodeArgs(&startKey, &oldPartitionIDs, &oldRuleIDs, &oldAffinityGroupIDs); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &DropTableArgs{
-			StartKey:        startKey,
-			OldPartitionIDs: oldPartitionIDs,
-			OldRuleIDs:      oldRuleIDs,
+			StartKey:            startKey,
+			OldPartitionIDs:     oldPartitionIDs,
+			OldRuleIDs:          oldRuleIDs,
+			OldAffinityGroupIDs: oldAffinityGroupIDs,
 		}, nil
 	}
 	return getOrDecodeArgsV2[*DropTableArgs](job)
@@ -387,7 +403,8 @@ type TruncateTableArgs struct {
 	OldPartitionIDs []int64 `json:"old_partition_ids,omitempty"`
 	// AffinityGroupsPrepared records that TRUNCATE PARTITION already created
 	// the replacement affinity groups in PD before publishing their IDs.
-	AffinityGroupsPrepared bool `json:"affinity_groups_prepared,omitempty"`
+	AffinityGroupsPrepared bool     `json:"affinity_groups_prepared,omitempty"`
+	OldAffinityGroupIDs    []string `json:"old_affinity_group_ids,omitempty"`
 
 	// context vars
 	NewPartIDsWithPolicy           []int64 `json:"-"`
@@ -413,7 +430,7 @@ func (a *TruncateTableArgs) decodeV1(job *Job) error {
 	if job.Type == ActionTruncateTable {
 		return errors.Trace(job.decodeArgs(&a.NewTableID, &a.FKCheck, &a.NewPartitionIDs))
 	}
-	return errors.Trace(job.decodeArgs(&a.OldPartitionIDs, &a.NewPartitionIDs, &a.AffinityGroupsPrepared))
+	return errors.Trace(job.decodeArgs(&a.OldPartitionIDs, &a.NewPartitionIDs, &a.AffinityGroupsPrepared, &a.OldAffinityGroupIDs))
 }
 
 func (a *TruncateTableArgs) getFinishedArgsV1(job *Job) []any {
@@ -421,7 +438,20 @@ func (a *TruncateTableArgs) getFinishedArgsV1(job *Job) []any {
 		// the first param is the start key of the old table, it's not used anywhere
 		// now, so we fill an empty byte slice here.
 		// we can call tablecodec.EncodeTablePrefix(tableID) to get it.
+		if len(a.OldAffinityGroupIDs) > 0 {
+			return []any{[]byte{}, a.OldPartitionIDs, a.OldAffinityGroupIDs}
+		}
 		return []any{[]byte{}, a.OldPartitionIDs}
+	}
+	if len(a.OldAffinityGroupIDs) > 0 {
+		// Keep V1 slot 2 as NewPartitionIDs ([]int64) and V1 slot 3 as
+		// AffinityGroupsPrepared (bool) so callers using GetTruncateTableArgs
+		// (including 3-slot decoders) decode finished ActionTruncateTablePartition
+		// jobs cleanly, and place OldAffinityGroupIDs at V1 slot 4.
+		return []any{a.OldPartitionIDs, a.NewPartitionIDs, a.AffinityGroupsPrepared, a.OldAffinityGroupIDs}
+	}
+	if a.AffinityGroupsPrepared {
+		return []any{a.OldPartitionIDs, a.NewPartitionIDs, a.AffinityGroupsPrepared}
 	}
 	return []any{a.OldPartitionIDs}
 }
@@ -435,18 +465,34 @@ func GetTruncateTableArgs(job *Job) (*TruncateTableArgs, error) {
 func GetFinishedTruncateTableArgs(job *Job) (*TruncateTableArgs, error) {
 	if job.Version == JobVersion1 {
 		if job.Type == ActionTruncateTable {
-			var startKey []byte
-			var oldPartitionIDs []int64
-			if err := job.decodeArgs(&startKey, &oldPartitionIDs); err != nil {
+			var (
+				startKey            []byte
+				oldPartitionIDs     []int64
+				oldAffinityGroupIDs []string
+			)
+			if err := job.decodeArgs(&startKey, &oldPartitionIDs, &oldAffinityGroupIDs); err != nil {
 				return nil, errors.Trace(err)
 			}
-			return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
+			return &TruncateTableArgs{
+				OldPartitionIDs:     oldPartitionIDs,
+				OldAffinityGroupIDs: oldAffinityGroupIDs,
+			}, nil
 		}
-		var oldPartitionIDs []int64
-		if err := job.decodeArgs(&oldPartitionIDs); err != nil {
+		var (
+			oldPartitionIDs        []int64
+			newPartitionIDs        []int64
+			affinityGroupsPrepared bool
+			oldAffinityGroupIDs    []string
+		)
+		if err := job.decodeArgs(&oldPartitionIDs, &newPartitionIDs, &affinityGroupsPrepared, &oldAffinityGroupIDs); err != nil {
 			return nil, errors.Trace(err)
 		}
-		return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
+		return &TruncateTableArgs{
+			OldPartitionIDs:        oldPartitionIDs,
+			NewPartitionIDs:        newPartitionIDs,
+			AffinityGroupsPrepared: affinityGroupsPrepared,
+			OldAffinityGroupIDs:    oldAffinityGroupIDs,
+		}, nil
 	}
 
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
@@ -817,20 +863,30 @@ type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
 	ExpectedLastSuccessReadTSONull     bool                 `json:"expected_last_success_read_tso_null,omitempty"`
 	NextRefreshUnixSeconds             *int64               `json:"next_refresh_unix_seconds,omitempty"`
 	ShouldUpdateNextRefreshUnixSeconds bool                 `json:"should_update_next_refresh_unix_seconds,omitempty"`
-	// OldMViewHasAffinity is recorded at cutover for post-commit cleanup.
-	OldMViewHasAffinity bool `json:"old_mview_has_affinity,omitempty"`
+	// OldMViewHasAffinity is retained at V1 slot 12 for compatibility with jobs written before GC-based cleanup.
+	OldMViewHasAffinity bool     `json:"old_mview_has_affinity,omitempty"`
+	OldAffinityGroupIDs []string `json:"old_affinity_group_ids,omitempty"`
 }
 
 func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) []any {
-	return []any{a.OldMViewID, a.ShadowTableID, a.BuildReadTSO, a.ExpectedLastSuccessReadTSO,
+	args := []any{a.OldMViewID, a.ShadowTableID, a.BuildReadTSO, a.ExpectedLastSuccessReadTSO,
 		a.ExpectedLastSuccessReadTSONull, a.NextRefreshUnixSeconds, a.ShouldUpdateNextRefreshUnixSeconds,
-		a.ExpectedOldMViewRevision, a.BuildSources, a.OldMLogID, a.NewMLogID, a.OldMViewHasAffinity}
+		a.ExpectedOldMViewRevision, a.BuildSources, a.OldMLogID, a.NewMLogID}
+	if len(a.OldAffinityGroupIDs) > 0 {
+		// Keep V1 slot 12 aligned with OldMViewHasAffinity (bool) and place
+		// OldAffinityGroupIDs at V1 slot 13 for cross-version/PR compatibility.
+		args = append(args, a.OldMViewHasAffinity, a.OldAffinityGroupIDs)
+	} else if a.OldMViewHasAffinity {
+		args = append(args, a.OldMViewHasAffinity)
+	}
+	return args
 }
 
 func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) decodeV1(job *Job) error {
 	return errors.Trace(job.decodeArgs(&a.OldMViewID, &a.ShadowTableID, &a.BuildReadTSO,
 		&a.ExpectedLastSuccessReadTSO, &a.ExpectedLastSuccessReadTSONull, &a.NextRefreshUnixSeconds,
-		&a.ShouldUpdateNextRefreshUnixSeconds, &a.ExpectedOldMViewRevision, &a.BuildSources, &a.OldMLogID, &a.NewMLogID, &a.OldMViewHasAffinity))
+		&a.ShouldUpdateNextRefreshUnixSeconds, &a.ExpectedOldMViewRevision, &a.BuildSources, &a.OldMLogID, &a.NewMLogID,
+		&a.OldMViewHasAffinity, &a.OldAffinityGroupIDs))
 }
 
 // GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs gets cutover args.

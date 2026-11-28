@@ -54,6 +54,7 @@ func TestAffinityCreateRetry(t *testing.T) {
 		{"503_then_success", []error{pdStatusErr(http.StatusServiceUnavailable)}, 2},
 		{"network_then_success", []error{errors.New("connection reset")}, 2},
 		{"client_error", []error{pdStatusErr(http.StatusBadRequest)}, 1},
+		{"unsupported_pd", []error{pdStatusErr(http.StatusNotFound)}, 1},
 		{"retry_limit", []error{pdStatusErr(503), pdStatusErr(503), pdStatusErr(503), pdStatusErr(503)}, maxRetryTimes + 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -108,4 +109,44 @@ func TestAffinityRetryCancelledContext(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestGetAllGroupsAndIsUnsupportedError(t *testing.T) {
+	prevManager, prevClient := manager, pdClient
+	t.Cleanup(func() {
+		manager = prevManager
+		pdClient = prevClient
+	})
+
+	InitManager(nil)
+	require.NoError(t, CreateGroupsIfNotExists(context.Background(), map[string][]pdhttp.AffinityGroupKeyRange{
+		"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+	}))
+	all, err := GetAllGroups(context.Background())
+	require.NoError(t, err)
+	require.Contains(t, all, "g1")
+
+	//nolint:staticcheck // SA1012: intentionally test nil context normalization
+	all, err = GetAllGroups(nil)
+	require.NoError(t, err)
+	require.Contains(t, all, "g1")
+
+	require.False(t, IsUnsupportedError(nil))
+	require.True(t, IsUnsupportedError(pdStatusErr(http.StatusNotFound)))
+	require.True(t, IsUnsupportedError(pdStatusErr(http.StatusMethodNotAllowed)))
+	require.True(t, IsUnsupportedError(pdStatusErr(http.StatusNotImplemented)))
+	require.True(t, IsUnsupportedError(pdHTTPServiceErr("404 page not found")))
+	require.True(t, IsUnsupportedError(errors.New("Method Not Allowed")))
+	require.True(t, IsUnsupportedError(errors.New("Not Implemented")))
+
+	require.False(t, IsUnsupportedError(pdStatusErr(http.StatusInternalServerError)))
+	require.False(t, IsUnsupportedError(pdStatusErr(http.StatusServiceUnavailable)))
+	require.False(t, IsUnsupportedError(pdStatusErr(http.StatusBadRequest)))
+	require.False(t, IsUnsupportedError(fmt.Errorf("request pd http api failed with status: '500 Internal Server Error', body: 'unsupported internal state'")))
+	require.False(t, IsUnsupportedError(fmt.Errorf("request pd http api failed with status: '503 Service Unavailable', body: 'unsupported temporarily'")))
+	require.False(t, IsUnsupportedError(pdHTTPServiceErr("affinity api unsupported")))
+	require.False(t, IsUnsupportedError(errors.New("unsupported codec error")))
+	require.False(t, IsUnsupportedError(context.DeadlineExceeded))
+	require.False(t, IsUnsupportedError(errors.New("dial tcp 127.0.0.1:2379: connect: connection refused")))
+	require.False(t, IsUnsupportedError(pdHTTPServiceErr("mock service error")))
 }

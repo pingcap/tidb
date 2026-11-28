@@ -489,11 +489,11 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 	case model.StateDeleteOnly:
 		dbInfo.State = model.StateNone
 		var (
-			miniTables         []*notifier.MiniTableInfoForSchemaEvent
-			mviewIDs           []int64
-			mlogIDs            []int64
-			allDroppedTableIDs []int64
-			affinityErr        error
+			miniTables              []*notifier.MiniTableInfoForSchemaEvent
+			mviewIDs                []int64
+			mlogIDs                 []int64
+			allDroppedTableIDs      []int64
+			truncatedAffinityGroups bool
 		)
 		affinityGroupIDs := make(map[string]struct{})
 		allDroppedTableIDs = make([]int64, 0)
@@ -503,8 +503,17 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 				return err
 			}
 			miniTables = append(miniTables, notifier.NewMiniTableInfoForSchemaEvent(tblInfo))
-			if tblInfo.Affinity != nil && affinityErr == nil {
-				affinityErr = collectTableAffinityGroupIDs(codec, tblInfo, affinityGroupIDs)
+			if tblInfo.Affinity != nil {
+				truncated, affinityErr := collectTableAffinityGroupIDsCapped(codec, tblInfo, affinityGroupIDs, maxPersistedAffinityGroupIDs)
+				if truncated {
+					truncatedAffinityGroups = true
+				}
+				if affinityErr != nil {
+					logutil.DDLLogger().Warn("failed to collect affinity group IDs for table in drop database, continuing with other tables",
+						zap.Error(affinityErr),
+						zap.Int64("databaseID", dbInfo.ID),
+						zap.Int64("tableID", tblInfo.ID))
+				}
 			}
 			if tblInfo.MaterializedView != nil {
 				mviewIDs = append(mviewIDs, tblInfo.ID)
@@ -519,15 +528,8 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			return ver, errors.Trace(err)
 		}
 
-		// Best-effort cleanup - log errors but continue with DROP DATABASE
-		if affinityErr == nil {
-			affinityErr = batchDeleteTableAffinityGroups(jobCtx, affinityGroupIDs)
-		}
-		if affinityErr != nil {
-			logutil.DDLLogger().Warn("failed to delete affinity groups for batch tables, but operation will continue",
-				zap.Error(affinityErr),
-				zap.Int64("databaseID", dbInfo.ID))
-		}
+		// Keep affinity groups until delete-range GC so flashback/recover can retain
+		// the dropped database's affinity groups. doGCAffinityGroups removes them later.
 
 		// Clean up masking policies for all tables in the dropped database.
 		if err := w.dropMaskingPoliciesByDBName(jobCtx, job.SchemaName); err != nil {
@@ -577,10 +579,22 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			}
 		}
 		// Finish this job.
-		job.FillFinishedArgs(&model.DropSchemaArgs{
-			AllDroppedTableIDs: allDroppedTableIDs,
-		})
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, dbInfo)
+		dropSchemaArgs := &model.DropSchemaArgs{
+			AllDroppedTableIDs: allDroppedTableIDs,
+		}
+		job.FillFinishedArgs(dropSchemaArgs)
+		candidates := sortedAffinityGroupIDs(affinityGroupIDs)
+		bounded := boundOldAffinityGroupIDsForJob(job, candidates)
+		if truncatedAffinityGroups || len(bounded) < len(candidates) {
+			logutil.DDLLogger().Info("truncated persisted old affinity group IDs in drop schema job args; remaining groups will be cleaned up by affinity reconciler after GC",
+				zap.Int64("jobID", job.ID),
+				zap.Int64("databaseID", dbInfo.ID),
+				zap.Int("persistedCount", len(bounded)),
+				zap.Int("collectedCount", len(candidates)))
+		}
+		dropSchemaArgs.OldAffinityGroupIDs = bounded
+		job.FillFinishedArgs(dropSchemaArgs)
 	default:
 		// We can't enter here.
 		return ver, errors.Trace(errors.Errorf("invalid db state %v", dbInfo.State))

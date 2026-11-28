@@ -367,7 +367,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, args.OldPhysicalTblIDs, ea, "reorganize partition: physical table ID(s)"))
 	case model.ActionTruncateTablePartition:
-		args, err := model.GetTruncateTableArgs(job)
+		args, err := model.GetFinishedTruncateTableArgs(job)
 		if err != nil {
 			return errors.Trace(err)
 		}

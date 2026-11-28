@@ -744,7 +744,21 @@ func TestMaterializedViewOutOfPlaceCutoverFailureKeepsOldAffinityGroup(t *testin
 	require.Equal(t, shadowTableID, newMView.Meta().ID)
 	groups, err = affinity.GetGroups(context.Background(), []string{oldAffinityGroupID})
 	require.NoError(t, err)
-	require.NotContains(t, groups, oldAffinityGroupID)
+	require.Contains(t, groups, oldAffinityGroupID, "old materialized view affinity group stays until delete-range GC")
+	rows := tk.MustQuery("select job_meta from mysql.tidb_ddl_history order by job_id desc limit 10").Rows()
+	var cutoverJob *model.Job
+	for _, row := range rows {
+		var j model.Job
+		require.NoError(t, j.Decode([]byte(row[0].(string))))
+		if j.Type == model.ActionMViewRefreshOutOfPlaceCutover && j.IsSynced() {
+			cutoverJob = &j
+			break
+		}
+	}
+	require.NotNil(t, cutoverJob)
+	cutoverArgs, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(cutoverJob)
+	require.NoError(t, err)
+	require.Equal(t, []string{oldAffinityGroupID}, cutoverArgs.OldAffinityGroupIDs)
 }
 
 func TestMaterializedViewShadowManualDrop(t *testing.T) {
