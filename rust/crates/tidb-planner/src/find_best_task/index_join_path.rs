@@ -760,7 +760,7 @@ pub(crate) fn index_join_path_count_after_access_4_compare(
     count_after_access: f64,
     inner_table_stats: Option<&tidb_planner_property::stats_info::StatsInfo>,
     full_idx_cols: &[Option<(Column, i64)>],
-    const_col_ids: &[i64],
+    const_cols: &[bool],
     idx_off2_key_off: &[i64],
     used_cols_len: usize,
 ) -> (f64, bool) {
@@ -782,7 +782,8 @@ pub(crate) fn index_join_path_count_after_access_4_compare(
         };
         join_key = Some(column);
         join_key_cols_seen += 1;
-        if !const_col_ids.contains(&column.unique_id) {
+        // Go `path.ConstCols[idxOff]`.
+        if !const_cols.get(idx_off).copied().unwrap_or(false) {
             need_ndv_adjust = true;
         }
     }

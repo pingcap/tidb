@@ -465,6 +465,15 @@ pub(crate) fn detach_table_path(
         }
         detached
     };
+    // Go `detachCondAndBuildRangeForPath` fills `ConstCols` for the
+    // common-handle path it builds ranges for.
+    path.const_cols = if common_index.is_some() {
+        (0..common_columns.len())
+            .map(|i| detached.column_values.get(i).is_some_and(Option::is_some))
+            .collect()
+    } else {
+        Vec::new()
+    };
     path.idx_cols = common_columns;
     path.ranges = detached.ranges;
     path.access_conds = detached.access_conds;

@@ -2204,7 +2204,7 @@ impl OrderMatch {
 /// `ConstCols`).
 fn match_sort_items(
     columns: &[(tidb_expr::column::Column, i64)],
-    fixed: &[i64],
+    const_cols: &[bool],
     prop: &PhysicalProperty,
     ranges: Option<&tidb_ranger::types::Ranges>,
 ) -> OrderMatch {
@@ -2224,8 +2224,9 @@ fn match_sort_items(
                 col_idx += 1;
                 break;
             }
-            // Case 2: a single constant on this column; skip it.
-            if fixed.contains(&column.unique_id) {
+            // Case 2: the accessed range on this index column is a single
+            // constant value (Go `path.ConstCols[colIdx]`); skip it.
+            if const_cols.get(col_idx).copied().unwrap_or(false) {
                 col_idx += 1;
                 continue;
             }
@@ -2369,11 +2370,20 @@ pub(super) fn table_path_matches_order(
         .zip(&ds.common_handle_lens)
         .map(|(column, length)| (column.clone(), *length))
         .collect::<Vec<_>>();
-    let mut fixed = equality_fixed_ids(ds);
-    if let Some(path) = ds.tikv_table_path() {
-        fixed.extend_from_slice(&path.const_col_ids);
-    }
-    match_sort_items(&columns, &fixed, prop, grouping_ranges(ds, ranges))
+    // Go `path.ConstCols` of the common-handle table path
+    // (`detachCondAndBuildRangeForPath`, `markConstCol`), by position.
+    let const_cols = match ds.tikv_table_path() {
+        Some(path) => columns
+            .iter()
+            .enumerate()
+            .map(|(position, (column, _))| {
+                path.const_cols.get(position).copied().unwrap_or(false)
+                    || path.const_col_ids.contains(&column.unique_id)
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    match_sort_items(&columns, &const_cols, prop, grouping_ranges(ds, ranges))
 }
 
 pub(super) fn index_path_matches_order(
@@ -2409,11 +2419,20 @@ pub(super) fn index_path_matches_order(
             }
         }
     }
-    let mut fixed = equality_fixed_ids(ds);
-    if let Some(path) = ds.path_by_index_id(index.read().id) {
-        fixed.extend_from_slice(&path.const_col_ids);
-    }
-    match_sort_items(&columns, &fixed, prop, grouping_ranges(ds, ranges))
+    // Go `path.ConstCols`: the ranger's single values and `markConstCol`'s
+    // marks, by position in the path's `IdxCols`.
+    let const_cols = match ds.path_by_index_id(index.read().id) {
+        Some(path) => columns
+            .iter()
+            .enumerate()
+            .map(|(position, (column, _))| {
+                path.const_cols.get(position).copied().unwrap_or(false)
+                    || path.const_col_ids.contains(&column.unique_id)
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    match_sort_items(&columns, &const_cols, prop, grouping_ranges(ds, ranges))
 }
 
 /// Go `AddExtraPhysTblIDColumn`: appends the partition id an index entry or
@@ -2634,35 +2653,6 @@ pub(super) fn match_partial_order_property(
     })
 }
 
-fn equality_fixed_ids(ds: &tidb_planner_core_operator_logicalop::DataSource) -> Vec<i64> {
-    use tidb_expr::expression::Expression;
-    let mut ids = Vec::new();
-    for condition in &ds.pushed_down_conds {
-        let Expression::ScalarFunction(function) = condition else {
-            continue;
-        };
-        // Go `extractValueInfo` (ranger `ColumnValues`, hence `ConstCols`):
-        // `isnull(col)`, or `eq` / `nulleq` against a `Constant`. A correlated
-        // equality pins its column only through the access path
-        // (`AccessPath::const_col_ids`, Go `markConstCol`).
-        let name = function.func_name.lowercase();
-        let id = match function.get_args() {
-            [Expression::Column(column)] if name == "isnull" => Some(column.unique_id),
-            [Expression::Column(column), Expression::Constant(_)]
-            | [Expression::Constant(_), Expression::Column(column)]
-                if name == "eq" || name == "nulleq" =>
-            {
-                Some(column.unique_id)
-            }
-            _ => None,
-        };
-        if let Some(id) = id {
-            ids.push(id);
-        }
-    }
-    ids
-}
-
 /// Go `indexJoinPathResult`: one inner path's index-join build together with
 /// what `indexJoinPathCompare` and the inner task read from the DataSource.
 pub(super) struct IndexJoinPathResult {
@@ -2875,7 +2865,19 @@ fn index_join_candidate(
             candidate.count_after_access,
             ds.table_stats.as_ref(),
             full_idx_cols,
-            &equality_fixed_ids(ds),
+            &state.map_or_else(Vec::new, |path| {
+                // Go `path.ConstCols`: the ranger's single values and
+                // `markConstCol`'s marks, by index position.
+                (0..full_idx_cols.len())
+                    .map(|position| {
+                        path.const_cols.get(position).copied().unwrap_or(false)
+                            || path
+                                .idx_cols
+                                .get(position)
+                                .is_some_and(|(column, _)| path.const_col_ids.contains(&column.unique_id))
+                    })
+                    .collect()
+            }),
             &core.idx_off2_key_off,
             core.index_join_cols,
         );
@@ -7881,7 +7883,7 @@ mod tests {
         let mut base = BaseLogicalPlan::with_id(1, "DataSource", 0);
         base.base.set_stats(Some(StatsInfo::new(100.0, [])));
         base.base.set_schema(Some(Schema::new(vec![a.clone(), b])));
-        let source = DataSource {
+        let mut source = DataSource {
             table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 columns: vec![
                     tidb_model::IndexColumn {
@@ -7934,6 +7936,10 @@ mod tests {
             ).unwrap()],
             ..DataSource::default()
         };
+        // Go `path.ConstCols`: `a = 1` pins the path's first column.
+        let mut path = tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone());
+        path.const_cols = vec![true, false];
+        source.all_possible_access_paths = vec![path];
         let order_by_b = PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[12]), false, f64::MAX, false);
 
         assert!(index_path_matches_order(&source, &source.table_indices()[0], &order_by_b, None).matched());
@@ -7954,7 +7960,7 @@ mod tests {
         let mut base = BaseLogicalPlan::with_id(1, "DataSource", 0);
         base.base
             .set_schema(Some(Schema::new(vec![warehouse.clone(), district.clone()])));
-        let source = DataSource {
+        let mut source = DataSource {
             base,
             pushed_down_conds: vec![tidb_expr::new_function_base(
                 &tidb_exprctx::NoColumns,
@@ -7972,6 +7978,11 @@ mod tests {
             common_handle_lens: vec![UNSPECIFIED_LENGTH; 2],
             ..DataSource::default()
         };
+        // Go `path.ConstCols` of the common-handle table path: `warehouse =
+        // 1` pins its first column.
+        let mut path = tidb_planner_util::path::AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, true, None);
+        path.const_cols = vec![true, false];
+        source.all_possible_access_paths = vec![path];
         let order_by_district =
             PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[12]), false, f64::MAX, false);
 
