@@ -296,6 +296,7 @@ impl WriterBuilder {
             store,
             kv_buffer: self.new_buffer(),
             kv_locations: Vec::new(),
+            common_prefix: Vec::new(),
             kv_size: 0,
             current_seq: 0,
             rnd: tidb_go_rand::Rand::new(get_hash(&filename_prefix)),
@@ -477,6 +478,29 @@ pub fn get_max_overlapping_total(stats: &[MultipleFilesStat]) -> i64 {
 
 /// Go `Writer`: buffers KV pairs and, whenever its buffer is full, sorts
 /// them into a new data file and stat file.
+/// Go `keyHintBytes`.
+const KEY_HINT_BYTES: usize = 8;
+
+/// Go `condenseLocation` (4239a9df1b5): a buffered KV's location with an
+/// eight-byte sort hint, so full 64-bit integer handles (including
+/// AUTO_RANDOM and SHARD_ROW_ID_BITS keys, whose high shard bits and low row
+/// IDs are separated by zero bytes) compare in registers without reading the
+/// buffer. Go drops the slice length (its buffer reads to the block end);
+/// Rust's buffer hands out bounded slices, so the location keeps it.
+#[derive(Clone, Copy, Default)]
+struct CondenseLocation {
+    key_hint: u64,
+    loc: SliceLocation,
+}
+
+impl std::ops::Deref for CondenseLocation {
+    type Target = SliceLocation;
+
+    fn deref(&self) -> &SliceLocation {
+        &self.loc
+    }
+}
+
 pub struct Writer {
     store: Arc<dyn Storage>,
     writer_id: String,
@@ -486,8 +510,11 @@ pub struct Writer {
     rnd: tidb_go_rand::Rand,
     rc: RangePropertiesCollector,
     kv_buffer: Buffer,
-    kv_locations: Vec<SliceLocation>,
+    kv_locations: Vec<CondenseLocation>,
     kv_size: i64,
+    /// Go `commonPrefix`: the common prefix of all keys written since the
+    /// last flush.
+    common_prefix: Vec<u8>,
     on_close: OnWriterCloseFunc,
     on_dup: OnDuplicateKey,
     closed: bool,
@@ -562,7 +589,8 @@ impl Writer {
             )));
         };
         crate::file::encode_to_buf(&mut data.as_mut_slice(), key, val);
-        self.kv_locations.push(loc);
+        self.update_common_prefix(key);
+        self.kv_locations.push(CondenseLocation { key_hint: 0, loc });
         self.kv_size += (key.len() + val.len()) as i64;
         self.batch_size += length as u64;
         Ok(())
@@ -634,6 +662,55 @@ impl Writer {
         key_of(&self.kv_buffer.get_slice(loc).as_slice()).to_vec()
     }
 
+    /// Go `updateCommonPrefix`. An empty prefix is valid once keys with
+    /// different leading bytes arrive.
+    fn update_common_prefix(&mut self, key: &[u8]) {
+        if self.kv_locations.is_empty() {
+            self.common_prefix = key.to_vec();
+            return;
+        }
+        if self.common_prefix.is_empty() {
+            return;
+        }
+        let common_len = self.common_prefix.len().min(key.len());
+        let differs = (0..common_len).find(|&i| self.common_prefix[i] != key[i]);
+        self.common_prefix.truncate(differs.unwrap_or(common_len));
+    }
+
+    /// Go `updateKeyHints`: fills every buffered KV's hint and answers
+    /// whether hint comparisons completely determine key order and
+    /// equality -- all keys have the same length and their suffix beyond
+    /// the common prefix is at most eight bytes (every IntHandle / BIGINT /
+    /// AUTO_RANDOM record key). Zero-padded variable-length suffixes ("x" vs
+    /// "x\x00") are not exact, so equal hints fall back to the suffixes.
+    fn update_key_hints(&mut self) -> bool {
+        if self.kv_locations.is_empty() {
+            return true;
+        }
+        let prefix_len = self.common_prefix.len();
+        let mut first_key_len = None;
+        let mut exact_hints = true;
+        for i in 0..self.kv_locations.len() {
+            let key = self.key_at(&self.kv_locations[i]);
+            match first_key_len {
+                None => {
+                    first_key_len = Some(key.len());
+                    if key.len() - prefix_len > KEY_HINT_BYTES {
+                        exact_hints = false;
+                    }
+                }
+                Some(len) if len != key.len() => exact_hints = false,
+                Some(_) => {}
+            }
+            let suffix = &key[prefix_len..];
+            let mut hint = [0u8; KEY_HINT_BYTES];
+            let n = suffix.len().min(KEY_HINT_BYTES);
+            hint[..n].copy_from_slice(&suffix[..n]);
+            self.kv_locations[i].key_hint = u64::from_be_bytes(hint);
+        }
+        exact_hints
+    }
+
     /// Go `flushKVs`.
     fn flush_kvs(&mut self, ctx: &Context, from_close: bool) -> Result<()> {
         if self.kv_locations.is_empty() {
@@ -641,26 +718,37 @@ impl Writer {
         }
         let sort_start = Instant::now();
         let mut dup_found = false;
-        let mut dup_loc = SliceLocation::default();
+        let mut dup_loc = CondenseLocation::default();
+        // Go `sortKVs`: the hints first; with exact hints they decide
+        // alone, else equal hints fall back to the suffixes beyond the
+        // common prefix.
+        let exact_hints = self.update_key_hints();
+        let prefix_len = self.common_prefix.len();
         {
-            let mut compare = |location: &SliceLocation, a: &[u8], b: &[u8]| {
-                let res = key_of(a).cmp(key_of(b));
+            let mut compare = |location: &CondenseLocation, other: &CondenseLocation, a: &[u8], b: &[u8]| {
+                let res = match location.key_hint.cmp(&other.key_hint) {
+                    std::cmp::Ordering::Equal if exact_hints => std::cmp::Ordering::Equal,
+                    std::cmp::Ordering::Equal => key_of(a)[prefix_len..].cmp(&key_of(b)[prefix_len..]),
+                    ordering => return ordering,
+                };
                 if res.is_eq() && !dup_found {
                     dup_found = true;
                     dup_loc = *location;
                 }
                 res
             };
-            if let Some(slices) = self.kv_buffer.try_borrow_slices() {
+            if exact_hints {
+                tidb_goruntime::go_pdqsort::go_sort_func_by(&mut self.kv_locations, |i, j| compare(i, j, &[], &[]));
+            } else if let Some(slices) = self.kv_buffer.try_borrow_slices() {
                 tidb_goruntime::go_pdqsort::go_sort_func_by(&mut self.kv_locations, |i, j| {
-                    compare(i, slices.get_slice(i), slices.get_slice(j))
+                    compare(i, j, slices.get_slice(i), slices.get_slice(j))
                 });
             } else {
                 let buffer = &self.kv_buffer;
                 tidb_goruntime::go_pdqsort::go_sort_func_by(&mut self.kv_locations, |i, j| {
                     let (a, b) = (buffer.get_slice(i), buffer.get_slice(j));
                     let (a, b) = (a.as_slice(), b.as_slice());
-                    compare(i, &a, &b)
+                    compare(i, j, &a, &b)
                 });
             }
         }
@@ -673,7 +761,7 @@ impl Writer {
         if dup_found {
             let buffer = &self.kv_buffer;
             let key_getter =
-                |loc: &SliceLocation| key_of(&buffer.get_slice(loc).as_slice()).to_vec();
+                |loc: &CondenseLocation| key_of(&buffer.get_slice(loc).as_slice()).to_vec();
             match self.on_dup {
                 OnDuplicateKey::Ignore => {}
                 OnDuplicateKey::Record => {
@@ -762,6 +850,7 @@ impl Writer {
         }
         self.kv_locations.clear();
         self.kv_size = 0;
+        self.common_prefix.clear();
         self.kv_buffer.reset();
         self.batch_size = 0;
         self.current_seq += 1;
@@ -800,7 +889,7 @@ impl Writer {
     fn flush_sorted_kvs(
         &mut self,
         ctx: &Context,
-        dup_locs: &[SliceLocation],
+        dup_locs: &[CondenseLocation],
     ) -> Result<(String, String, String)> {
         let write_start = Instant::now();
         let (data_file, stat_file, mut data_writer, mut stat_writer) =
@@ -849,7 +938,7 @@ impl Writer {
     }
 
     /// Go `writeDupKVs`.
-    fn write_dup_kvs(&mut self, ctx: &Context, locs: &[SliceLocation]) -> Result<String> {
+    fn write_dup_kvs(&mut self, ctx: &Context, locs: &[CondenseLocation]) -> Result<String> {
         let (dup_path, mut dup_writer) = self.create_dup_writer(ctx)?;
         let written = (|| -> Result<()> {
             let mut dup_store = KeyValueStore::new(ctx, dup_writer.as_mut(), None);
@@ -1000,5 +1089,242 @@ impl tidb_lightning_backend::EngineWriter for EngineWriter {
             .map_err(tidb_lightning_backend::Error::from_cause)?;
         // Go returns a nil status, which callers treat as nothing to wait for.
         Ok(tidb_lightning_backend::ChunkFlushStatus { flushed: true })
+    }
+}
+
+/// Go master `pkg/ingestor/simplesst/writer_test.go`'s
+/// `TestWriterKeyHints` (4239a9df1b5).
+#[cfg(test)]
+mod key_hint_tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::kv_reader::KVReader;
+
+    const AUTO_RANDOM_PREFIX: &[u8] = b"x\x00\x00\x01t\x80\x00\x00\x00\x00\x00\x00\x17_r";
+
+    fn auto_random_key(handle: u64) -> Vec<u8> {
+        let mut key = AUTO_RANDOM_PREFIX.to_vec();
+        key.extend_from_slice(&handle.to_be_bytes());
+        key
+    }
+
+    fn new_writer(store: &Arc<dyn Storage>, on_dup: OnDuplicateKey, prefix: &str) -> (Writer, Arc<Mutex<Option<WriterSummary>>>) {
+        let summary = Arc::new(Mutex::new(None));
+        let sink = Arc::clone(&summary);
+        let writer = WriterBuilder::new()
+            .set_block_size(4096)
+            .set_memory_size_limit(4096)
+            .set_on_dup(on_dup)
+            .set_on_close_func(Arc::new(move |s: &WriterSummary| *sink.lock().unwrap() = Some(s.clone())))
+            .build(Arc::clone(store), prefix, "0");
+        (writer, summary)
+    }
+
+    /// Go `readKVFile`.
+    fn read_kv_file(store: &Arc<dyn Storage>, name: &str) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let ctx = Context::background();
+        let mut reader = KVReader::new(&ctx, name, store.as_ref(), 0, 1024).unwrap();
+        let mut kvs = Vec::new();
+        loop {
+            match reader.next_kv() {
+                Ok(kv) => kvs.push(kv),
+                Err(Error::Eof) => break,
+                Err(error) => panic!("{error}"),
+            }
+        }
+        reader.close().unwrap();
+        kvs
+    }
+
+    fn kv(key: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let mut value = b"v:".to_vec();
+        value.extend_from_slice(key);
+        (key.to_vec(), value)
+    }
+
+    fn mem_store() -> Arc<dyn Storage> {
+        Arc::new(tidb_objstore::MemStorage::new())
+    }
+
+    #[test]
+    fn test_writer_key_hints() {
+        let ctx = Context::background();
+        let cases: Vec<(&str, Vec<Vec<u8>>, &[u8], bool, OnDuplicateKey)> = vec![
+            ("no-common-prefix", vec![b"z".to_vec(), b"a".to_vec(), b"m".to_vec()], b"", true, OnDuplicateKey::Error),
+            ("empty-key", vec![b"b".to_vec(), b"".to_vec(), b"a".to_vec()], b"", false, OnDuplicateKey::Error),
+            (
+                "short-suffixes-trailing-zero",
+                vec![
+                    b"prefix/x\x00".to_vec(),
+                    b"prefix/x".to_vec(),
+                    b"prefix/x\x00\x00".to_vec(),
+                    b"prefix/x\x00\x00\x00\x00\x00\x00\x00\x00a".to_vec(),
+                ],
+                b"prefix/x",
+                false,
+                // Zero-padded hints collide at 0, so Error checks they still
+                // fall back to the full key comparison.
+                OnDuplicateKey::Error,
+            ),
+            (
+                "eight-byte-hint-collisions",
+                vec![
+                    b"prefix/01234567z".to_vec(),
+                    b"prefix/01234567a".to_vec(),
+                    b"prefix/z".to_vec(),
+                    b"prefix/01234567m".to_vec(),
+                ],
+                b"prefix/",
+                false,
+                OnDuplicateKey::Error,
+            ),
+            (
+                "auto-random-int-handles",
+                vec![
+                    auto_random_key(0x80400000_05f5e0e4),
+                    auto_random_key(0xffc00000_00000001),
+                    auto_random_key(0x80400000_00000002),
+                    auto_random_key(0xc0000000_00000010),
+                    auto_random_key(0x80400000_000001d5),
+                ],
+                AUTO_RANDOM_PREFIX,
+                true,
+                OnDuplicateKey::Error,
+            ),
+            (
+                "exact-hint-duplicates-ignore",
+                vec![
+                    auto_random_key(0x80400000_00000003),
+                    auto_random_key(0x80400000_00000001),
+                    auto_random_key(0x80400000_00000001),
+                    auto_random_key(0xffc00000_00000002),
+                ],
+                AUTO_RANDOM_PREFIX,
+                true,
+                OnDuplicateKey::Ignore,
+            ),
+        ];
+        for (name, keys, prefix, exact_hints, on_dup) in cases {
+            let store = mem_store();
+            let (mut writer, summary) = new_writer(&store, on_dup, "/key-hints");
+            let mut expected_size = 0u64;
+            for _ in 0..2 {
+                for key in &keys {
+                    let mut value = b"value:".to_vec();
+                    value.extend_from_slice(key);
+                    writer.write_row(&ctx, key, &value).unwrap();
+                    expected_size += (key.len() * 2 + b"value:".len()) as u64;
+                }
+                assert_eq!(writer.common_prefix, prefix, "{name}");
+                assert_eq!(writer.update_key_hints(), exact_hints, "{name}");
+                writer.flush_kvs(&ctx, false).unwrap();
+                assert!(writer.common_prefix.is_empty(), "{name}");
+            }
+            writer.close(&ctx).unwrap();
+            let summary = summary.lock().unwrap().clone().unwrap();
+            assert_eq!(summary.total_size, expected_size, "{name}");
+            assert_eq!(writer.written_bytes() as u64, expected_size, "{name}");
+            let mut expected_keys = keys.clone();
+            expected_keys.sort();
+            for files in &summary.multiple_files_stats[0].filenames {
+                let read: Vec<Vec<u8>> = read_kv_file(&store, &files[0]).into_iter().map(|(key, value)| {
+                    assert_eq!(value, [b"value:".as_slice(), &key].concat(), "{name}");
+                    key
+                }).collect();
+                assert_eq!(read, expected_keys, "{name}");
+            }
+        }
+
+        // exact-hint-duplicate-modes
+        let dup_keys = [
+            auto_random_key(0xffc00000_00000009),
+            auto_random_key(0x80400000_00000005),
+            auto_random_key(0x80400000_00000005),
+        ];
+        let (mut err_writer, _) = new_writer(&mem_store(), OnDuplicateKey::Error, "/dup-err");
+        for key in &dup_keys {
+            err_writer.write_row(&ctx, key, b"v").unwrap();
+        }
+        let error = err_writer.flush_kvs(&ctx, false).expect_err("a duplicate");
+        assert!(matches!(error, Error::FoundDuplicateKeys { .. }), "{error}");
+        err_writer.kv_buffer.destroy();
+
+        let (mut rm_writer, summary) = new_writer(&mem_store(), OnDuplicateKey::Remove, "/dup-rm");
+        for key in &dup_keys {
+            rm_writer.write_row(&ctx, key, b"v").unwrap();
+        }
+        rm_writer.close(&ctx).unwrap();
+        let summary = summary.lock().unwrap().clone().unwrap();
+        assert_eq!(summary.total_cnt, 1);
+        assert_eq!(summary.min, dup_keys[0]);
+        assert_eq!(summary.max, dup_keys[0]);
+
+        let (mut rec_writer, summary) = new_writer(&mem_store(), OnDuplicateKey::Record, "/dup-rec");
+        for key in dup_keys.iter().chain([auto_random_key(0x80400000_00000005)].iter()) {
+            rec_writer.write_row(&ctx, key, b"v").unwrap();
+        }
+        rec_writer.close(&ctx).unwrap();
+        let summary = summary.lock().unwrap().clone().unwrap();
+        assert_eq!(summary.total_cnt, 3);
+        assert_eq!(summary.conflict_info.count, 1);
+
+        // fallback-hint-collision-duplicate-modes: keys share the eight-byte
+        // hint "01234567" beyond "prefix/" while one is a true duplicate.
+        let dup_keys: [&[u8]; 4] = [b"prefix/01234567z", b"prefix/01234567a", b"prefix/z", b"prefix/01234567a"];
+        let (mut err_writer, _) = new_writer(&mem_store(), OnDuplicateKey::Error, "/fallback-dup-err");
+        for key in dup_keys {
+            err_writer.write_row(&ctx, key, &kv(key).1).unwrap();
+        }
+        assert!(!err_writer.update_key_hints());
+        let error = err_writer.flush_kvs(&ctx, false).expect_err("a duplicate").to_string();
+        assert!(error.contains(&hex::encode("prefix/01234567a")), "{error}");
+        assert!(error.contains(&hex::encode("v:prefix/01234567a")), "{error}");
+        assert!(matches!(err_writer.close(&ctx), Err(Error::FoundDuplicateKeys { .. })));
+
+        let rm_store = mem_store();
+        let (mut rm_writer, summary) = new_writer(&rm_store, OnDuplicateKey::Remove, "/fallback-dup-rm");
+        for key in dup_keys {
+            rm_writer.write_row(&ctx, key, &kv(key).1).unwrap();
+        }
+        assert!(!rm_writer.update_key_hints());
+        rm_writer.close(&ctx).unwrap();
+        let summary = summary.lock().unwrap().clone().unwrap();
+        assert_eq!(summary.total_cnt, 2);
+        assert_eq!(
+            read_kv_file(&rm_store, &summary.multiple_files_stats[0].filenames[0][0]),
+            vec![kv(b"prefix/01234567z"), kv(b"prefix/z")]
+        );
+
+        let rec_store = mem_store();
+        let (mut rec_writer, summary) = new_writer(&rec_store, OnDuplicateKey::Record, "/fallback-dup-rec");
+        for key in dup_keys.iter().chain([b"prefix/01234567a".as_slice()].iter()) {
+            rec_writer.write_row(&ctx, key, &kv(key).1).unwrap();
+        }
+        assert!(!rec_writer.update_key_hints());
+        rec_writer.close(&ctx).unwrap();
+        let summary = summary.lock().unwrap().clone().unwrap();
+        assert_eq!(summary.total_cnt, 4);
+        assert_eq!(summary.conflict_info.count, 1);
+        assert_eq!(summary.conflict_info.files.len(), 1);
+        assert_eq!(
+            read_kv_file(&rec_store, &summary.multiple_files_stats[0].filenames[0][0]),
+            vec![kv(b"prefix/01234567a"), kv(b"prefix/01234567a"), kv(b"prefix/01234567z"), kv(b"prefix/z")]
+        );
+        assert_eq!(read_kv_file(&rec_store, &summary.conflict_info.files[0]), vec![kv(b"prefix/01234567a")]);
+
+        let ign_store = mem_store();
+        let (mut ign_writer, summary) = new_writer(&ign_store, OnDuplicateKey::Ignore, "/fallback-dup-ign");
+        for key in dup_keys {
+            ign_writer.write_row(&ctx, key, &kv(key).1).unwrap();
+        }
+        assert!(!ign_writer.update_key_hints());
+        ign_writer.close(&ctx).unwrap();
+        let summary = summary.lock().unwrap().clone().unwrap();
+        assert_eq!(summary.total_cnt, 4);
+        assert_eq!(
+            read_kv_file(&ign_store, &summary.multiple_files_stats[0].filenames[0][0]),
+            vec![kv(b"prefix/01234567a"), kv(b"prefix/01234567a"), kv(b"prefix/01234567z"), kv(b"prefix/z")]
+        );
     }
 }
