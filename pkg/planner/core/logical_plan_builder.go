@@ -3502,7 +3502,13 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 			}
 		}
 		return n, true
-	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:
+	case *ast.ParenthesesExpr:
+		if !g.inExpr {
+			// Accept writes the resolved child back into each leading pair of parentheses.
+			cloned := *n
+			return &cloned, false
+		}
+	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ColumnName:
 	default:
 		g.inExpr = true
 	}
@@ -4135,8 +4141,8 @@ func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldNa
 }
 
 // resolveGbyExprs resolves group by expressions from the group by clause of a select statement.
-// It returns the resolved expressions without mutating `gby.Items[].Expr` in place, so the same
-// AST can be safely built multiple times (e.g., prepared statements or alternative logical plans).
+// It keeps the original grouping item and its leading parentheses intact so later builds
+// of the same AST can resolve positional items and parenthesized aliases again.
 func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) ([]ast.ExprNode, error) {
 	b.curClause = groupByClause
 	exprs := make([]ast.ExprNode, 0, len(gby.Items))

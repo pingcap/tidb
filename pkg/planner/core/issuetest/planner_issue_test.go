@@ -1275,6 +1275,12 @@ func TestResolveGbyExprsNoInPlaceMutation(t *testing.T) {
 	tk.MustQuery("execute st").Check(testkit.Rows("1 1"))
 	tk.MustQuery("execute st").Check(testkit.Rows("1 1"))
 
+	for _, groupBy := range []string{"(x)", "((x))"} {
+		tk.MustExec("prepare grouped_alias from 'select b, b as x, c as b from t1 join t2 on b = c group by " + groupBy + "'")
+		tk.MustQuery("execute grouped_alias").Check(testkit.Rows("1 1 1"))
+		tk.MustQuery("execute grouped_alias").Check(testkit.Rows("1 1 1"))
+	}
+
 	// Reproducer 2: alternative logical plan rebuilds the same AST.
 	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
 	tk.MustQuery("select b, c as b from t1 join t2 on b = c where match(txt) against ('hello') group by 1").
