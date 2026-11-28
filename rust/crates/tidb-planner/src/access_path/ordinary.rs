@@ -42,18 +42,16 @@ pub(crate) fn filter_selectivity(
         .unwrap_or(tidb_planner_core_cost::SELECTION_FACTOR)
 }
 
-/// Derive the range, physical key layout and filter partition together.
-/// Ordinary paths and OR branch alternatives must use the same detacher.
-/// Go `fillIndexPath` fills `path` in place: `FullIdxCols`, `IdxCols`, the
-/// ranges and access conditions, and (Go `deriveIndexPathStats`) the
-/// index/table filter partition.
+/// Go `fillIndexPath` with its `detachCondAndBuildRangeForPath`: fills
+/// `path` in place with `FullIdxCols`, `IdxCols` (the appended clustered
+/// handle included), the ranges, the access conditions, and every remaining
+/// condition as a table filter. Ordinary paths and OR branch alternatives
+/// use the same detacher.
 pub(crate) fn fill_index_path(
     source: &DataSource,
     path: &mut AccessPath,
     conditions: &[Expression],
     context: &AccessPathDerivationContext<'_>,
-    prefix_single_scan: bool,
-    correlated_access: bool,
 ) -> Result<(), PlanError> {
     let index = path.index.clone().expect("an index path reads its index");
     let index = &index;
@@ -65,7 +63,7 @@ pub(crate) fn fill_index_path(
     let suffix = source.handle_cols_to_append(index, &columns);
     full_columns.extend(suffix.iter().cloned().map(Some));
     columns.extend(suffix);
-    let mut detached = if conditions.is_empty() || columns.is_empty() {
+    let detached = if conditions.is_empty() || columns.is_empty() {
         tidb_ranger::detacher::DetachRangeResult {
             ranges: tidb_ranger::points::full_range(),
             remained_conds: conditions.to_vec(),
@@ -93,25 +91,6 @@ pub(crate) fn fill_index_path(
                 ),
             })?
     };
-    // IndexMerge partial readers do not rebuild ranges per outer row yet, so
-    // only ordinary paths take Go's correlated access prefix.
-    let (correlated_access_count, const_col_ids) = if correlated_access {
-        split_correlated_access(&mut detached, &columns)
-    } else {
-        (0, Vec::new())
-    };
-    let (index_filters, table_filters): (Vec<_>, Vec<_>) = detached
-        .remained_conds
-        .iter()
-        .cloned()
-        .partition(|condition| {
-            tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
-                source,
-                index,
-                condition,
-                prefix_single_scan,
-            )
-        });
     path.full_idx_cols = Some(full_columns);
     path.idx_cols = columns;
     path.ranges = detached.ranges;
@@ -120,20 +99,16 @@ pub(crate) fn fill_index_path(
     path.eq_or_in_cond_count = detached.eq_or_in_count;
     path.is_dnf_cond = detached.is_dnf_cond;
     path.min_access_conds_for_dnf_cond = detached.min_access_conds_for_dnf_cond;
-    path.index_filters = index_filters;
-    path.table_filters = table_filters;
+    path.index_filters = Vec::new();
+    path.table_filters = detached.remained_conds;
     path.count_after_index = None;
-    path.correlated_access_count = correlated_access_count;
-    path.const_col_ids = const_col_ids;
+    path.correlated_access_count = 0;
+    path.const_col_ids = Vec::new();
     // Go `detachCondAndBuildRangeForPath`: `ConstCols[i] = ColumnValues[i]
-    // != nil`; IndexMerge partial paths (Go `fillIndexPath`) leave it unset.
-    path.const_cols = if correlated_access {
-        (0..path.idx_cols.len())
-            .map(|i| detached.column_values.get(i).is_some_and(Option::is_some))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    // != nil`.
+    path.const_cols = (0..path.idx_cols.len())
+        .map(|i| detached.column_values.get(i).is_some_and(Option::is_some))
+        .collect();
     Ok(())
 }
 
@@ -162,6 +137,47 @@ fn scale_cor_col_count_after_access(
     *max_count_after_access *= scale;
 }
 
+/// Go `deriveStats4DataSource`'s loop: `fillIndexPath` for every index path
+/// in `AllPossibleAccessPaths`, ahead of `deriveStatsByFilter`, whose
+/// `Selectivity` takes these paths' ranges as they are.
+pub(crate) fn fill_index_paths(
+    source: &mut DataSource,
+    context: &AccessPathDerivationContext<'_>,
+) -> Result<(), PlanError> {
+    for position in 0..source.all_possible_access_paths.len() {
+        if source.all_possible_access_paths[position].is_table_path() {
+            continue;
+        }
+        let mut path = source.all_possible_access_paths[position].clone();
+        fill_index_path(source, &mut path, &source.pushed_down_conds, context)?;
+        source.all_possible_access_paths[position] = path;
+    }
+    Ok(())
+}
+
+/// Go `splitIndexFilterConditions` as `deriveIndexPathStats` applies it:
+/// the table filters the index covers move to `IndexFilters`.
+pub(crate) fn split_index_filter_conditions(
+    source: &DataSource,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
+    path: &mut AccessPath,
+    prefix_single_scan: bool,
+) {
+    let (index_filters, table_filters): (Vec<_>, Vec<_>) =
+        std::mem::take(&mut path.table_filters)
+            .into_iter()
+            .partition(|condition| {
+                tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
+                    source,
+                    index,
+                    condition,
+                    prefix_single_scan,
+                )
+            });
+    path.index_filters.extend(index_filters);
+    path.table_filters = table_filters;
+}
+
 /// Go `deriveIndexPathStats` / `deriveCommonHandleTablePathStats`: when every
 /// access condition is an equality or IN, `SplitCorColAccessCondFromFilters`
 /// extends the access prefix with `index_col = correlated_col` filters (and
@@ -169,23 +185,25 @@ fn scale_cor_col_count_after_access(
 /// for every outer row. Returns how many conditions moved, and the ids of
 /// the full-length columns their equalities pin (Go `markConstCol`).
 fn split_correlated_access(
-    detached: &mut tidb_ranger::detacher::DetachRangeResult,
+    access_conds: &mut Vec<Expression>,
+    remained_conds: &mut Vec<Expression>,
+    eq_or_in_count: usize,
     columns: &[(Column, i64)],
 ) -> (usize, Vec<i64>) {
-    if columns.is_empty() || detached.eq_or_in_count != detached.access_conds.len() {
+    if columns.is_empty() || eq_or_in_count != access_conds.len() {
         return (0, Vec::new());
     }
     let (cols, lengths): (Vec<_>, Vec<_>) = columns.iter().cloned().unzip();
     let (accesses, remained, const_cols) = tidb_planner_core_operator_logicalop::data_source_paths::split_correlated_access_conditions(
-        &detached.remained_conds,
+        remained_conds,
         &cols,
         &lengths,
-        detached.eq_or_in_count,
+        eq_or_in_count,
     );
     let moved = accesses.len();
     if moved > 0 {
-        detached.access_conds.extend(accesses);
-        detached.remained_conds = remained;
+        access_conds.extend(accesses);
+        *remained_conds = remained;
     }
     (moved, const_cols.into_iter().map(|i| columns[i].0.unique_id).collect())
 }
@@ -234,10 +252,18 @@ pub(crate) fn derive_index_path_stats(
         .cloned()
         .expect("an index path reads its index");
     let index = &index;
+    // Go `deriveStats4DataSource` filled every index path before
+    // `deriveStatsByFilter` (`fill_index_paths`).
     let mut path = source.all_possible_access_paths[position].clone();
-    fill_index_path(
-        source, &mut path, &source.pushed_down_conds, context, prefix_single_scan, true,
-    )?;
+    // Go `deriveIndexPathStats`: with every access condition an equality or
+    // IN, `SplitCorColAccessCondFromFilters` extends the access prefix.
+    (path.correlated_access_count, path.const_col_ids) = split_correlated_access(
+        &mut path.access_conds,
+        &mut path.table_filters,
+        path.eq_or_in_cond_count,
+        &path.idx_cols,
+    );
+    split_index_filter_conditions(source, index, &mut path, prefix_single_scan);
     let idx_cols = &path.idx_cols;
     // Go `detachCondAndBuildRangeForPath`: the path's `CountAfterAccess`
     // and its bounds come from the index's statistics over the ranges
@@ -409,7 +435,12 @@ pub(crate) fn detach_table_path(
                 .map_err(map_error)?;
             if correlated_access {
                 (correlated_access_count, const_col_ids) =
-                    split_correlated_access(&mut detached, &common_columns);
+                    split_correlated_access(
+                        &mut detached.access_conds,
+                        &mut detached.remained_conds,
+                        detached.eq_or_in_count,
+                        &common_columns,
+                    );
             }
             detached
         }

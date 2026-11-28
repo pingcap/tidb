@@ -114,14 +114,22 @@ impl MvIndexFilters for NoMvIndexFilters {
     }
 }
 
+/// The parts of a filled access path (Go `cachedPath`) that
+/// `findPrefixOfIndexByCol` and `getMaskAndRanges` read.
+#[derive(Clone, Copy, Debug)]
+pub struct CachedPath<'a> {
+    pub idx_cols: &'a [(Column, i64)],
+    pub ranges: &'a [Range],
+    pub access_conds: &'a [Expression],
+    pub table_filters: &'a [Expression],
+    pub is_dnf_cond: bool,
+    pub min_access_conds_for_dnf_cond: i64,
+}
+
 /// Go `Selectivity`'s `filledPaths`, keyed as its `id2Paths`: each possible
-/// access path that carries an index, with the unique IDs of that path's
-/// `IdxCols` when the estimate runs. A common-handle table path carries its
-/// PRIMARY index with no columns until `deriveCommonHandleTablePathStats`.
-/// Each column carries the path's `IdxColLens` entry: Go builds a filled
-/// path's ranges with those lengths, the stored prefix of an appended
-/// clustered handle included.
-pub type FilledPaths = std::collections::BTreeMap<i64, Vec<(Column, i64)>>;
+/// access path that carries an index. A common-handle table path carries its
+/// PRIMARY index with no `IdxCols` until `deriveCommonHandleTablePathStats`.
+pub type FilledPaths<'a> = std::collections::BTreeMap<i64, CachedPath<'a>>;
 
 impl<'a> SelectivityContext<'a> {
     /// A context with no range-fallback recorder and plan caching off.
@@ -163,7 +171,7 @@ pub fn selectivity(
     ctx: &SelectivityContext<'_>,
     coll: &HistColl,
     exprs: &[Expression],
-    filled_paths: Option<&FilledPaths>,
+    filled_paths: Option<&FilledPaths<'_>>,
 ) -> Result<f64, EstimationError> {
     let realtime = coll.realtime_count();
     if realtime == 0 || exprs.is_empty() {
@@ -279,10 +287,7 @@ pub fn selectivity(
         // `IdxCols`; an index without one by `Idx2ColUniqueIDs`.
         let filled_path = filled_paths.and_then(|paths| paths.get(&index_id));
         let index_columns = match filled_path {
-            Some(path_columns) => {
-                let path_columns = path_columns.iter().map(|(column, _)| column.clone()).collect::<Vec<_>>();
-                find_prefix_of_index_by_col(&extracted, &path_columns)
-            }
+            Some(path) => find_prefix_of_index_by_col(&extracted, path.idx_cols),
             None => find_prefix_of_index(&extracted, coll.index_columns(index_id)),
         };
         if index_columns.is_empty() {
@@ -301,37 +306,46 @@ pub fn selectivity(
         // common handle. Every appended column needs its own length entry,
         // at full length: these lengths only shape the ranges built for
         // estimation, which compare against the handle columns' untruncated
-        // statistics.
+        // statistics. A filled path's ranges come from the path instead.
         lengths.resize(index_columns.len().max(lengths.len()), tidb_ranger::checker::UNSPECIFIED_LENGTH);
-        // A filled path's ranges are Go's `cachedPath.Ranges`, built over the
-        // path's own `IdxColLens`: an appended clustered handle keeps its
-        // stored prefix there.
-        if let Some(path_columns) = filled_path {
-            for (length, (_, path_length)) in lengths.iter_mut().zip(path_columns).skip(declared) {
-                *length = *path_length;
-            }
-        }
-        // Go `getMaskAndRanges` takes a filled access path's own ranges
-        // (`cachedPath`) instead of building them again; this port derives
-        // them again here, before the path is filled, so only an index
-        // without a path converts points under the statement's warnings.
-        let cached_path = filled_paths.is_some_and(|paths| paths.contains_key(&index_id));
-        let detached = detach_index_range(ctx, &remained, &index_columns, &lengths, cached_path)?;
+        // Go `getMaskAndRanges`: a filled access path's own ranges and
+        // conditions (`cachedPath`), or ranges built here.
+        let detached;
+        let (ranges, access_conds, remained_conds, is_dnf_cond, min_access_conds_for_dnf_cond) =
+            match filled_path {
+                Some(path) => (
+                    path.ranges,
+                    path.access_conds,
+                    path.table_filters,
+                    path.is_dnf_cond,
+                    path.min_access_conds_for_dnf_cond,
+                ),
+                None => {
+                    detached = detach_index_range(ctx, &remained, &index_columns, &lengths)?;
+                    (
+                        detached.ranges.as_slice(),
+                        detached.access_conds.as_slice(),
+                        detached.remained_conds.as_slice(),
+                        detached.is_dnf_cond,
+                        detached.min_access_conds_for_dnf_cond,
+                    )
+                }
+            };
         let (mask, partial_cover, min_access_conditions_for_dnf) =
-            if detached.is_dnf_cond && !detached.access_conds.is_empty() {
+            if is_dnf_cond && !access_conds.is_empty() {
                 (
                     1,
-                    !detached.remained_conds.is_empty(),
-                    i32::try_from(detached.min_access_conds_for_dnf_cond).unwrap_or(i32::MAX),
+                    !remained_conds.is_empty(),
+                    i32::try_from(min_access_conds_for_dnf_cond).unwrap_or(i32::MAX),
                 )
             } else {
-                (covered_mask(&remained, &detached.access_conds), false, 0)
+                (covered_mask(&remained, access_conds), false, 0)
             };
         ctx.record_used_item(index_id, true);
         let estimate = get_row_count_by_index_ranges(
             coll,
             index_id,
-            &detached.ranges,
+            ranges,
             &index_columns,
             ctx.options,
             &|column_id| ctx.record_used_item(column_id, false),
@@ -616,11 +630,8 @@ fn detach_index_range(
     exprs: &[Expression],
     columns: &[Column],
     lengths: &[i64],
-    cached_path: bool,
 ) -> Result<tidb_ranger::detacher::DetachRangeResult, PointBuilderError> {
-    let quiet = tidb_ranger::points::QuietRangerEvaluator(ctx.evaluate);
-    let evaluate: &tidb_ranger::points::ExpressionEvaluator<'_> =
-        if cached_path { &quiet } else { ctx.evaluate };
+    let evaluate = ctx.evaluate;
     let detached = match ctx.range_fallback_handler {
         Some(handler) => tidb_ranger::detacher::detach_index_range_with_fallback_handler_in(
             exprs,
@@ -672,7 +683,7 @@ fn mask_and_selectivity_for_mv_index(
     for filters in filter_sets {
         // Go `buildPartialPath4MVIndex`: every filter must become an access
         // condition.
-        let detached = detach_index_range(ctx, &filters, cols, &lengths, false).ok()?;
+        let detached = detach_index_range(ctx, &filters, cols, &lengths).ok()?;
         if detached.access_conds.len() != filters.len() || !detached.remained_conds.is_empty() {
             return None;
         }
@@ -707,9 +718,9 @@ fn covered_mask(exprs: &[Expression], access: &[Expression]) -> i64 {
 /// Go `findPrefixOfIndexByCol` with a cached path: the extracted columns
 /// matching the path's `IdxCols` in order, by UniqueID or by virtual
 /// expression, stopping at the first index column none matches.
-fn find_prefix_of_index_by_col(columns: &[Column], index_columns: &[Column]) -> Vec<Column> {
+fn find_prefix_of_index_by_col(columns: &[Column], index_columns: &[(Column, i64)]) -> Vec<Column> {
     let mut prefix = Vec::with_capacity(index_columns.len());
-    for index_column in index_columns {
+    for (index_column, _) in index_columns {
         match columns
             .iter()
             .find(|column| column.equal_by_expr_and_id_column(index_column))

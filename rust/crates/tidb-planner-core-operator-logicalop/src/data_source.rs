@@ -757,65 +757,33 @@ impl DataSource {
     }
 
     /// Go `deriveStatsByFilter(ds, conds, ds.AllPossibleAccessPaths)`'s
-    /// `filledPaths` (`stats.go:577`): every possible index path with its
-    /// `IdxCols`, which `fillIndexPath` has just filled (the collection's
-    /// `Idx2ColUniqueIDs`, handle included); and a common-handle table path's
-    /// PRIMARY index with none, because Go fills table paths only after this
-    /// estimate. The PRIMARY index therefore contributes no `Selectivity`
-    /// node to the data source's own row count.
+    /// `filledPaths` (`stats.go:577`): every possible path with an index, as
+    /// `fillIndexPath` has just filled it; a common-handle table path's
+    /// PRIMARY index with no `IdxCols`, because Go fills table paths only
+    /// after this estimate. The PRIMARY index therefore contributes no
+    /// `Selectivity` node to the data source's own row count.
     #[must_use]
-    pub fn derive_stats_filled_paths(&self) -> tidb_planner_cardinality::selectivity::FilledPaths {
-        let hist_coll = self.table_stats.as_ref().and_then(StatsInfo::hist_coll);
-        let mut paths = tidb_planner_cardinality::selectivity::FilledPaths::new();
-        for path in &self.all_possible_access_paths {
-            // Go `Selectivity` keys every path with an `Index` (`selectivity.go:145`).
-            let Some(index) = &path.index else {
-                continue;
-            };
-            let columns = if path.is_table_path() {
-                Vec::new()
-            } else {
-                // The path's `IdxCols`: the schema columns behind the
-                // collection's ids, a prefix up to the first absent one.
-                let schema = self.base.base.schema();
-                let declared = self
-                    .index_info_2_full_cols(index)
-                    .into_iter()
-                    .map_while(|column| column)
-                    .collect::<Vec<_>>();
-                let appended = self.handle_cols_to_append(index, &declared);
-                hist_coll
-                    .map(|coll| {
-                        coll.index_columns(index.read().id)
-                            .iter()
-                            .enumerate()
-                            .map_while(|(position, id)| {
-                                let column = schema?
-                                    .columns
-                                    .iter()
-                                    .find(|column| column.unique_id == *id)
-                                    .cloned()?;
-                                // Go `IdxColLens`: the declared key parts' own
-                                // lengths, then the appended handle's.
-                                let length = declared
-                                    .get(position)
-                                    .map(|(_, length)| *length)
-                                    .or_else(|| {
-                                        appended
-                                            .iter()
-                                            .find(|(handle, _)| handle.unique_id == *id)
-                                            .map(|(_, length)| *length)
-                                    })
-                                    .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH);
-                                Some((column, length))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            };
-            paths.insert(index.read().id, columns);
-        }
-        paths
+    pub fn derive_stats_filled_paths(&self) -> tidb_planner_cardinality::selectivity::FilledPaths<'_> {
+        self.all_possible_access_paths
+            .iter()
+            .filter_map(|path| {
+                // Go `Selectivity` keys every path with an `Index` (`selectivity.go:145`).
+                let index = path.index.as_ref()?;
+                let idx_cols: &[(tidb_expr::column::Column, i64)] =
+                    if path.is_table_path() { &[] } else { &path.idx_cols };
+                Some((
+                    index.read().id,
+                    tidb_planner_cardinality::selectivity::CachedPath {
+                        idx_cols,
+                        ranges: &path.ranges,
+                        access_conds: &path.access_conds,
+                        table_filters: &path.table_filters,
+                        is_dnf_cond: path.is_dnf_cond,
+                        min_access_conds_for_dnf_cond: path.min_access_conds_for_dnf_cond,
+                    },
+                ))
+            })
+            .collect()
     }
 
     /// Go `HasV0NewCollationStringHandle`: `CommonHandleVersion == 0` with

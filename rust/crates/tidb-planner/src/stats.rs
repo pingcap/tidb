@@ -197,14 +197,6 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                         .iter()
                         .map(|col| col.unique_id)
                         .collect();
-                    let resolve = |unique_id: i64| {
-                        let position = schema_ids.iter().position(|id| *id == unique_id)?;
-                        let column = op.columns.get(position)?;
-                        Some(tidb_planner_property::stats_info::PseudoColumn {
-                            lower_name: column.read().name.lowercase().to_owned(),
-                            unique_key_flag: false,
-                        })
-                    };
                     let evaluate = tidb_ranger::points::StatementRangerEvaluator(env.eval_context);
                     let derivation = crate::access_path::AccessPathDerivationContext {
                         opt_prefix_index_single_scan: env.opt_prefix_index_single_scan,
@@ -222,6 +214,17 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                             .rule_context
                             .and_then(|context| context.derive_stats_sink)
                             .map(|sink| sink as _),
+                    };
+                    // Go `deriveStats4DataSource`: `fillIndexPath` for every
+                    // index path before `deriveStatsByFilter`.
+                    crate::access_path::ordinary::fill_index_paths(op, &derivation)?;
+                    let resolve = |unique_id: i64| {
+                        let position = schema_ids.iter().position(|id| *id == unique_id)?;
+                        let column = op.columns.get(position)?;
+                        Some(tidb_planner_property::stats_info::PseudoColumn {
+                            lower_name: column.read().name.lowercase().to_owned(),
+                            unique_key_flag: false,
+                        })
                     };
                     let filled_paths = op.derive_stats_filled_paths();
                     // Go `deriveStatsByFilter`'s `Selectivity` reports the
@@ -301,6 +304,11 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                     .and_then(|context| context.derive_stats_sink)
                     .map(|sink| sink as _),
             };
+            // Statistics the executor installed stood in for
+            // `deriveStatsByFilter`, so its `fillIndexPath` loop runs here.
+            if source_had_stats {
+                crate::access_path::ordinary::fill_index_paths(op, &derivation)?;
+            }
             // Go `derivePathStatsAndTryHeuristics`: the heuristic-pruned
             // paths become `ds.PossibleAccessPaths`.
             let derived = derive_path_stats_and_try_heuristics(op, &derivation, env).and_then(|()| {

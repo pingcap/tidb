@@ -505,16 +505,14 @@ fn access_paths_for_conds(
         if !is_in_index_merge_hints(ds, index.read().name.original()) {
             return None;
         }
-        let mut new_path = AccessPath::index_path(index);
-        super::ordinary::fill_index_path(
+        let mut new_path = AccessPath::index_path(index.clone());
+        super::ordinary::fill_index_path(ds, &mut new_path, conditions, ctx).ok()?;
+        super::ordinary::split_index_filter_conditions(
             ds,
+            &index,
             &mut new_path,
-            conditions,
-            ctx,
             ctx.opt_prefix_index_single_scan,
-            false,
-        )
-        .ok()?;
+        );
         // If the newPath contains a full range, ignore it.
         if tidb_ranger::types::has_full_range(&new_path.ranges, false) {
             return None;
