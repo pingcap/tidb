@@ -135,6 +135,17 @@ func encodeDecodeJob(t *testing.T, j *model.Job) *model.Job {
 	return out
 }
 
+// decodeStoredJob round-trips j with its existing RawArgs, as a history job
+// read back from storage.
+func decodeStoredJob(t *testing.T, j *model.Job) *model.Job {
+	t.Helper()
+	b, err := j.Encode(false)
+	require.NoError(t, err)
+	out := &model.Job{}
+	require.NoError(t, out.Decode(b))
+	return out
+}
+
 func mustExecSQL(t *testing.T, se sessionapi.Session, sql string) {
 	t.Helper()
 	rs, err := se.Execute(gcContext(), sql)
@@ -360,14 +371,10 @@ func TestDoGCAffinityGroups(t *testing.T) {
 			State:   model.JobStateDone,
 			TableID: oldMVID,
 		}
-		legacyTrue.FillArgs(&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
-			OldMViewID:          oldMVID,
-			ShadowTableID:       shadowID,
-			OldMLogID:           oldMLogID,
-			BuildReadTSO:        1,
-			OldMViewHasAffinity: true,
-		})
-		currentJob = encodeDecodeJob(t, legacyTrue)
+		// Fixed payloads in the #73720 12-slot layout keep this test independent
+		// of the current encoder, which omits slot 12 when it is false.
+		legacyTrue.RawArgs = []byte(fmt.Sprintf(`[%d,%d,1,0,false,null,false,null,null,%d,0,true]`, oldMVID, shadowID, oldMLogID))
+		currentJob = decodeStoredJob(t, legacyTrue)
 
 		cli.mu.Lock()
 		cli.deleteErr = fmt.Errorf("request pd http api failed with status: '503 Service Unavailable', body: 'busy'")
@@ -398,13 +405,8 @@ func TestDoGCAffinityGroups(t *testing.T) {
 			State:   model.JobStateDone,
 			TableID: oldMVID,
 		}
-		legacyFalse.FillArgs(&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
-			OldMViewID:          oldMVID,
-			ShadowTableID:       shadowID,
-			BuildReadTSO:        1,
-			OldMViewHasAffinity: false,
-		})
-		currentJob = encodeDecodeJob(t, legacyFalse)
+		legacyFalse.RawArgs = []byte(fmt.Sprintf(`[%d,%d,1,0,false,null,false,null,null,0,0,false]`, oldMVID, shadowID))
+		currentJob = decodeStoredJob(t, legacyFalse)
 		cli.mu.Lock()
 		callsBeforeFalse := cli.deleteCalls
 		cli.mu.Unlock()
