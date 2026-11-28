@@ -370,9 +370,14 @@ impl CopIndexUsageExec {
 }
 
 impl Executor for CopIndexUsageExec {
-    /// The reader it reports for is the executor Go's `Detach` asks.
-    fn detach(&mut self) -> bool {
-        self.child.detach()
+    /// Not an executor of Go's: every optional hook answers as the executor
+    /// it wraps does (Go's `Detach` included).
+    fn transparent_child(&mut self) -> Option<&mut dyn Executor> {
+        Some(self.child.as_mut())
+    }
+
+    fn transparent_child_ref(&self) -> Option<&dyn Executor> {
+        Some(self.child.as_ref())
     }
 
     fn open(&mut self) -> Result<(), ExecError> {
@@ -409,17 +414,6 @@ impl Executor for CopIndexUsageExec {
         self.child.new_chunk()
     }
 
-    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
-        self.child.table_access()
-    }
-
-    fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
-        self.child.union_scan_reader()
-    }
-
-    fn adaptive_limit_node(&mut self) -> Option<&mut dyn std::any::Any> {
-        self.child.adaptive_limit_node()
-    }
 }
 
 #[cfg(test)]

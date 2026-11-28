@@ -84,7 +84,7 @@ pub trait Executor: Send {
     /// contract an implementor takes on -- in particular the staged-row
     /// promise, which is written down exactly once, there.
     fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
-        None
+        self.transparent_child()?.table_access()
     }
 
     /// Go `UnionScanExec.open`'s `reader.(type)` switch: this operator as
@@ -93,7 +93,7 @@ pub trait Executor: Send {
     /// `SelectionExec`, which Go looks through). `None` for any other
     /// operator.
     fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
-        None
+        self.transparent_child()?.union_scan_reader()
     }
 
     /// Go `executorBuilder.attachAdaptiveLimitController`'s type switches:
@@ -103,7 +103,7 @@ pub trait Executor: Send {
     /// `ProjectionExec` (Go `skipAdaptiveLimitProjections`). `None` for any
     /// other operator: a Selection or a blocking operator stops the budget.
     fn adaptive_limit_node(&mut self) -> Option<&mut dyn std::any::Any> {
-        None
+        self.transparent_child()?.adaptive_limit_node()
     }
 
     /// Go `aggExecutorTreeInputEmpty` (`pkg/executor/join/hash_join_v1.go`):
@@ -117,7 +117,7 @@ pub trait Executor: Send {
     /// to be empty; the default here is Go's leaf answer, so an operator that
     /// is not an aggregation and does not forward reports `false`.
     fn agg_tree_input_empty(&self) -> bool {
-        false
+        self.transparent_child_ref().is_some_and(|child| child.agg_tree_input_empty())
     }
 
     /// Go `Executor.Detach` with `executor.Detach`'s walk of its children:
@@ -127,7 +127,22 @@ pub trait Executor: Send {
     /// already, so a detachable tree is handed over as it is. The default is
     /// Go's `BaseExecutorV2.Detach`: `false`.
     fn detach(&mut self) -> bool {
-        false
+        self.transparent_child().is_some_and(|child| child.detach())
+    }
+
+    /// The executor this operator wraps without changing its rows, schema
+    /// or order, where Go has no executor of its own (statement-kill checks,
+    /// runtime-stats registration, index-usage reporting): every optional
+    /// hook above then answers as that executor does, so a wrapper cannot
+    /// hide a capability by forgetting to forward it. `None` (the default)
+    /// for a real operator.
+    fn transparent_child(&mut self) -> Option<&mut dyn Executor> {
+        None
+    }
+
+    /// [`Self::transparent_child`] for the hooks that read `&self`.
+    fn transparent_child_ref(&self) -> Option<&dyn Executor> {
+        None
     }
 }
 

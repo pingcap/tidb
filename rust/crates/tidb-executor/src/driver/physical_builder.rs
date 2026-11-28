@@ -556,10 +556,14 @@ fn checked_executor_with_stats(
 }
 
 impl Executor for SqlKillerCheckExec {
-    /// Go's per-executor base behavior this wrapper carries is not an
-    /// executor of its own: `Detach` asks the one it wraps.
-    fn detach(&mut self) -> bool {
-        self.child.detach()
+    /// Not an executor of Go's: every optional hook answers as the executor
+    /// it wraps does (Go's `Detach` included).
+    fn transparent_child(&mut self) -> Option<&mut dyn Executor> {
+        Some(self.child.as_mut())
+    }
+
+    fn transparent_child_ref(&self) -> Option<&dyn Executor> {
+        Some(self.child.as_ref())
     }
 
     fn open(&mut self) -> Result<(), crate::ExecError> {
@@ -675,21 +679,6 @@ impl Executor for SqlKillerCheckExec {
         self.child.new_chunk()
     }
 
-    fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
-        self.child.table_access()
-    }
-
-    fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
-        self.child.union_scan_reader()
-    }
-
-    fn adaptive_limit_node(&mut self) -> Option<&mut dyn std::any::Any> {
-        self.child.adaptive_limit_node()
-    }
-
-    fn agg_tree_input_empty(&self) -> bool {
-        self.child.agg_tree_input_empty()
-    }
 }
 
 /// Go `BatchPointGetExec.initialize`'s `slices.SortFunc(e.handles, less)`.
