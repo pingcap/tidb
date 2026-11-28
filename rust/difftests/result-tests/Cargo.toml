@@ -20,7 +20,7 @@ tidb-expr = { path = "../../crates/tidb-expr" }
 tidb-datatype = { path = "../../crates/tidb-datatype" }
 tidb-executor = { path = "../../crates/tidb-executor" }
 tidb-driver-error = { path = "../../crates/tidb-driver-error" }
-tidb-session = { path = "../../crates/tidb-session" }
+tidb-session = { path = "../../crates/tidb-session", features = ["testkit"] }
 tidb-memory = { path = "../../crates/tidb-memory" }
 tidb-util = { path = "../../crates/tidb-util" }
 tidb-server-internal-column = { path = "../../crates/tidb-server-internal-column" }

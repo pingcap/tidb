@@ -570,7 +570,7 @@ fn rewrite_load_stats_path(sql: &str) -> Option<String> {
     }
     let dir = integrationtest_dir();
     if path.starts_with("s/") {
-        ensure_stats_fixtures_unzipped(&dir);
+        tidb_session::testkit::ensure_stats_fixtures_unzipped(&dir);
     }
     Some(format!("load stats '{}'", dir.join(path).display()))
 }
@@ -587,47 +587,6 @@ fn ensure_integration_config(dir: &std::path::Path) {
         // An undecoded key is Go's non-fatal ErrConfigValidationFailed.
         let _ = config.load_str(&path.display().to_string(), &text);
         tidb_config::config_tree::config::store_global_config(config);
-    });
-}
-
-/// Unpacks `tests/integrationtest/s.zip` into `s/` once, the way
-/// `run-tests.sh` does before starting mysql-tester.
-///
-/// Concurrency is the reason this is not a plain `unzip -o`: the full replay
-/// runs topics in parallel and `replay_in_child` adds separate PROCESSES, so
-/// two racers must never read each other's half-written files. Each racer
-/// extracts into its own scratch directory and installs with one `rename`;
-/// the loser of the rename finds `s/` present and discards its copy.
-fn ensure_stats_fixtures_unzipped(dir: &std::path::Path) {
-    static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    ONCE.get_or_init(|| {
-        let target = dir.join("s");
-        if target.exists() {
-            return;
-        }
-        let scratch = dir.join(format!(".s_unzip_{}", std::process::id()));
-        let unzipped = std::process::Command::new("unzip")
-            .arg("-qq")
-            .arg(dir.join("s.zip"))
-            .arg("-d")
-            .arg(&scratch)
-            .status();
-        match unzipped {
-            Ok(status) if status.success() => {
-                // A losing rename means another process installed `s/` while
-                // we extracted; its copy is identical, so ours just goes.
-                if fs::rename(scratch.join("s"), &target).is_err() && !target.exists() {
-                    eprintln!("could not install {}", target.display());
-                }
-                let _ = fs::remove_dir_all(&scratch);
-            }
-            outcome => {
-                // Leave the statement to fail on the missing file, which the
-                // report then counts and names instead of hiding.
-                eprintln!("unzip s.zip failed: {outcome:?}");
-                let _ = fs::remove_dir_all(&scratch);
-            }
-        }
     });
 }
 

@@ -449,8 +449,7 @@ fn analyze_scan_concurrency_uses_system_setting_only_for_auto_analyze() {
 /// must load the dump rather than answer OK with nothing loaded.
 #[test]
 fn load_stats_through_the_node_loads_the_client_file() {
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../tests/integrationtest/s/explain_complex_stats_rr.json");
+    let fixture = crate::testkit::integrationtest_stats_fixture("explain_complex_stats_rr.json");
     let mut session = crate::Session::new_on_mock_store();
     session.set_client_local_file_reader(Arc::new(move |_path: &str| std::fs::read(&fixture)));
     for sql in [
@@ -477,8 +476,7 @@ fn load_stats_through_the_node_loads_the_client_file() {
 /// merge has it; a dump without sketches leaves none behind.
 #[test]
 fn load_stats_stores_the_dumped_fm_sketches_as_go() {
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../tests/integrationtest/s/explain_complex_stats_rr.json");
+    let fixture = crate::testkit::integrationtest_stats_fixture("explain_complex_stats_rr.json");
     let mut json: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&fixture).expect("the fixture reads"))
             .expect("the fixture is JSON");
