@@ -29,45 +29,29 @@
 //! Keeping that layout is not cosmetic: node size is what decides when a block
 //! overflows, and Go's own tests assert on the resulting block counts.
 //!
-//! # The one structural narrowing: no `unsafe`
+//! # Concurrency without `unsafe`
 //!
-//! Go implements this with raw pointer arithmetic. A node is a variable-length
-//! struct overlaid directly on arena bytes; a link is a `*node` reconstructed
-//! from an `unsafe.Pointer`; a level's next pointer is reached by adding
-//! `idx * 8` to the address of a struct field; and readers walk the whole list
-//! with no lock, publishing and observing links through `atomic.LoadUint64` /
-//! `atomic.StoreUint64` while a single writer mutates.
+//! Go implements this with raw pointer arithmetic: a node is a variable-length
+//! struct overlaid on arena bytes, and readers walk the whole list with no
+//! lock, observing links through `atomic.LoadUint64` while the single writer
+//! publishes them with `atomic.StoreUint64`. This workspace forbids `unsafe`,
+//! so:
 //!
-//! This workspace forbids `unsafe`, so:
+//! - **Addresses replace pointers.** Every link is an [`arena::ArenaAddr`] —
+//!   Go's own `blockIdx+1 << 32 | blockOffset` packing — and a block's bytes
+//!   are little-endian atomic words in Go's byte layout. A link is one word,
+//!   stored with release and loaded with acquire ordering, Go's atomics.
+//! - **Readers take no lock.** [`MemStore::get`] and [`Iterator`] read while
+//!   the writer runs. A grown arena is a new block list the store publishes
+//!   whole (Go's `arenaPtr` swap); a reader whose view predates a block it
+//!   reaches reloads the list.
+//! - **One writer.** Go's store "only supports single thread write", which
+//!   its callers honour by funnelling writes through `writeLockWorker`. The
+//!   writer's state sits behind a lock that makes the contract checkable.
 //!
-//! - **Addresses replace pointers.** Every link is an
-//!   [`arena::ArenaAddr`] — Go's own `blockIdx+1 << 32 | blockOffset`
-//!   packing, unchanged — and node fields are read out of the block's
-//!   `Vec<u8>` with explicit little-endian decoding. The byte layout is Go's
-//!   exactly (see [`lockstore`]'s module docs), because node size decides when
-//!   an arena block overflows and Go's own tests assert on the resulting block
-//!   counts.
-//! - **Exclusivity replaces atomics.** `&mut self` for writes and `&self` for
-//!   reads gives the compiler the single-writer/many-reader invariant Go
-//!   documents in prose, so the link loads and stores are plain reads and
-//!   writes. Callers that share the store across threads wrap it exactly as
-//!   Go's own `TestMemStoreConcurrent` does — in an `RwLock`.
-//! - **In-place growth replaces arena swapping.** Go allocates a whole new
-//!   `arena` and swaps a pointer to it so a lock-free reader mid-walk keeps a
-//!   consistent block slice; [`arena::Arena::grow`] appends in place, which is
-//!   observationally identical once no reader can be mid-walk.
-//!
-//! What is therefore **not** claimed: Go's memory layout in the C sense. There
-//! are no raw pointers, no structs overlaid on memory, and no lock-free
-//! reader. [`arena::REUSE_SAFE_DURATION`], the delay Go needs so a lock-free
-//! reader cannot observe a recycled block, is nonetheless kept — it decides
-//! when block reuse begins and so is visible in the arena block count that
-//! Go's `TestMemStore` asserts on.
-//!
-//! Everything else is observable behavior and is reproduced: key ordering,
-//! `Get`/`Put`/`Delete`/`replace` results, hint-based splice reuse, iterator
-//! seek/next/prev/valid, arena block accounting and delayed reuse, and the
-//! dump file format.
+//! [`arena::REUSE_SAFE_DURATION`] is Go's: a block emptied by deletes is
+//! rewritten only after the delay, so a reader still on a deleted node reads
+//! its old bytes.
 //!
 //! # Other narrowings
 //!
@@ -104,7 +88,12 @@ pub use arena::{Arena, ArenaAddr, NULL_ARENA_ADDR, REUSE_SAFE_DURATION};
 pub use iterator::Iterator;
 
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Arc, Mutex, PoisonError};
 
+use arc_swap::ArcSwap;
+
+use crate::arena::{ArenaBlock, Blocks};
 
 /// Go `maxHeight`.
 pub const MAX_HEIGHT: usize = 16;
@@ -112,62 +101,86 @@ pub const MAX_HEIGHT: usize = 16;
 /// Go `nodeHeaderSize`: `unsafe.Sizeof(nodeHeader{})` on a 64-bit target.
 pub const NODE_HEADER_SIZE: usize = 16;
 
-/// Reads a node's height.
-fn node_height(a: &Arena, addr: ArenaAddr) -> usize {
-    let d = a.get(addr, NODE_HEADER_SIZE);
-    usize::from(u16::from_le_bytes([d[8], d[9]]))
+/// Go's `nodeHeader` after `addr`: `height`, `keyLen`, `valLen`, the node's
+/// second word.
+#[derive(Clone, Copy)]
+struct NodeHeader {
+    height: usize,
+    key_len: usize,
+    val_len: usize,
 }
 
-/// Reads a node's key length.
-fn node_key_len(a: &Arena, addr: ArenaAddr) -> usize {
-    let d = a.get(addr, NODE_HEADER_SIZE);
-    usize::from(u16::from_le_bytes([d[10], d[11]]))
+impl NodeHeader {
+    fn decode(word: u64) -> Self {
+        Self {
+            height: (word & 0xffff) as usize,
+            key_len: ((word >> 16) & 0xffff) as usize,
+            val_len: (word >> 32) as usize,
+        }
+    }
+
+    /// Go `(*node).nodeLen`: the header plus the next-pointer array.
+    fn node_len(self) -> usize {
+        self.height * 8 + NODE_HEADER_SIZE
+    }
 }
 
-/// Reads a node's value length.
-fn node_val_len(a: &Arena, addr: ArenaAddr) -> usize {
-    let d = a.get(addr, NODE_HEADER_SIZE);
-    u32::from_le_bytes([d[12], d[13], d[14], d[15]]) as usize
-}
+/// The node operations over one block list: Go's `(*node)` methods reached
+/// through `ls.getArena()`.
+pub(crate) struct Nodes<'a>(&'a [Arc<ArenaBlock>]);
 
-/// Go `(*node).nodeLen`: the header plus the next-pointer array.
-fn node_len(a: &Arena, addr: ArenaAddr) -> usize {
-    node_height(a, addr) * 8 + NODE_HEADER_SIZE
-}
+impl Nodes<'_> {
+    fn block(&self, addr: ArenaAddr) -> (&ArenaBlock, usize) {
+        assert!(
+            addr.block_idx() < self.0.len(),
+            "arena.get out of range. len(blocks)={}, addr.blockIdx()={}, addr.blockOffset()={}",
+            self.0.len(),
+            addr.block_idx(),
+            addr.block_offset(),
+        );
+        (&self.0[addr.block_idx()], addr.block_offset() as usize)
+    }
 
-/// Go `(*node).getKey`.
-fn node_key(a: &Arena, addr: ArenaAddr) -> &[u8] {
-    let node_len = node_len(a, addr);
-    let key_len = node_key_len(a, addr);
-    &a.get(addr, node_len + key_len)[node_len..]
-}
+    fn header(&self, addr: ArenaAddr) -> NodeHeader {
+        let (block, offset) = self.block(addr);
+        NodeHeader::decode(block.load_word(offset + 8))
+    }
 
-/// Go `(*node).getValue`.
-fn node_value(a: &Arena, addr: ArenaAddr) -> &[u8] {
-    let prefix = node_len(a, addr) + node_key_len(a, addr);
-    &a.get(addr, prefix + node_val_len(a, addr))[prefix..]
-}
+    /// Go `(*node).getNextAddr`: `atomic.LoadUint64`.
+    fn next(&self, addr: ArenaAddr, level: usize) -> ArenaAddr {
+        let (block, offset) = self.block(addr);
+        ArenaAddr(block.load_word(offset + NODE_HEADER_SIZE + level * 8))
+    }
 
-/// Go `(*node).getNextAddr`.
-///
-/// narrowing: Go reads this with `atomic.LoadUint64` so that a lock-free
-/// reader sees a torn-free link while the single writer publishes one. Rust
-/// gets the same guarantee from `&`/`&mut` exclusivity — a reader holding `&`
-/// proves no writer is running — so the load is a plain read.
-fn node_next(a: &Arena, addr: ArenaAddr, level: usize) -> ArenaAddr {
-    let off = NODE_HEADER_SIZE + level * 8;
-    let d = a.get(addr, off + 8);
-    let mut buf = [0u8; 8];
-    buf.copy_from_slice(&d[off..off + 8]);
-    ArenaAddr(u64::from_le_bytes(buf))
-}
+    /// Go `(*node).setNextAddr`: `atomic.StoreUint64`, which publishes the
+    /// node a link points to.
+    fn set_next(&self, addr: ArenaAddr, level: usize, next: ArenaAddr) {
+        let (block, offset) = self.block(addr);
+        block.store_word(offset + NODE_HEADER_SIZE + level * 8, next.0);
+    }
 
-/// Go `(*node).setNextAddr` / `(*node).setNexts`; see [`node_next`] for why
-/// this is not an atomic store.
-fn node_set_next(a: &mut Arena, addr: ArenaAddr, level: usize, next: ArenaAddr) {
-    let off = NODE_HEADER_SIZE + level * 8;
-    let d = a.get_mut(addr, off + 8);
-    d[off..off + 8].copy_from_slice(&next.0.to_le_bytes());
+    /// `bytes.Compare(node.getKey(), key)`.
+    fn cmp_key(&self, addr: ArenaAddr, key: &[u8]) -> Ordering {
+        let header = self.header(addr);
+        let (block, offset) = self.block(addr);
+        block.cmp_bytes(offset + header.node_len(), header.key_len, key)
+    }
+
+    /// Go `(*node).getKey`, copied out.
+    pub(crate) fn key(&self, addr: ArenaAddr, out: &mut Vec<u8>) {
+        let header = self.header(addr);
+        let (block, offset) = self.block(addr);
+        out.clear();
+        block.read_bytes(offset + header.node_len(), header.key_len, out);
+    }
+
+    /// Go `(*node).getValue`, copied out.
+    pub(crate) fn value(&self, addr: ArenaAddr, out: &mut Vec<u8>) {
+        let header = self.header(addr);
+        let (block, offset) = self.block(addr);
+        out.clear();
+        block.read_bytes(offset + header.node_len() + header.key_len, header.val_len, out);
+    }
 }
 
 /// Go's `ls.rand`, a `math/rand.Source64` seeded from `time.Now().Unix()`.
@@ -226,31 +239,62 @@ impl Hint {
     }
 }
 
-/// Go `MemStore`: a skiplist variant used to store locks.
-///
-/// Compared to a normal skiplist it only supports single-threaded writes, but
-/// it can reuse memory so that memory usage does not keep growing.
-///
-/// narrowing: Go's readers walk the list with no lock at all, relying on
-/// atomic link loads plus [`crate::arena::REUSE_SAFE_DURATION`] to bound the
-/// window in which a freed node might still be read. This workspace forbids
-/// `unsafe`, so the same single-writer/many-reader discipline is expressed as
-/// `&mut self` for writes and `&self` for reads, and callers that want it
-/// across threads wrap the store the way Go's own `TestMemStoreConcurrent`
-/// already does — in an `RwLock`. Everything observable is unchanged: key
-/// ordering, get/put/delete/replace results, iterator positioning, arena block
-/// accounting, and the dump format. What is deliberately *not* reproduced is
-/// Go's memory layout in the C sense — there are no raw pointers, no node
-/// structs overlaid on memory, and no lock-free reader.
+/// The single writer's state: Go's arena allocation fields and `ls.rand`.
+/// Go's store "only supports single thread write" (its callers funnel writes
+/// through `writeLockWorker`); the lock is that contract made checkable.
 #[derive(Debug)]
-pub struct MemStore {
-    /// Current height, `1 <= height <= MAX_HEIGHT`.
-    height: usize,
-    head: ArenaAddr,
+struct Writer {
     arena: Arena,
     // We only consume 2 bits for a random height call.
     rand: Rand,
-    length: usize,
+}
+
+/// Go `MemStore`: a skiplist variant used to store locks.
+///
+/// Compared to a normal skiplist it only supports single-threaded writes, but
+/// it can reuse memory so that memory usage does not keep growing. Readers
+/// take no lock: links are loaded and stored atomically, a grown arena is
+/// published whole (Go's `arenaPtr`), and an emptied block is reused only
+/// after [`crate::arena::REUSE_SAFE_DURATION`].
+pub struct MemStore {
+    /// Current height, `1 <= height <= MAX_HEIGHT` (Go `atomic` height).
+    height: AtomicUsize,
+    pub(crate) head: ArenaAddr,
+    /// Go `arenaPtr`: the block list readers walk.
+    blocks: ArcSwap<Vec<Arc<ArenaBlock>>>,
+    /// The arena's [`arena::Grace`]: readers pin it.
+    grace: Arc<arena::Grace>,
+    writer: Mutex<Writer>,
+    length: AtomicUsize,
+}
+
+impl std::fmt::Debug for MemStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemStore")
+            .field("height", &self.height)
+            .field("length", &self.length)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A reader's view of the blocks (Go reads `ls.getArena()` at every access),
+/// reloaded when a link names a block grown after the view was taken, and
+/// its pin on the grace period that keeps the nodes it reads from being
+/// rewritten. The guard is `arc_swap`'s: a reader takes no shared reference
+/// count.
+pub(crate) struct ReadView<'a> {
+    ls: &'a MemStore,
+    blocks: arc_swap::Guard<Blocks>,
+    _pin: arena::GracePin<'a>,
+}
+
+impl ReadView<'_> {
+    pub(crate) fn nodes(&mut self, addr: ArenaAddr) -> Nodes<'_> {
+        if !addr.is_null() && addr.block_idx() >= self.blocks.len() {
+            self.blocks = self.ls.blocks.load();
+        }
+        Nodes(&self.blocks)
+    }
 }
 
 impl MemStore {
@@ -269,30 +313,69 @@ impl MemStore {
     /// skipped.
     #[must_use]
     pub fn with_seed(arena_block_size: usize, seed: u64) -> Self {
-        let mut ls = Self {
-            height: 1,
-            head: NULL_ARENA_ADDR,
+        let mut writer = Writer {
             arena: Arena::new(arena_block_size),
             rand: Rand::new(seed),
-            length: 0,
         };
-        ls.set_head_node();
+        let head = new_node(&mut writer.arena, &[], &[], MAX_HEIGHT);
+        let ls = Self {
+            height: AtomicUsize::new(1),
+            head,
+            blocks: ArcSwap::new(Arc::clone(&writer.arena.blocks)),
+            grace: Arc::clone(&writer.arena.grace),
+            writer: Mutex::new(writer),
+            length: AtomicUsize::new(0),
+        };
+        // Go `setHeadNode`.
+        {
+            let writer = ls.lock_writer();
+            let nodes = Nodes(&writer.arena.blocks);
+            for i in 0..MAX_HEIGHT {
+                nodes.set_next(head, i, NULL_ARENA_ADDR);
+            }
+        }
         ls
     }
 
-    /// Go `setHeadNode`.
-    fn set_head_node(&mut self) {
-        let n = self.new_node(&[], &[], MAX_HEIGHT);
-        for i in 0..MAX_HEIGHT {
-            node_set_next(&mut self.arena, n, i, NULL_ARENA_ADDR);
-        }
-        self.head = n;
+    fn lock_writer(&self) -> std::sync::MutexGuard<'_, Writer> {
+        self.writer.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The arena backing this store, as Go's `getArena` returns it.
+    /// The single writer, held across a batch of writes (Go's
+    /// `writeLockWorker` applies a batch group as the one writer).
     #[must_use]
-    pub fn arena(&self) -> &Arena {
-        &self.arena
+    pub fn writer(&self) -> MemStoreWriter<'_> {
+        MemStoreWriter {
+            ls: self,
+            writer: self.lock_writer(),
+        }
+    }
+
+    pub(crate) fn read_view(&self) -> ReadView<'_> {
+        // Pin first: the blocks loaded after it hold every node the read can
+        // reach.
+        let pin = self.grace.pin();
+        ReadView {
+            ls: self,
+            blocks: self.blocks.load(),
+            _pin: pin,
+        }
+    }
+
+    /// Go `len(ls.getArena().blocks)`.
+    #[must_use]
+    pub fn block_count(&self) -> usize {
+        self.lock_writer().arena.block_count()
+    }
+
+    /// Go `len(ls.getArena().pendingBlocks)`.
+    #[must_use]
+    pub fn pending_block_count(&self) -> usize {
+        self.lock_writer().arena.pending_block_count()
+    }
+
+    fn get_height(&self) -> usize {
+        self.height.load(AtomicOrdering::Acquire)
     }
 
     /// Go `Get`: looks `key` up, refilling `buf` on a hit.
@@ -301,44 +384,29 @@ impl MemStore {
     /// truncated and refilled with the value; on a miss it is left untouched
     /// and `None` returns, matching Go's `nil` result.
     pub fn get<'b>(&self, key: &[u8], buf: &'b mut Vec<u8>) -> Option<&'b [u8]> {
-        let (e, matched) = self.find_greater(key, true);
+        let mut view = self.read_view();
+        let (e, matched) = self.find_greater(&mut view, key, true);
         if !matched {
             return None;
         }
-        buf.clear();
-        buf.extend_from_slice(node_value(&self.arena, e));
+        view.nodes(e).value(e, buf);
         Some(buf.as_slice())
     }
 
     /// Go `getNext`.
-    pub(crate) fn get_next(&self, n: ArenaAddr, level: usize) -> ArenaAddr {
-        node_next(&self.arena, n, level)
-    }
-
-    /// The head node, which no lookup ever returns.
-    pub(crate) fn head(&self) -> ArenaAddr {
-        self.head
-    }
-
-    /// The key of a node this store returned.
-    pub(crate) fn key_of(&self, addr: ArenaAddr) -> &[u8] {
-        node_key(&self.arena, addr)
-    }
-
-    /// The value of a node this store returned.
-    pub(crate) fn value_of(&self, addr: ArenaAddr) -> &[u8] {
-        node_value(&self.arena, addr)
+    pub(crate) fn get_next(&self, view: &mut ReadView<'_>, n: ArenaAddr, level: usize) -> ArenaAddr {
+        view.nodes(n).next(n, level)
     }
 
     /// Go `findGreater`: the first entry `> key`, or `>= key` when
     /// `allow_equal`. The bool reports an exact match.
-    pub(crate) fn find_greater(&self, key: &[u8], allow_equal: bool) -> (ArenaAddr, bool) {
+    pub(crate) fn find_greater(&self, view: &mut ReadView<'_>, key: &[u8], allow_equal: bool) -> (ArenaAddr, bool) {
         let mut prev = self.head;
-        let mut level = self.height - 1;
+        let mut level = self.get_height() - 1;
         loop {
-            let next = node_next(&self.arena, prev, level);
+            let next = view.nodes(prev).next(prev, level);
             if !next.is_null() {
-                let cmp = node_key(&self.arena, next).cmp(key);
+                let cmp = view.nodes(next).cmp_key(next, key);
                 if cmp == Ordering::Less {
                     // next key is still smaller, keep moving.
                     prev = next;
@@ -365,13 +433,13 @@ impl MemStore {
 
     /// Go `findLess`: the last entry `< key`, or `<= key` when `allow_equal`.
     /// The bool reports an exact match.
-    pub(crate) fn find_less(&self, key: &[u8], allow_equal: bool) -> (ArenaAddr, bool) {
+    pub(crate) fn find_less(&self, view: &mut ReadView<'_>, key: &[u8], allow_equal: bool) -> (ArenaAddr, bool) {
         let mut prev = self.head;
-        let mut level = self.height - 1;
+        let mut level = self.get_height() - 1;
         loop {
-            let next = node_next(&self.arena, prev, level);
+            let next = view.nodes(prev).next(prev, level);
             if !next.is_null() {
-                let cmp = key.cmp(node_key(&self.arena, next));
+                let cmp = view.nodes(next).cmp_key(next, key).reverse();
                 if cmp == Ordering::Greater {
                     // prev.key < next.key < key. We can continue to move right.
                     prev = next;
@@ -396,37 +464,13 @@ impl MemStore {
         (prev, false)
     }
 
-    /// Go `findSpliceForLevel`: returns `(before, after)` with
-    /// `before.key < key <= after.key`, starting the walk at `before`. The
-    /// bool reports that `after.key == key`.
-    fn find_splice_for_level(
-        &self,
-        key: &[u8],
-        mut before: ArenaAddr,
-        level: usize,
-    ) -> (ArenaAddr, ArenaAddr, bool) {
-        loop {
-            // Assume before.key < key.
-            let next_addr = node_next(&self.arena, before, level);
-            if next_addr.is_null() {
-                return (before, NULL_ARENA_ADDR, false);
-            }
-            let cmp = node_key(&self.arena, next_addr).cmp(key);
-            if cmp != Ordering::Less {
-                // before.key < key < next.key. We are done for this level.
-                return (before, next_addr, cmp == Ordering::Equal);
-            }
-            before = next_addr; // Keep moving right on this level.
-        }
-    }
-
     /// Go `findLast`: the last element, or null for an empty store. Like every
     /// other find, it never returns the head.
-    pub(crate) fn find_last(&self) -> ArenaAddr {
+    pub(crate) fn find_last(&self, view: &mut ReadView<'_>) -> ArenaAddr {
         let mut e = self.head;
-        let mut level = self.height - 1;
+        let mut level = self.get_height() - 1;
         loop {
-            let next = node_next(&self.arena, e, level);
+            let next = view.nodes(e).next(e, level);
             if !next.is_null() {
                 e = next;
                 continue;
@@ -442,63 +486,75 @@ impl MemStore {
     }
 
     /// Go `Put`: inserts or replaces, returning whether the key was new.
-    pub fn put(&mut self, key: &[u8], v: &[u8]) -> bool {
+    pub fn put(&self, key: &[u8], v: &[u8]) -> bool {
         let mut hint = Hint::new();
         self.put_with_hint(key, v, &mut hint)
     }
 
     /// Go `PutWithHint`: [`MemStore::put`] reusing a caller-owned splice.
-    pub fn put_with_hint(&mut self, key: &[u8], v: &[u8], hint: &mut Hint) -> bool {
-        let ls_height = self.height;
-        let recompute_height = self.calculate_recompute_height(key, hint, ls_height);
+    pub fn put_with_hint(&self, key: &[u8], v: &[u8], hint: &mut Hint) -> bool {
+        self.writer().put_with_hint(key, v, hint)
+    }
+
+    fn put_with_hint_locked(&self, writer: &mut Writer, key: &[u8], v: &[u8], hint: &mut Hint) -> bool {
+        let ls_height = self.get_height();
+        let recompute_height = {
+            let nodes = Nodes(&writer.arena.blocks);
+            self.calculate_recompute_height(&nodes, key, hint, ls_height)
+        };
         let mut old = NULL_ARENA_ADDR;
-        if recompute_height > 0 {
-            for i in (0..recompute_height).rev() {
-                // Use higher level to speed up for current level.
-                let (prev, next, exists) = self.find_splice_for_level(key, hint.prev[i + 1], i);
-                hint.prev[i] = prev;
-                hint.next[i] = next;
-                if exists {
-                    old = next;
+        {
+            let nodes = Nodes(&writer.arena.blocks);
+            if recompute_height > 0 {
+                for i in (0..recompute_height).rev() {
+                    // Use higher level to speed up for current level.
+                    let (prev, next, exists) = find_splice_for_level(&nodes, key, hint.prev[i + 1], i);
+                    hint.prev[i] = prev;
+                    hint.next[i] = next;
+                    if exists {
+                        old = next;
+                    }
                 }
+            } else if !hint.next[0].is_null() && nodes.cmp_key(hint.next[0], key) == Ordering::Equal {
+                old = hint.next[0];
             }
-        } else if !hint.next[0].is_null() && node_key(&self.arena, hint.next[0]) == key {
-            old = hint.next[0];
         }
 
         if !old.is_null() {
-            self.replace(key, v, hint, old);
+            self.replace(writer, key, v, hint, old);
             return false;
         }
-        let height = self.random_height();
-        let x = self.new_node(key, v, height);
+        let height = random_height(&mut writer.rand);
+        let x = self.new_node(writer, key, v, height);
         if height > ls_height {
-            self.height = height;
+            self.height.store(height, AtomicOrdering::Release);
         }
 
         // We always insert from the base level and up. After you add a node in
         // the base level, we cannot create a node in the level above because it
         // would have discovered the node in the base level.
+        let nodes = Nodes(&writer.arena.blocks);
         for i in 0..height {
-            node_set_next(&mut self.arena, x, i, hint.next[i]);
+            nodes.set_next(x, i, hint.next[i]);
             if hint.prev[i].is_null() {
                 hint.prev[i] = self.head;
             }
-            node_set_next(&mut self.arena, hint.prev[i], i, x);
+            nodes.set_next(hint.prev[i], i, x);
             hint.prev[i] = x;
         }
-        self.length += 1;
+        self.length.fetch_add(1, AtomicOrdering::Relaxed);
         true
     }
 
     /// Go `replace`: writes a fresh node with the same height over `old`'s
     /// place in every level, then frees `old`.
-    fn replace(&mut self, key: &[u8], v: &[u8], hint: &mut Hint, old: ArenaAddr) {
-        let old_height = node_height(&self.arena, old);
-        let x = self.new_node(key, v, old_height);
+    fn replace(&self, writer: &mut Writer, key: &[u8], v: &[u8], hint: &mut Hint, old: ArenaAddr) {
+        let old_height = Nodes(&writer.arena.blocks).header(old).height;
+        let x = self.new_node(writer, key, v, old_height);
+        let nodes = Nodes(&writer.arena.blocks);
         for i in 0..old_height {
-            let next_addr = node_next(&self.arena, old, i);
-            node_set_next(&mut self.arena, x, i, next_addr);
+            let next_addr = nodes.next(old, i);
+            nodes.set_next(x, i, next_addr);
             hint.next[i] = next_addr;
             // Go indexes the nil prev and panics here; stale hints past the
             // recomputed height are unreachable with valid hints.
@@ -506,51 +562,32 @@ impl MemStore {
                 !hint.prev[i].is_null(),
                 "lockstore replace: null prev at level {i}"
             );
-            node_set_next(&mut self.arena, hint.prev[i], i, x);
+            nodes.set_next(hint.prev[i], i, x);
             hint.prev[i] = x;
         }
-        self.arena.free(old);
+        writer.arena.free(old);
     }
 
     /// Go `MaxEntrySize`: any entry larger than this will likely fail.
     #[must_use]
     pub fn max_entry_size(&self) -> usize {
-        self.arena.block_size - NODE_HEADER_SIZE - self.height * 8
+        self.lock_writer().arena.block_size - NODE_HEADER_SIZE - self.get_height() * 8
     }
 
-    /// Go `newNode`.
-    fn new_node(&mut self, key: &[u8], v: &[u8], height: usize) -> ArenaAddr {
-        // The base level is already allocated in the node struct.
-        let node_size = NODE_HEADER_SIZE + height * 8 + key.len() + v.len();
-        let mut addr = self.arena.alloc(node_size);
-        if addr.is_null() {
-            self.arena.grow();
-            // The new arena block must have enough memory to alloc.
-            addr = self.arena.alloc(node_size);
+    /// Go `newNode`, with Go's `grow` publishing the grown arena.
+    fn new_node(&self, writer: &mut Writer, key: &[u8], v: &[u8], height: usize) -> ArenaAddr {
+        let grown_before = Arc::as_ptr(&writer.arena.blocks);
+        let addr = new_node(&mut writer.arena, key, v, height);
+        if Arc::as_ptr(&writer.arena.blocks) != grown_before {
+            // Go `ls.setArena(arena.grow())`.
+            self.blocks.store(Arc::clone(&writer.arena.blocks));
         }
-        let node_len = NODE_HEADER_SIZE + height * 8;
-        let data = self.arena.get_mut(addr, node_size);
-        data[0..8].copy_from_slice(&addr.0.to_le_bytes());
-        data[8..10].copy_from_slice(&(height as u16).to_le_bytes());
-        data[10..12].copy_from_slice(&(key.len() as u16).to_le_bytes());
-        data[12..16].copy_from_slice(&(v.len() as u32).to_le_bytes());
-        data[node_len..node_len + key.len()].copy_from_slice(key);
-        data[node_len + key.len()..].copy_from_slice(v);
         addr
-    }
-
-    /// Go `randomHeight`: geometric with p = 1/4, capped at [`MAX_HEIGHT`].
-    fn random_height(&mut self) -> usize {
-        let mut h = 1;
-        while h < MAX_HEIGHT && self.rand.uint64() < u64::MAX / 4 {
-            h += 1;
-        }
-        h
     }
 
     /// Go `calculateRecomputeHeight`: how much of the hint's splice is stale
     /// for `key` and must be searched again.
-    fn calculate_recompute_height(&self, key: &[u8], hint: &mut Hint, list_height: usize) -> usize {
+    fn calculate_recompute_height(&self, nodes: &Nodes<'_>, key: &[u8], hint: &mut Hint, list_height: usize) -> usize {
         let mut recompute_height = 0;
         if hint.height < list_height {
             // Either splice is never used or list height has grown, we
@@ -566,7 +603,7 @@ impl MemStore {
                 let prev_next = if prev_node.is_null() {
                     NULL_ARENA_ADDR
                 } else {
-                    node_next(&self.arena, prev_node, recompute_height)
+                    nodes.next(prev_node, recompute_height)
                 };
                 if prev_next != next_node {
                     recompute_height += 1;
@@ -574,14 +611,14 @@ impl MemStore {
                 }
                 let key_before_prev = prev_node != self.head
                     && !prev_node.is_null()
-                    && key <= node_key(&self.arena, prev_node);
+                    && nodes.cmp_key(prev_node, key) != Ordering::Less;
                 if key_before_prev {
                     while prev_node == hint.prev[recompute_height] {
                         recompute_height += 1;
                     }
                     continue;
                 }
-                let key_after_next = !next_node.is_null() && key > node_key(&self.arena, next_node);
+                let key_after_next = !next_node.is_null() && nodes.cmp_key(next_node, key) == Ordering::Less;
                 if key_after_next {
                     while next_node == hint.next[recompute_height] {
                         recompute_height += 1;
@@ -595,30 +632,35 @@ impl MemStore {
     }
 
     /// Go `DeleteWithHint`: removes `key`, returning whether it was present.
-    pub fn delete_with_hint(&mut self, key: &[u8], hint: &mut Hint) -> bool {
-        let list_height = self.height;
-        let recompute_height = self.calculate_recompute_height(key, hint, list_height);
+    pub fn delete_with_hint(&self, key: &[u8], hint: &mut Hint) -> bool {
+        self.writer().delete_with_hint(key, hint)
+    }
+
+    fn delete_with_hint_locked(&self, writer: &mut Writer, key: &[u8], hint: &mut Hint) -> bool {
+        let list_height = self.get_height();
+        let nodes = Nodes(&writer.arena.blocks);
+        let recompute_height = self.calculate_recompute_height(&nodes, key, hint, list_height);
         let mut key_node = NULL_ARENA_ADDR;
         if recompute_height > 0 {
             for i in (0..recompute_height).rev() {
                 // Use higher level to speed up for current level.
-                let (prev, next, matched) = self.find_splice_for_level(key, hint.prev[i + 1], i);
+                let (prev, next, matched) = find_splice_for_level(&nodes, key, hint.prev[i + 1], i);
                 hint.prev[i] = prev;
                 hint.next[i] = next;
                 if matched {
                     key_node = next;
                 }
             }
-        } else if !hint.next[0].is_null() && node_key(&self.arena, hint.next[0]) == key {
+        } else if !hint.next[0].is_null() && nodes.cmp_key(hint.next[0], key) == Ordering::Equal {
             key_node = hint.next[0];
         }
         if key_node.is_null() {
             return false;
         }
-        for i in (0..node_height(&self.arena, key_node)).rev() {
+        for i in (0..nodes.header(key_node).height).rev() {
             // Change the nexts from higher to lower, so the data is consistent
             // at any point.
-            let addr = node_next(&self.arena, key_node, i);
+            let addr = nodes.next(key_node, i);
             hint.next[i] = addr;
             // Go indexes the nil prev and panics; same unreachable-with-
             // valid-hints guard as replace.
@@ -626,15 +668,15 @@ impl MemStore {
                 !hint.prev[i].is_null(),
                 "lockstore delete: null prev at level {i}"
             );
-            node_set_next(&mut self.arena, hint.prev[i], i, addr);
+            nodes.set_next(hint.prev[i], i, addr);
         }
-        self.arena.free(key_node);
-        self.length -= 1;
+        writer.arena.free(key_node);
+        self.length.fetch_sub(1, AtomicOrdering::Relaxed);
         true
     }
 
     /// Go `Delete`.
-    pub fn delete(&mut self, key: &[u8]) -> bool {
+    pub fn delete(&self, key: &[u8]) -> bool {
         let mut hint = Hint::new();
         self.delete_with_hint(key, &mut hint)
     }
@@ -642,15 +684,89 @@ impl MemStore {
     /// Go `Len`: the number of live entries.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.length
+        self.length.load(AtomicOrdering::Relaxed)
     }
 
     /// Whether the store holds no entry. Go has no such method; Rust's API
     /// guidelines pair it with [`MemStore::len`].
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.length == 0
+        self.len() == 0
     }
+}
+
+/// [`MemStore::writer`]: writes applied under one hold of the writer.
+pub struct MemStoreWriter<'a> {
+    ls: &'a MemStore,
+    writer: std::sync::MutexGuard<'a, Writer>,
+}
+
+impl MemStoreWriter<'_> {
+    /// Go `PutWithHint`.
+    pub fn put_with_hint(&mut self, key: &[u8], v: &[u8], hint: &mut Hint) -> bool {
+        self.ls.put_with_hint_locked(&mut self.writer, key, v, hint)
+    }
+
+    /// Go `DeleteWithHint`.
+    pub fn delete_with_hint(&mut self, key: &[u8], hint: &mut Hint) -> bool {
+        self.ls.delete_with_hint_locked(&mut self.writer, key, hint)
+    }
+}
+
+/// Go `findSpliceForLevel`: returns `(before, after)` with
+/// `before.key < key <= after.key`, starting the walk at `before`. The bool
+/// reports that `after.key == key`.
+fn find_splice_for_level(
+    nodes: &Nodes<'_>,
+    key: &[u8],
+    mut before: ArenaAddr,
+    level: usize,
+) -> (ArenaAddr, ArenaAddr, bool) {
+    loop {
+        // Assume before.key < key.
+        let next_addr = nodes.next(before, level);
+        if next_addr.is_null() {
+            return (before, NULL_ARENA_ADDR, false);
+        }
+        let cmp = nodes.cmp_key(next_addr, key);
+        if cmp != Ordering::Less {
+            // before.key < key < next.key. We are done for this level.
+            return (before, next_addr, cmp == Ordering::Equal);
+        }
+        before = next_addr; // Keep moving right on this level.
+    }
+}
+
+/// Go `newNode`: allocates (growing the arena when no block has room) and
+/// writes the node's header, key and value; its links are set by the caller,
+/// whose last `setNextAddr` publishes it.
+fn new_node(arena: &mut Arena, key: &[u8], v: &[u8], height: usize) -> ArenaAddr {
+    // The base level is already allocated in the node struct.
+    let node_size = NODE_HEADER_SIZE + height * 8 + key.len() + v.len();
+    let mut addr = arena.alloc(node_size);
+    if addr.is_null() {
+        arena.grow();
+        // The new arena block must have enough memory to alloc.
+        addr = arena.alloc(node_size);
+    }
+    let node_len = NODE_HEADER_SIZE + height * 8;
+    let block = arena.block(addr.block_idx());
+    let offset = addr.block_offset() as usize;
+    block.write_bytes(offset, &addr.0.to_le_bytes());
+    let header = height as u64 | ((key.len() as u64) << 16) | ((v.len() as u64) << 32);
+    block.write_bytes(offset + 8, &header.to_le_bytes());
+    block.write_bytes(offset + node_len, key);
+    block.write_bytes(offset + node_len + key.len(), v);
+    addr
+}
+
+/// Go `randomHeight`: geometric with p = 1/4, capped at [`MAX_HEIGHT`].
+fn random_height(rand: &mut Rand) -> usize {
+    let mut h = 1;
+    while h < MAX_HEIGHT && rand.uint64() < u64::MAX / 4 {
+        h += 1;
+    }
+    h
 }
 
 /// Go's `rand.NewSource(time.Now().Unix())` seed.
@@ -710,15 +826,15 @@ mod tests {
         let mut buf = Vec::new();
         assert!(ls.get(b"a", &mut buf).is_none());
         insert_mem_store(&mut ls, prefix, "", n);
-        let num_blocks = ls.arena().blocks.len();
+        let num_blocks = ls.block_count();
         check_mem_store(&ls, prefix, "", n);
         delete_mem_store(&mut ls, prefix, n);
-        assert_eq!(ls.arena().blocks.len(), num_blocks);
+        assert_eq!(ls.block_count(), num_blocks);
         std::thread::sleep(REUSE_SAFE_DURATION);
         insert_mem_store(&mut ls, prefix, "", n);
         // Because the height is random, we insert again, the block number may
         // be different.
-        let diff = ls.arena().blocks.len() - num_blocks;
+        let diff = ls.block_count() - num_blocks;
         assert!(diff < num_blocks / 100, "diff {diff}, blocks {num_blocks}");
         assert!(ls.get(&num_to_key(n), &mut buf).is_none());
         assert!(ls.get(b"abc", &mut buf).is_none());
@@ -805,12 +921,58 @@ mod tests {
         assert!(total_insert > 0 && total_delete > 0);
     }
 
+    /// [`test_mem_store_concurrent`] with the readers Go's MVCC store has:
+    /// no lock at all (`store.lockStore.Get` beside `writeLockWorker`).
+    #[test]
+    fn test_mem_store_lock_free_readers() {
+        const KEY_RANGE: usize = 10;
+        let concurrent_keys: Vec<Vec<u8>> = (0..KEY_RANGE).map(num_to_key).collect();
+        // Small blocks, so the writer grows and reuses blocks under the
+        // readers.
+        let ls = Arc::new(MemStore::new(1 << 10));
+        let close = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut readers = Vec::new();
+        for i in 0..KEY_RANGE {
+            let ls = Arc::clone(&ls);
+            let close = Arc::clone(&close);
+            readers.push(std::thread::spawn(move || {
+                let key = num_to_key(i);
+                let mut buf = Vec::with_capacity(100);
+                while !close.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(result) = ls.get(&key, &mut buf) {
+                        assert_eq!(result, key.as_slice(), "data corruption");
+                    }
+                    let mut it = ls.new_iterator();
+                    it.seek_to_first();
+                    while it.valid() {
+                        assert_eq!(it.key(), it.value(), "data corruption");
+                        it.next();
+                    }
+                }
+            }));
+        }
+        let mut rng = TestRand::new();
+        let start = Instant::now();
+        let mut hint = Hint::new();
+        while start.elapsed() < Duration::from_secs(2) {
+            let key = &concurrent_keys[rng.below(KEY_RANGE)];
+            ls.put_with_hint(key, key, &mut hint);
+            let key = &concurrent_keys[rng.below(KEY_RANGE)];
+            ls.delete_with_hint(key, &mut hint);
+        }
+        close.store(true, std::sync::atomic::Ordering::Relaxed);
+        for r in readers {
+            r.join().expect("reader panicked");
+        }
+        assert!(ls.block_count() > 1, "the writer grew the arena under the readers");
+    }
+
     /// Not a Go test: Go's `Put`/`Delete` without a hint are only exercised
     /// through the big randomized tests, so the small ordered surface is
     /// pinned directly.
     #[test]
     fn test_put_delete_len() {
-        let mut ls = MemStore::new(1 << 10);
+        let ls = MemStore::new(1 << 10);
         assert!(ls.is_empty());
         assert!(ls.put(b"b", b"2"));
         assert!(ls.put(b"a", b"1"));
@@ -828,3 +990,4 @@ mod tests {
         assert!(ls.max_entry_size() < 1 << 10);
     }
 }
+

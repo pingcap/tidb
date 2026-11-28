@@ -11775,6 +11775,9 @@ dependencies = [
 [[package]]
 name = "tidb-unistore-lockstore"
 version = "0.0.0"
+dependencies = [
+ "arc-swap",
+]
 
 [[package]]
 name = "tidb-unistore-lockwaiter"

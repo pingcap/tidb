@@ -1286,8 +1286,6 @@ mod tests {
             // Go mockstore's RPC codec prefixes mutations before MVCC storage.
             let key = codec.as_ref().map_or_else(|| key.to_vec(), |codec| codec.encode_key(key));
             handler
-                .lock()
-                .unwrap()
                 .store
                 .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation { op: KvrpcOp::Put as i32, key: key.to_vec(), value: b"v".to_vec(), ..KvrpcMutation::default() }],
@@ -1300,8 +1298,6 @@ mod tests {
         };
         let locks = || {
             let mut keys: Vec<Vec<u8>> = handler
-                .lock()
-                .unwrap()
                 .store
                 .scan_lock(&[], &[], u64::MAX, 16)
                 .into_iter()

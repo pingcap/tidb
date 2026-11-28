@@ -48,6 +48,115 @@ pub const BOOTSTRAP_REGION_ID: u64 = 2;
 /// The bootstrap region's peer.
 pub const BOOTSTRAP_PEER_ID: u64 = 3;
 
+/// Go `latches` (`region.go`): the key-hash latches every region of a
+/// manager shares (`rm.latches`). A request holds the latches of the keys it
+/// reads and writes from its first read to its batch's write, so requests on
+/// distinct keys run concurrently and those sharing a key run one at a time.
+pub struct Latches {
+    slots: [Mutex<HashMap<u64, Arc<LatchWaitGroup>>>; 256],
+}
+
+/// Go's `*sync.WaitGroup` one acquisition publishes on its hashes: done
+/// when the holder releases them.
+#[derive(Default)]
+struct LatchWaitGroup {
+    done: Mutex<bool>,
+    released: std::sync::Condvar,
+}
+
+impl LatchWaitGroup {
+    fn wait(&self) {
+        let mut done = self.done.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while !*done {
+            done = self
+                .released
+                .wait(done)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    fn done(&self) {
+        *self.done.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        self.released.notify_all();
+    }
+}
+
+impl std::fmt::Debug for Latches {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Latches").finish_non_exhaustive()
+    }
+}
+
+impl Default for Latches {
+    /// Go `newLatches`.
+    fn default() -> Self {
+        Self {
+            slots: std::array::from_fn(|_| Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+impl Latches {
+    /// Go `regionCtx.AcquireLatches` (`latches.acquire`): `hash_vals` sorted
+    /// and deduplicated (`keysToHashVals`), so two requests always take
+    /// their common hashes in the same order. The guard is Go's deferred
+    /// `ReleaseLatches`.
+    pub fn acquire(&self, hash_vals: &[u64]) -> LatchGuard<'_> {
+        let wait_group = Arc::new(LatchWaitGroup::default());
+        for &hash in hash_vals {
+            self.acquire_one(hash, &wait_group);
+        }
+        LatchGuard {
+            latches: self,
+            hash_vals: hash_vals.to_vec(),
+            wait_group,
+        }
+    }
+
+    /// Go `latches.acquireOne`.
+    fn acquire_one(&self, hash: u64, wait_group: &Arc<LatchWaitGroup>) {
+        let slot = &self.slots[(hash >> 56) as usize];
+        loop {
+            let holder = {
+                let mut map = slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                match map.get(&hash) {
+                    Some(holder) => Arc::clone(holder),
+                    None => {
+                        map.insert(hash, Arc::clone(wait_group));
+                        return;
+                    }
+                }
+            };
+            holder.wait();
+        }
+    }
+
+    /// Go `latches.release`.
+    fn release(&self, hash_vals: &[u64], wait_group: &LatchWaitGroup) {
+        for hash in hash_vals {
+            self.slots[(hash >> 56) as usize]
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(hash);
+        }
+        wait_group.done();
+    }
+}
+
+/// The latches one request holds, released on drop (Go `defer
+/// regCtx.ReleaseLatches(hashVals)`).
+pub struct LatchGuard<'a> {
+    latches: &'a Latches,
+    hash_vals: Vec<u64>,
+    wait_group: Arc<LatchWaitGroup>,
+}
+
+impl Drop for LatchGuard<'_> {
+    fn drop(&mut self) {
+        self.latches.release(&self.hash_vals, &self.wait_group);
+    }
+}
+
 /// Go `regionCtx`: a region's meta with its decoded raw bounds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RegionCtx {
@@ -720,6 +829,43 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `latches`: a hash another request holds blocks until that request
+    /// releases it; a hash nobody holds is taken at once.
+    #[test]
+    fn a_held_latch_blocks_its_hash_only() {
+        let latches = Arc::new(Latches::default());
+        let held = latches.acquire(&[1, 2]);
+        let (sent, received) = std::sync::mpsc::channel();
+        let waiter = {
+            let latches = Arc::clone(&latches);
+            let sent = sent.clone();
+            std::thread::spawn(move || {
+                let _guard = latches.acquire(&[2, 3]);
+                sent.send("shared").unwrap();
+            })
+        };
+        {
+            let latches = Arc::clone(&latches);
+            std::thread::spawn(move || {
+                let _guard = latches.acquire(&[4]);
+                sent.send("distinct").unwrap();
+            });
+        }
+        assert_eq!(
+            received.recv_timeout(std::time::Duration::from_secs(5)),
+            Ok("distinct")
+        );
+        assert!(received
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_err());
+        drop(held);
+        assert_eq!(
+            received.recv_timeout(std::time::Duration::from_secs(5)),
+            Ok("shared")
+        );
+        waiter.join().unwrap();
+    }
 
     // WRITTEN: mock_region.go's coverage in Go rides the store suites.
 

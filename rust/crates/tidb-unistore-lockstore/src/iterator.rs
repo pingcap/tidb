@@ -15,18 +15,27 @@
 //! Go `iterator.go`: a cursor over the entries of a [`MemStore`].
 
 use crate::arena::{ArenaAddr, NULL_ARENA_ADDR};
-use crate::MemStore;
+use crate::{MemStore, ReadView};
 
 /// Go `Iterator`: iterates the entries in the [`MemStore`].
 ///
-/// The iterator borrows the store, so the current node and its arena slices
-/// stay valid until the iterator moves.
-#[derive(Debug)]
+/// The current key and value are copied out of the arena as the iterator
+/// moves (Go hands out slices of arena memory a later reuse may overwrite).
 pub struct Iterator<'a> {
     ls: &'a MemStore,
+    view: ReadView<'a>,
     current: ArenaAddr,
-    key: &'a [u8],
-    val: &'a [u8],
+    key: Vec<u8>,
+    val: Vec<u8>,
+}
+
+impl std::fmt::Debug for Iterator<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Iterator")
+            .field("current", &self.current)
+            .field("key", &self.key)
+            .finish_non_exhaustive()
+    }
 }
 
 impl MemStore {
@@ -35,9 +44,10 @@ impl MemStore {
     pub fn new_iterator(&self) -> Iterator<'_> {
         Iterator {
             ls: self,
+            view: self.read_view(),
             current: NULL_ARENA_ADDR,
-            key: &[],
-            val: &[],
+            key: Vec::new(),
+            val: Vec::new(),
         }
     }
 }
@@ -52,22 +62,22 @@ impl Iterator<'_> {
     /// Go `Key`: the key at the current position.
     #[must_use]
     pub fn key(&self) -> &[u8] {
-        self.key
+        &self.key
     }
 
     /// Go `Value`: the value at the current position.
     #[must_use]
     pub fn value(&self) -> &[u8] {
-        self.val
+        &self.val
     }
 
     /// Go `Next`: moves to the next entry.
     pub fn next(&mut self) {
         let e = if self.current.is_null() {
             // Go searches after the empty key when there is no current node.
-            self.ls.find_greater(b"", false).0
+            self.ls.find_greater(&mut self.view, b"", false).0
         } else {
-            self.ls.get_next(self.current, 0)
+            self.ls.get_next(&mut self.view, self.current, 0)
         };
         self.set_key_value(e);
     }
@@ -75,38 +85,41 @@ impl Iterator<'_> {
     /// Go `Prev`: moves to the previous entry.
     pub fn prev(&mut self) {
         // find <. No equality allowed.
-        let (e, _) = self.ls.find_less(self.key, false);
+        let key = std::mem::take(&mut self.key);
+        let (e, _) = self.ls.find_less(&mut self.view, &key, false);
+        self.key = key;
         self.set_key_value(e);
     }
 
     /// Go `Seek`: locates the first entry with a key `>= seek_key`.
     pub fn seek(&mut self, seek_key: &[u8]) {
-        let (e, _) = self.ls.find_greater(seek_key, true); // find >=.
+        let (e, _) = self.ls.find_greater(&mut self.view, seek_key, true); // find >=.
         self.set_key_value(e);
     }
 
     /// Go `SeekForPrev`: locates the last entry with a key `<= target`.
     pub fn seek_for_prev(&mut self, target: &[u8]) {
-        let (e, _) = self.ls.find_less(target, true); // find <=.
+        let (e, _) = self.ls.find_less(&mut self.view, target, true); // find <=.
         self.set_key_value(e);
     }
 
     /// Go `SeekForExclusivePrev`: locates the last entry with a key
     /// `< target`.
     pub fn seek_for_exclusive_prev(&mut self, target: &[u8]) {
-        let (e, _) = self.ls.find_less(target, false);
+        let (e, _) = self.ls.find_less(&mut self.view, target, false);
         self.set_key_value(e);
     }
 
     /// Go `SeekToFirst`: locates the first entry.
     pub fn seek_to_first(&mut self) {
-        let e = self.ls.get_next(self.ls.head(), 0);
+        let head = self.ls.head;
+        let e = self.ls.get_next(&mut self.view, head, 0);
         self.set_key_value(e);
     }
 
     /// Go `SeekToLast`: locates the last entry.
     pub fn seek_to_last(&mut self) {
-        let e = self.ls.find_last();
+        let e = self.ls.find_last(&mut self.view);
         self.set_key_value(e);
     }
 
@@ -114,11 +127,12 @@ impl Iterator<'_> {
     fn set_key_value(&mut self, e: ArenaAddr) {
         self.current = e;
         if e.is_null() {
-            self.key = &[];
-            self.val = &[];
+            self.key.clear();
+            self.val.clear();
         } else {
-            self.key = self.ls.key_of(e);
-            self.val = self.ls.value_of(e);
+            let nodes = self.view.nodes(e);
+            nodes.key(e, &mut self.key);
+            nodes.value(e, &mut self.val);
         }
     }
 }
@@ -131,7 +145,7 @@ mod tests {
     /// Builds the list Go's `TestIterator` builds: keys `ls…10` through
     /// `ls…990` in steps of 10, each value the key repeated ten times.
     fn build(seed: u64) -> MemStore {
-        let mut ls = MemStore::with_seed(1 << 10, seed);
+        let ls = MemStore::with_seed(1 << 10, seed);
         let mut hint = Hint::new();
         let mut i = 10;
         while i < 1000 {
@@ -158,7 +172,7 @@ mod tests {
     #[ignore = "Go skips this: unstable arena-block assertion, TiDB #26235"]
     fn test_iterator() {
         let ls = build(1);
-        assert_eq!(ls.arena().blocks.len(), 33);
+        assert_eq!(ls.block_count(), 33);
     }
 
     /// Go `TestIterator` minus the unstable block-count assertion, which is
@@ -200,7 +214,7 @@ mod tests {
 
     #[test]
     fn next_preserves_empty_key_and_end_behavior() {
-        let mut ls = MemStore::with_seed(256, 42);
+        let ls = MemStore::with_seed(256, 42);
         ls.put(b"", b"first");
         ls.put(b"a", b"second");
         ls.put(b"b", b"");

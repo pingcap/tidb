@@ -10523,7 +10523,9 @@ impl<PdC: PdClient> Committer<PdC> {
         } else {
             let keys = mutations
                 .map(|m| Key::from(m.key))
-                .filter(|key| &primary_key != key && !primary_batch.contains(key));
+                // client-go commits the batches after the primary's; the
+                // primary batch is in key order (`primary_commit_batch`).
+                .filter(|key| &primary_key != key && primary_batch.binary_search(key).is_err());
             new_commit_request(keys, start_version.clone(), commit_version)
         };
         req.primary_key = primary_key.clone().into();

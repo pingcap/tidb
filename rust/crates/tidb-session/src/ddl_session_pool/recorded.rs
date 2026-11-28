@@ -46,7 +46,7 @@ impl RecordedDdlSession {
         // Recorded timestamps may predate today's TSO. Seed a committed
         // version before every fixture step instead of moving its timestamps.
         if !before.is_empty() {
-            let mut handler = stack.handler.lock().unwrap();
+            let handler = &stack.handler;
             handler
                 .store
                 .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {

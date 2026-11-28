@@ -30,3 +30,4 @@ pub mod region_manager;
 mod tests_tikv_util_go_parity;
 pub(crate) mod tikv_util;
 pub mod tso;
+pub mod write;

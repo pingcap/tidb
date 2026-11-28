@@ -165,7 +165,7 @@ async fn gc_lock_resolution_clears_an_abandoned_lock_through_the_embedded_store(
         panic!("store1 is the embedded store, not a TiDB peer");
     };
     {
-        let mut handler = rpc.handler().lock().unwrap();
+        let handler = rpc.handler();
         let context = kvrpcpb::Context {
             region_id: cluster
                 .get_region_by_key(&tidb_unistore_tikv::region_manager::encode_region_key(b"k7"))
@@ -208,8 +208,6 @@ async fn gc_lock_resolution_clears_an_abandoned_lock_through_the_embedded_store(
     assert_eq!(stat.completed_regions, 2);
     assert!(rpc
         .handler()
-        .lock()
-        .unwrap()
         .store
         .scan_lock(b"", b"", u64::MAX, 16)
         .is_empty());

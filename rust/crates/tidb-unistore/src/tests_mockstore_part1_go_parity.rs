@@ -373,7 +373,7 @@ fn closure_executor_selection_over_point_range_answers_zero_rows() {
 fn check_txn_status_reports_a_foreign_primary_and_rolls_it_back() {
     use tidb_proto::{KvrpcMutation, KvrpcOp};
 
-    let mut store = MvccStore::new();
+    let store = MvccStore::new();
     let pk_here = b"tpk";
     let primary_there = b"another_key";
     let start_ts = 43_u64;
@@ -442,7 +442,7 @@ fn check_txn_status_reports_a_foreign_primary_and_rolls_it_back() {
 fn check_secondary_locks_rolls_back_a_pessimistic_secondary() {
     use tidb_proto::{KvrpcMutation, KvrpcOp};
 
-    let mut store = MvccStore::new();
+    let store = MvccStore::new();
     let (pk, secondary) = (b"pk".as_slice(), b"secondary".as_slice());
     store
         .pessimistic_lock(&PessimisticLockReq {

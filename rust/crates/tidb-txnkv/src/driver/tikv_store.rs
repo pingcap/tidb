@@ -121,7 +121,8 @@ impl<PdC: PdClient> std::fmt::Debug for TikvStore<PdC> {
 }
 
 /// The process's runtime for client-rust stores, the stand-in for Go's one
-/// goroutine scheduler. It is never dropped, so a store or transaction
+/// goroutine scheduler: one worker per `GOMAXPROCS`
+/// ([`crate::rpc::go_max_procs`]). It is never dropped, so a store or transaction
 /// released on one of its threads never drops the runtime it runs on, and a
 /// store's background work stops with the store itself (client-rust's tasks
 /// hold it weakly).
@@ -130,7 +131,7 @@ pub fn store_runtime() -> Result<Arc<tokio::runtime::Runtime>, String> {
     RUNTIME
         .get_or_init(|| {
             tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(4)
+                .worker_threads(crate::rpc::go_max_procs())
                 .thread_name("tikv-store")
                 .enable_all()
                 .build()

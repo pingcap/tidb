@@ -11,3 +11,4 @@ description = "TiDB pkg/store/mockstore/unistore/lockstore: the lock store's are
 workspace = true
 
 [dependencies]
+arc-swap = "1.9.2"

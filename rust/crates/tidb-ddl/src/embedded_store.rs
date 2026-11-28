@@ -62,7 +62,7 @@ pub struct InProcessStack {
     pub rpc: tidb_unistore::rpc::RpcClient,
     /// The store's request handler, whose committed data a bootstrapped
     /// store image is taken from.
-    pub handler: Arc<std::sync::Mutex<KvHandler>>,
+    pub handler: Arc<KvHandler>,
 }
 
 /// Builds [`InProcessStack`]; TiDB requests to peers use `security`, as Go's
@@ -97,7 +97,7 @@ pub fn in_process_stack_from_image_for_keyspace(
     if let Some(image) = image {
         store.load_data_image(image).map_err(SqlQueryError::unknown)?;
     }
-    let handler = Arc::new(std::sync::Mutex::new(KvHandler::new(store, Arc::clone(&regions))));
+    let handler = Arc::new(KvHandler::new(store, Arc::clone(&regions)));
     let (tikv_store, rpc) =
         embedded_tikv_store_for_keyspace(Arc::clone(&handler), Arc::clone(&regions), &pd, security,keyspace)?;
     // The bootstrapped cluster protocol -- async commit and 1PC are both ON
@@ -123,7 +123,7 @@ pub fn in_process_stack_from_image_for_keyspace(
 /// oracle, and loads its txn safe point from the mock PD's GC states like a
 /// real cluster's.
 pub fn embedded_tikv_store(
-    handler: Arc<std::sync::Mutex<KvHandler>>,
+    handler: Arc<KvHandler>,
     regions: Arc<tidb_unistore_tikv::region_manager::MockRegionManager>,
     pd: &InProcessPd,
     security: &ClusterSecurity,
@@ -139,7 +139,7 @@ pub fn embedded_tikv_store(
 
 /// Go `mockstore.newUnistore` with `WithCurrentKeyspaceMeta`.
 pub fn embedded_tikv_store_for_keyspace(
-    handler:Arc<std::sync::Mutex<KvHandler>>,
+    handler:Arc<KvHandler>,
     regions:Arc<tidb_unistore_tikv::region_manager::MockRegionManager>,
     pd:&InProcessPd,
     security:&ClusterSecurity,

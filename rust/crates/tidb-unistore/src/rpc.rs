@@ -101,7 +101,7 @@ pub type UnistoreRPCClientSendHook = Arc<dyn Fn(&dyn Request) + Send + Sync>;
 /// per store address; Go checks the address per request).
 #[derive(Clone)]
 pub struct RpcClient {
-    handler: Arc<Mutex<KvHandler>>,
+    handler: Arc<KvHandler>,
     cluster: Arc<Cluster>,
     addr: String,
     closed: Arc<AtomicBool>,
@@ -151,7 +151,7 @@ impl RpcClient {
     /// A client over the store's handlers and cluster, addressed to no store
     /// until [`Self::for_address`].
     #[must_use]
-    pub fn new(handler: Arc<Mutex<KvHandler>>, cluster: Arc<Cluster>) -> Self {
+    pub fn new(handler: Arc<KvHandler>, cluster: Arc<Cluster>) -> Self {
         Self {
             handler,
             cluster,
@@ -182,19 +182,13 @@ impl RpcClient {
 
     /// The store's handlers, for seeding and inspection.
     #[must_use]
-    pub fn handler(&self) -> &Arc<Mutex<KvHandler>> {
+    pub fn handler(&self) -> &Arc<KvHandler> {
         &self.handler
     }
 
     /// Go `Close`: later requests fail as cancelled.
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, KvHandler> {
-        self.handler
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Go `Cluster.handleDelay`: sleeps the delay a test scheduled.
@@ -224,7 +218,7 @@ impl RpcClient {
         };
         let start = decode(&region.start_key)?;
         let end = decode(&region.end_key)?;
-        let scan_resp = self.lock().kv_scan(&kvrpcpb::ScanRequest {
+        let scan_resp = self.handler.kv_scan(&kvrpcpb::ScanRequest {
             context: Some(kvrpcpb::Context {
                 region_id: region.id,
                 region_epoch: region.region_epoch,
@@ -259,7 +253,7 @@ impl RpcClient {
         let meta = req.meta.clone().unwrap_or_default();
         let rpc_client: Arc<dyn MppRpcClient> = Arc::new(self.clone());
         let mpp_handler = self
-            .lock()
+            .handler
             .create_mpp_task_handler(&meta, store_id, rpc_client)
             .map_err(Error::StringError)?;
         let store_addr = self
@@ -281,7 +275,7 @@ impl RpcClient {
         handler: Arc<MppTaskHandler>,
     ) {
         let task_id = handler.meta.task_id;
-        let (read_ctx, cop_req) = self.lock().mpp_dispatch_request(req, store_id, task_id);
+        let (read_ctx, cop_req) = self.handler.mpp_dispatch_request(req, store_id, task_id);
         let db_reader = SharedDbReader::new(Arc::clone(&self.handler), read_ctx, store_id);
         let mpp_ctx = Arc::new(MppCtx {
             rpc_client: Arc::clone(&handler.rpc_client),
@@ -297,7 +291,7 @@ impl RpcClient {
                 // Go's goroutine has no recover: its panic ends the process.
                 std::process::abort()
             });
-            let mut err = rpc.lock().remove_mpp_task_handler(task_id, store_id).err();
+            let mut err = rpc.handler.remove_mpp_task_handler(task_id, store_id).err();
             if !resp.other_error.is_empty() {
                 err = Some(resp.other_error);
             }
@@ -320,7 +314,7 @@ impl RpcClient {
         let max_retry_time = 5;
         let mut mpp_handler = None;
         for _ in 0..max_retry_time {
-            mpp_handler = self.lock().get_mpp_task_handler(sender_task_id, store_id)?;
+            mpp_handler = self.handler.get_mpp_task_handler(sender_task_id, store_id)?;
             if mpp_handler.is_some() {
                 break;
             }
@@ -413,7 +407,7 @@ impl tikv_client::tikv::Client for RpcClient {
         macro_rules! serve {
             ($request:ty, $method:ident) => {
                 if let Some(request) = any.downcast_ref::<$request>() {
-                    let response = self.lock().$method(request);
+                    let response = self.handler.$method(request);
                     return Ok(Box::new(response));
                 }
             };
@@ -424,14 +418,14 @@ impl tikv_client::tikv::Client for RpcClient {
         if let Some(request) = any.downcast_ref::<kvrpcpb::PrewriteRequest>() {
             self.handle_delay(request.start_version, request.context.as_ref())
                 .await;
-            return Ok(Box::new(self.lock().kv_prewrite(request)));
+            return Ok(Box::new(self.handler.kv_prewrite(request)));
         }
         if let Some(request) = any.downcast_ref::<kvrpcpb::PessimisticLockRequest>() {
             self.handle_delay(request.start_version, request.context.as_ref())
                 .await;
             // Go `Server.KvPessimisticLock`: a conflicting lock is waited for
             // with the store released, so its holder can finish.
-            let (response, wait) = self.lock().kv_pessimistic_lock_begin(request);
+            let (response, wait) = self.handler.kv_pessimistic_lock_begin(request);
             let Some(wait) = wait else {
                 return Ok(Box::new(response));
             };
@@ -440,7 +434,7 @@ impl tikv_client::tikv::Client for RpcClient {
                 .await
                 .map_err(|error| Error::StringError(error.to_string()))?;
             return Ok(Box::new(
-                self.lock()
+                self.handler
                     .kv_pessimistic_lock_finish(request, response, wait, result),
             ));
         }
@@ -488,7 +482,7 @@ impl tikv_client::tikv::Client for RpcClient {
             // runs, answer as an already-received stream; `Recv` of the first
             // one answers `io.EOF` when there is none.
             let batch_responses = self
-                .lock()
+                .handler
                 .batch_coprocessor(request.request())
                 .map_err(Error::StringError)?;
             if batch_responses.is_empty() {
@@ -565,10 +559,10 @@ mod tests {
 
     fn client() -> RpcClient {
         let rm = Arc::new(crate::cluster::new_region_manager());
-        let handler = Arc::new(Mutex::new(KvHandler::new(
+        let handler = Arc::new(KvHandler::new(
             tidb_unistore_tikv::mvcc_store::MvccStore::new(),
             Arc::clone(&rm),
-        )));
+        ));
         RpcClient::new(handler, Arc::new(Cluster::new(rm)))
     }
 
@@ -632,7 +626,7 @@ mod tests {
         assert_eq!(empty.message().await.unwrap(), None);
     }
 
-    fn put(handler: &Mutex<KvHandler>, handle: i64, b: i64) {
+    fn put(handler: &KvHandler, handle: i64, b: i64) {
         let key = tidb_tablecodec::table_key::encode_row_key_with_handle(
             90,
             &tidb_tablecodec::table_key::RecordHandle::Int(handle),
@@ -640,7 +634,7 @@ mod tests {
         let value =
             tidb_codec::encode_value(&[tidb_datatype::Datum::Int(2), tidb_datatype::Datum::Int(b)])
                 .unwrap();
-        let store = &mut handler.lock().unwrap().store;
+        let store = &handler.store;
         store
             .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                 mutations: vec![tidb_proto::KvrpcMutation {
@@ -688,8 +682,6 @@ mod tests {
             &tidb_tablecodec::table_key::RecordHandle::Int(7),
         );
         rpc.handler
-            .lock()
-            .unwrap()
             .store
             .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
                 mutations: vec![tidb_proto::KvrpcMutation {
@@ -809,7 +801,7 @@ mod tests {
 
         // The ended task leaves the store's task set.
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while rpc.lock().get_mpp_task_handler(1, tiflash_id).unwrap().is_some() {
+        while rpc.handler.get_mpp_task_handler(1, tiflash_id).unwrap().is_some() {
             assert!(std::time::Instant::now() < deadline, "the task stayed");
             tokio::time::sleep(Duration::from_millis(10)).await;
         }

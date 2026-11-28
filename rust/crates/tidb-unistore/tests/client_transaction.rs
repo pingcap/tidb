@@ -37,11 +37,9 @@ impl Store {
     fn new() -> Self {
         let oracle = Arc::new(tidb_unistore_tikv::tso::Tso::new());
         let regions = Arc::new(tidb_unistore::cluster::new_region_manager());
-        let handler = Arc::new(std::sync::Mutex::new(
-            tidb_unistore_tikv::kv_handler::KvHandler::new(
-                tidb_unistore_tikv::mvcc_store::MvccStore::with_pd(Arc::clone(&oracle)),
-                Arc::clone(&regions),
-            ),
+        let handler = Arc::new(tidb_unistore_tikv::kv_handler::KvHandler::new(
+            tidb_unistore_tikv::mvcc_store::MvccStore::with_pd(Arc::clone(&oracle)),
+            Arc::clone(&regions),
         ));
         let (rpc, pd, _cluster) =
             tidb_unistore::mock::over(handler, Arc::clone(&regions), oracle, Vec::new()).unwrap();

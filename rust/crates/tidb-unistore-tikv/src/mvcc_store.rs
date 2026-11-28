@@ -40,15 +40,19 @@
 //! MVCC LOGIC above it is Go's; only the storage under it is substituted,
 //! and the substitution is this module's one structural narrowing.
 //!
-//! # Concurrency narrowings, by name
+//! # Concurrency
 //!
-//! `regCtx.AcquireLatches` / `ReleaseLatches` (region latches) and
-//! `atomic.AddInt64(regCtx.Diff(), ..)` guard multi-writer interleavings.
-//! This store is single-writer (`&mut self`), which the borrow checker
-//! enforces more strongly than the latches do; the calls are therefore
-//! absent rather than stubbed. Pessimistic waiters are Go's: a conflicting
-//! lock parks a [`tidb_unistore_lockwaiter::Waiter`] that the caller waits on with
-//! the store released, and commits, rollbacks and cleanups wake it.
+//! Go's: requests run concurrently. Each write path takes the latches of
+//! its keys (`regCtx.AcquireLatches`, [`crate::region_manager::Latches`]),
+//! reads the lock store and the engine, and hands its [`WriteBatch`] to
+//! [`MvccStore::write`] (Go `dbWriter.Write`): the engine entries first, then
+//! the lock entries. The lock store and the engine are read-write locked as
+//! badger and Go's single-writer lock store are; no guard outlives the
+//! expression that takes it. `atomic.AddInt64(regCtx.Diff(), ..)` feeds
+//! region split sizing, which this store does not do. Pessimistic waiters are
+//! Go's: a conflicting lock parks a [`tidb_unistore_lockwaiter::Waiter`] that
+//! the caller waits on outside the store, and commits, rollbacks and
+//! cleanups wake it.
 //!
 //! `reqCtx.buf` (Go's per-request lock-buffer reuse) is an allocation
 //! detail with no observable content.
@@ -57,10 +61,14 @@ use tidb_unistore_dbreader::KvPair;
 use tidb_unistore_dbreader::ScanReq;
 use tidb_unistore_kverrors::KvError;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard};
 
 use tidb_proto::{KvrpcLockInfo, KvrpcMutation, KvrpcOp, KvrpcTxnAction};
 
 use tidb_unistore_lockstore::MemStore;
+use tidb_unistore_mvcc::db_writer::WriteBatch as _;
+use crate::write::{DbWriter, WriteBatch};
 use tidb_unistore_mvcc::{decode_lock, encode_extra_txn_status_key, DbUserMeta, Lock, LockHdr};
 use crate::tikv_util::{exceed_end_key, keys_to_hash_vals, mutations_to_hash_vals};
 
@@ -76,9 +84,9 @@ pub struct MemEngine {
 }
 
 impl MemEngine {
-    fn set(&mut self, key: &[u8], version: u64, value: &[u8], meta: DbUserMeta) {
-        self.entries
-            .insert((key.to_vec(), !version), (value.to_vec(), meta));
+    /// Go `txn.SetEntry` of an entry the writer owns.
+    pub(crate) fn insert(&mut self, key: Vec<u8>, version: u64, value: Vec<u8>, meta: DbUserMeta) {
+        self.entries.insert((key, !version), (value, meta));
     }
 
     /// Badger's read contract: the newest version with `ts <= read_ts`.
@@ -256,18 +264,22 @@ pub struct PrewriteOutcome {
 /// substituted data engine.
 #[derive(Debug)]
 pub struct MvccStore {
-    /// Go `lockStore` — the REAL ported `lockstore.MemStore`.
-    pub lock_store: MemStore,
+    /// Go `lockStore` — the REAL ported `lockstore.MemStore`: lock-free
+    /// readers beside one writer.
+    lock_store: Arc<MemStore>,
     /// The committed-data engine standing in for badger.
-    pub engine: MemEngine,
+    engine: Arc<RwLock<MemEngine>>,
+    /// Go `dbWriter`: the only writer of `engine` and `lock_store` on the
+    /// request path.
+    db_writer: DbWriter,
     /// Go `pdClient`, narrowed to the one call the store makes — `GetTS`
     /// for the async-commit / 1PC `minCommitTS`. Absent, those protocols
     /// refuse by name, exactly as before a PD is wired.
     pub pd: Option<std::sync::Arc<crate::tso::Tso>>,
     /// Go `safePoint`: the GC safe point `KvGC` raised, never lowered.
-    safe_point: u64,
+    safe_point: AtomicU64,
     /// Go `latestTS`: the newest commit ts the store has written.
-    latest_ts: u64,
+    latest_ts: AtomicU64,
     /// Go `lockWaiterManager`: pessimistic lockers parked on a key.
     pub lock_waiter_manager: std::sync::Arc<tidb_unistore_lockwaiter::Manager>,
     /// Go `DeadlockDetectSvr` (the detector the store's client reaches in
@@ -275,6 +287,9 @@ pub struct MvccStore {
     pub deadlock_detector: std::sync::Arc<crate::detector::Detector>,
     /// Go `conf.PessimisticTxn.WaitForLockTimeout`, milliseconds.
     wait_for_lock_timeout_ms: i64,
+    /// Go `regionCtx.latches`: every region of the store's manager shares
+    /// one table (`rm.latches`), so the store holds it.
+    latches: crate::region_manager::Latches,
 }
 
 impl Default for MvccStore {
@@ -288,7 +303,10 @@ impl MvccStore {
     /// directories.
     #[must_use]
     pub fn new() -> Self {
+        let lock_store = Arc::new(MemStore::new(8 << 20));
+        let engine = Arc::new(RwLock::new(MemEngine::default()));
         Self {
+            db_writer: DbWriter::open(Arc::clone(&engine), Arc::clone(&lock_store)),
             // Go `server.go:48`: the production unistore lock store is built
             // over 8 MiB arena blocks — `NewMemStore(8 << 20)`. The size is
             // load-bearing: a prewrite lock embeds the row value, so the
@@ -297,11 +315,11 @@ impl MvccStore {
             // cannot fit any 1 MiB block, and Go's own arena Fatalf-crashes
             // past the bound — "Any entry larger than this will likely
             // result in failure", lockstore.go:357).
-            lock_store: MemStore::new(8 << 20),
-            engine: MemEngine::default(),
+            lock_store,
+            engine,
             pd: None,
-            safe_point: 0,
-            latest_ts: 0,
+            safe_point: AtomicU64::new(0),
+            latest_ts: AtomicU64::new(0),
             lock_waiter_manager: std::sync::Arc::new(tidb_unistore_lockwaiter::Manager::new(
                 &tidb_unistore_lockwaiter::Config::default(),
             )),
@@ -314,13 +332,38 @@ impl MvccStore {
             )),
             // Go `config.DefaultConf`: "1000ms same with tikv default value".
             wait_for_lock_timeout_ms: 1000,
+            latches: crate::region_manager::Latches::default(),
         }
+    }
+
+    /// The engine, read (badger's read transaction).
+    fn engine(&self) -> RwLockReadGuard<'_, MemEngine> {
+        self.engine.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The lock store (Go reads it with no lock).
+    fn locks(&self) -> &MemStore {
+        &self.lock_store
+    }
+
+    /// Badger's `txn.Get` at `read_ts`, copied out: the newest version with
+    /// `ts <= read_ts`.
+    fn engine_get(&self, key: &[u8], read_ts: u64) -> Option<(Vec<u8>, DbUserMeta)> {
+        self.engine()
+            .get_at(key, read_ts)
+            .map(|(value, meta)| (value.to_vec(), meta.clone()))
+    }
+
+    /// Go `store.dbWriter.Write(batch)`.
+    fn write(&self, batch: WriteBatch) {
+        self.db_writer.write(batch);
     }
 
     /// Whether any transaction still holds a lock in this store.
     #[must_use]
     pub fn has_locks(&self) -> bool {
-        let mut locks = self.lock_store.new_iterator();
+        let store = self.locks();
+        let mut locks = store.new_iterator();
         locks.seek_to_first();
         locks.valid()
     }
@@ -338,16 +381,18 @@ impl MvccStore {
             image.extend_from_slice(bytes);
         }
         let mut image = Vec::new();
-        image.extend_from_slice(&self.latest_ts.to_le_bytes());
-        image.extend_from_slice(&(self.engine.entries.len() as u64).to_le_bytes());
-        for ((key, inverted_version), (value, meta)) in &self.engine.entries {
+        image.extend_from_slice(&self.get_latest_ts().to_le_bytes());
+        let engine = self.engine();
+        image.extend_from_slice(&(engine.entries.len() as u64).to_le_bytes());
+        for ((key, inverted_version), (value, meta)) in &engine.entries {
             put(&mut image, key);
             image.extend_from_slice(&inverted_version.to_le_bytes());
             put(&mut image, value);
             put(&mut image, &meta.0);
         }
         // Go `dumpMemLocks`.
-        let mut locks = self.lock_store.new_iterator();
+        let store = self.locks();
+        let mut locks = store.new_iterator();
         locks.seek_to_first();
         while locks.valid() {
             put(&mut image, locks.key());
@@ -388,7 +433,7 @@ impl MvccStore {
             let meta = DbUserMeta(reader.bytes()?.to_vec());
             entries.insert((key, inverted_version), (value, meta));
         }
-        self.engine.entries = entries;
+        self.engine.write().unwrap_or_else(PoisonError::into_inner).entries = entries;
         // Go `loadLocks`.
         while !reader.0.is_empty() {
             let key = reader.bytes()?;
@@ -410,7 +455,7 @@ impl MvccStore {
     }
 
     /// Go `MVCCStore.Prewrite` (`mvcc.go:761`), optimistic arm only.
-    pub fn prewrite(&mut self, req: &PrewriteReq) -> Result<(), KvError> {
+    pub fn prewrite(&self, req: &PrewriteReq) -> Result<(), KvError> {
         self.prewrite_with_outcome(req).map(|_| ())
     }
 
@@ -418,10 +463,11 @@ impl MvccStore {
     /// them on the request context (`reqCtx.asyncMinCommitTS`,
     /// `reqCtx.onePCCommitTS`) and publishes both in `KvPrewrite`
     /// (`server.go:419-424`).
-    pub fn prewrite_with_outcome(&mut self, req: &PrewriteReq) -> Result<PrewriteOutcome, KvError> {
+    pub fn prewrite_with_outcome(&self, req: &PrewriteReq) -> Result<PrewriteOutcome, KvError> {
         // Go `sortPrewrite`.
         let mut mutations = req.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
+        let _latches = self.latches.acquire(&mutations_to_hash_vals(&mutations));
         if req.for_update_ts > 0 {
             let outcome = self.prewrite_pessimistic(&mutations, req)?;
             if outcome.one_pc_commit_ts != 0 {
@@ -472,7 +518,7 @@ impl MvccStore {
     /// two-phase, Go's "1pc transaction fallbacks due to minCommitTS
     /// exceeds maxCommitTS".
     fn try_one_pc(
-        &mut self,
+        &self,
         mutations: &[KvrpcMutation],
         items: &[Option<(Vec<u8>, DbUserMeta)>],
         req: &PrewriteReq,
@@ -488,30 +534,21 @@ impl MvccStore {
             "1pc commitTS less than startTS"
         );
         self.update_latest_ts(min_commit_ts);
+        let mut batch = WriteBatch::new(req.start_version, min_commit_ts);
         for (mutation, item) in mutations.iter().zip(items) {
             if mutation.op == KvrpcOp::CheckNotExists as i32 {
                 continue;
             }
             let lock = build_prewrite_lock(mutation, item.as_ref(), req)?;
-            // Go `writeBatch.Commit` (`write.go:256`), applied per key.
-            let meta = DbUserMeta::new(req.start_version, min_commit_ts);
-            if lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8 {
-                // Write nothing as if PessimisticRollback is called.
-            } else if lock.hdr.op != KvrpcOp::Lock as i32 as u8 {
-                self.engine
-                    .set(&mutation.key, min_commit_ts, &lock.value, meta);
-            } else if mutation.key == lock.primary {
-                let status_key = encode_extra_txn_status_key(&mutation.key, req.start_version);
-                self.engine.set(&status_key, req.start_version, &[], meta);
-            }
-            self.lock_store_delete(&mutation.key);
+            batch.commit(&mutation.key, &lock);
         }
+        self.write(batch);
         Ok(Some(min_commit_ts))
     }
 
     /// Go `prewriteOptimistic` (`mvcc.go:791`).
     fn prewrite_optimistic(
-        &mut self,
+        &self,
         mutations: &[KvrpcMutation],
         req: &PrewriteReq,
     ) -> Result<PrewriteOutcome, KvError> {
@@ -538,11 +575,7 @@ impl MvccStore {
         // Stage 2 — the write-CF conflict check over the latest versions.
         let items: Vec<Option<(Vec<u8>, DbUserMeta)>> = mutations
             .iter()
-            .map(|mutation| {
-                self.engine
-                    .get_at(&mutation.key, u64::MAX)
-                    .map(|(value, meta)| (value.to_vec(), meta.clone()))
-            })
+            .map(|mutation| self.engine_get(&mutation.key, u64::MAX))
             .collect();
         for (mutation, item) in mutations.iter().zip(&items) {
             if let Some((_, meta)) = item {
@@ -574,7 +607,7 @@ impl MvccStore {
     /// Go `prewriteMutations` (`mvcc.go:935`): draw the `minCommitTS`, try
     /// 1PC's atomic commit, otherwise publish every lock for two-phase.
     fn prewrite_mutations(
-        &mut self,
+        &self,
         mutations: &[KvrpcMutation],
         items: &[Option<(Vec<u8>, DbUserMeta)>],
         req: &PrewriteReq,
@@ -598,14 +631,15 @@ impl MvccStore {
                 return Ok(outcome);
             }
         }
+        let mut batch = WriteBatch::new(req.start_version, 0);
         for (mutation, item) in mutations.iter().zip(items) {
             if mutation.op == KvrpcOp::CheckNotExists as i32 {
                 continue;
             }
             let lock = build_prewrite_lock(mutation, item.as_ref(), &req)?;
-            // Go `writeBatch.Prewrite` (`write.go:252`).
-            self.lock_store_put(&mutation.key, &lock.marshal_binary());
+            batch.prewrite(&mutation.key, &lock);
         }
+        self.write(batch);
         Ok(outcome)
     }
 
@@ -614,7 +648,7 @@ impl MvccStore {
     /// request's primary. A key this transaction already locks is skipped by
     /// the primary's status check (a re-flushed generation overwrites it).
     pub fn flush(
-        &mut self,
+        &self,
         mutations: &[KvrpcMutation],
         primary_key: &[u8],
         start_ts: u64,
@@ -622,6 +656,7 @@ impl MvccStore {
         if !mutations.windows(2).all(|pair| pair[0].key <= pair[1].key) {
             return Err(KvError::Message("mutations are not sorted".to_owned()));
         }
+        let _latches = self.latches.acquire(&mutations_to_hash_vals(mutations));
         // Only check the PK's status first.
         for mutation in mutations {
             if self
@@ -643,11 +678,7 @@ impl MvccStore {
         }
         let items: Vec<Option<(Vec<u8>, DbUserMeta)>> = mutations
             .iter()
-            .map(|mutation| {
-                self.engine
-                    .get_at(&mutation.key, u64::MAX)
-                    .map(|(value, meta)| (value.to_vec(), meta.clone()))
-            })
+            .map(|mutation| self.engine_get(&mutation.key, u64::MAX))
             .collect();
         for (mutation, item) in mutations.iter().zip(&items) {
             if let Some((value, meta)) = item {
@@ -673,14 +704,15 @@ impl MvccStore {
             start_version: start_ts,
             ..PrewriteReq::default()
         };
+        let mut batch = WriteBatch::new(start_ts, 0);
         for (mutation, item) in mutations.iter().zip(&items) {
             if mutation.op == KvrpcOp::CheckNotExists as i32 {
                 continue;
             }
             let lock = build_prewrite_lock(mutation, item.as_ref(), &dummy_prewrite_req)?;
-            // Go `writeBatch.Prewrite` (`write.go:252`).
-            self.lock_store_put(&mutation.key, &lock.marshal_binary());
+            batch.prewrite(&mutation.key, &lock);
         }
+        self.write(batch);
         Ok(())
     }
 
@@ -706,7 +738,7 @@ impl MvccStore {
     /// `(key, startTS)` — commit ts zero is a rollback record.
     fn check_extra_txn_status(&self, key: &[u8], start_ts: u64) -> ExtraTxnStatus {
         let status_key = encode_extra_txn_status_key(key, start_ts);
-        match self.engine.get_at(&status_key, u64::MAX) {
+        match self.engine_get(&status_key, u64::MAX) {
             None => ExtraTxnStatus::default(),
             Some((_, meta)) if meta.commit_ts() == 0 => ExtraTxnStatus {
                 is_rollback: true,
@@ -721,7 +753,7 @@ impl MvccStore {
 
     /// Go `MVCCStore.Commit` (`mvcc.go:1232`).
     pub fn commit(
-        &mut self,
+        &self,
         keys: &[Vec<u8>],
         start_ts: u64,
         commit_ts: u64,
@@ -730,6 +762,8 @@ impl MvccStore {
         keys.sort();
         self.update_latest_ts(commit_ts);
         let hash_vals = hash_vals_of(&keys);
+        let mut batch = WriteBatch::new(start_ts, commit_ts);
+        let latches = self.latches.acquire(&hash_vals);
         let mut is_pessimistic_txn = false;
         struct Pending {
             key: Vec<u8>,
@@ -768,39 +802,29 @@ impl MvccStore {
                 });
             }
         }
-        // Go `writeBatch.Commit` (`write.go:256`), applied per key.
         for Pending { key, lock } in pending {
             is_pessimistic_txn = lock.hdr.for_update_ts > 0;
-            let meta = DbUserMeta::new(start_ts, commit_ts);
-            if lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8 {
-                // "Write nothing as if PessimisticRollback is called."
-            } else if lock.hdr.op != KvrpcOp::Lock as i32 as u8 {
-                self.engine.set(&key, commit_ts, &lock.value, meta);
-            } else if key == lock.primary {
-                let status_key = encode_extra_txn_status_key(&key, start_ts);
-                self.engine.set(&status_key, start_ts, &[], meta);
-            }
-            self.lock_store_delete(&key);
+            batch.commit(&key, &lock);
         }
+        self.write(batch);
         self.lock_waiter_manager
             .wake_up(start_ts, commit_ts, &hash_vals);
         if is_pessimistic_txn {
             self.deadlock_detector.clean_up(start_ts);
         }
+        drop(latches);
         Ok(())
     }
 
     /// Go `MVCCStore.updateLatestTS`.
-    fn update_latest_ts(&mut self, ts: u64) {
-        if self.latest_ts < ts {
-            self.latest_ts = ts;
-        }
+    fn update_latest_ts(&self, ts: u64) {
+        self.latest_ts.fetch_max(ts, Ordering::SeqCst);
     }
 
     /// Go `MVCCStore.getLatestTS`.
     #[must_use]
     pub fn get_latest_ts(&self) -> u64 {
-        self.latest_ts
+        self.latest_ts.load(Ordering::SeqCst)
     }
 
     /// Go `MVCCStore.normalizeWaitTime`: zero or past the store's limit is
@@ -876,16 +900,17 @@ impl MvccStore {
         start_ts: u64,
         commit_ts: u64,
     ) -> Result<(), KvError> {
-        match self.engine.get_at(key, commit_ts) {
+        match self.engine_get(key, commit_ts) {
             Some((_, meta)) if meta.start_ts() == start_ts => Ok(()),
             _ => Err(KvError::LockNotFound),
         }
     }
 
     /// Go `MVCCStore.Rollback` (`mvcc.go:1320`): the two-phase status scan.
-    pub fn rollback(&mut self, keys: &[Vec<u8>], start_ts: u64) -> Result<(), KvError> {
+    pub fn rollback(&self, keys: &[Vec<u8>], start_ts: u64) -> Result<(), KvError> {
         let mut keys = keys.to_vec();
         keys.sort();
+        let _latches = self.latches.acquire(&hash_vals_of(&keys));
         let mut statuses = Vec::with_capacity(keys.len());
         let mut batch: Vec<RollbackAction> = Vec::new();
         for key in &keys {
@@ -907,15 +932,11 @@ impl MvccStore {
             }
         }
         self.deadlock_detector.clean_up(start_ts);
-        // Go `writeBatch.Rollback` (`write.go:271`), applied per action.
+        let mut write_batch = WriteBatch::new(start_ts, 0);
         for action in batch {
-            let status_key = encode_extra_txn_status_key(&action.key, start_ts);
-            self.engine
-                .set(&status_key, start_ts, &[], DbUserMeta::new(start_ts, 0));
-            if action.delete_lock {
-                self.lock_store_delete(&action.key);
-            }
+            write_batch.rollback(&action.key, action.delete_lock);
         }
+        self.write(write_batch);
         Ok(())
     }
 
@@ -923,7 +944,9 @@ impl MvccStore {
     /// an unexpired lock refuses instead of dying — the TTL arm
     /// `rollbackKeyReadLock` takes only when `currentTs > 0`. Physical time
     /// is `ts >> 18`, Go's `oracle.ExtractPhysical`.
-    pub fn cleanup(&mut self, key: &[u8], start_ts: u64, current_ts: u64) -> Result<(), KvError> {
+    pub fn cleanup(&self, key: &[u8], start_ts: u64, current_ts: u64) -> Result<(), KvError> {
+        let hash_vals = hash_vals_of(&[key.to_vec()]);
+        let _latches = self.latches.acquire(&hash_vals);
         let buf = self.lock_bytes(key);
         let mut delete_lock = false;
         let mut check_db = buf.is_empty();
@@ -953,14 +976,10 @@ impl MvccStore {
                 return Err(KvError::AlreadyCommitted(status.commit_ts));
             }
         }
-        let status_key = encode_extra_txn_status_key(key, start_ts);
-        self.engine
-            .set(&status_key, start_ts, &[], DbUserMeta::new(start_ts, 0));
-        if delete_lock {
-            self.lock_store_delete(key);
-        }
-        self.lock_waiter_manager
-            .wake_up(start_ts, 0, &hash_vals_of(&[key.to_vec()]));
+        let mut batch = WriteBatch::new(start_ts, 0);
+        batch.rollback(key, delete_lock);
+        self.write(batch);
+        self.lock_waiter_manager.wake_up(start_ts, 0, &hash_vals);
         Ok(())
     }
 
@@ -968,7 +987,7 @@ impl MvccStore {
     /// shape. (The non-zero `currentTs` TTL arm belongs to `CheckTxnStatus`,
     /// a later course.)
     fn rollback_key_read_lock(
-        &mut self,
+        &self,
         batch: &mut Vec<RollbackAction>,
         key: &[u8],
         start_ts: u64,
@@ -1002,7 +1021,7 @@ impl MvccStore {
     /// Go `checkCommitted`: the version whose START ts is the transaction's,
     /// if any, walking all versions.
     fn committed_version_of(&self, key: &[u8], start_ts: u64) -> Option<u64> {
-        self.engine
+        self.engine()
             .versions(key)
             .find(|meta| meta.start_ts() == start_ts)
             .map(tidb_unistore_mvcc::DbUserMeta::commit_ts)
@@ -1072,11 +1091,11 @@ impl MvccStore {
         // `CheckWriteItemForRcCheckTSRead` refuses one committed past the
         // caller's ts.
         if ctx.is_rc_check_ts() {
-            return match self.engine.get_at(key, u64::MAX) {
+            return match self.engine_get(key, u64::MAX) {
                 None => Ok((None, 0)),
                 Some((value, meta)) => {
-                    check_write_meta_rc_check_ts(version, meta)?;
-                    let value = Some(value.to_vec()).filter(|value| !value.is_empty());
+                    check_write_meta_rc_check_ts(version, &meta)?;
+                    let value = Some(value).filter(|value| !value.is_empty());
                     let commit_ts = if need_commit_ts { meta.commit_ts() } else { 0 };
                     Ok((value, commit_ts))
                 }
@@ -1085,12 +1104,11 @@ impl MvccStore {
         // Go `dbreader.Get(key, version)`: the newest committed version at or
         // below the read ts; an empty value is a delete, read as absent.
         Ok(self
-            .engine
-            .get_at(key, version)
+            .engine_get(key, version)
             .map(|(value, meta)| {
                 let commit_ts = if need_commit_ts { meta.commit_ts() } else { 0 };
                 (
-                    (Some(value.to_vec()).filter(|value| !value.is_empty())),
+                    (Some(value).filter(|value| !value.is_empty())),
                     commit_ts,
                 )
             })
@@ -1116,7 +1134,7 @@ impl MvccStore {
                 short_value: lock.value.clone(),
             });
         }
-        for (value, meta) in self.engine.versioned_values(key) {
+        for (value, meta) in self.engine().versioned_values(key) {
             info.writes.push(MvccWrite {
                 op: if value.is_empty() {
                     KvrpcOp::Del as i32
@@ -1141,7 +1159,7 @@ impl MvccStore {
     fn append_extra_mvcc_info(&self, key: &[u8], info: &mut MvccInfo) {
         let start = encode_extra_txn_status_key(key, u64::MAX);
         let end = encode_extra_txn_status_key(key, 0);
-        for ((entry_key, _), _) in self.engine.entries.range((start, 0)..) {
+        for ((entry_key, _), _) in self.engine().entries.range((start, 0)..) {
             if entry_key > &end {
                 break;
             }
@@ -1169,7 +1187,7 @@ impl MvccStore {
         end_key: &[u8],
         start_ts: u64,
     ) -> Option<(MvccInfo, Vec<u8>)> {
-        let key = self.engine.key_by_start_ts(start_key, end_key, start_ts)?;
+        let key = self.engine().key_by_start_ts(start_key, end_key, start_ts)?;
         let info = self.mvcc_get_by_key(&key);
         Some((info, key))
     }
@@ -1186,7 +1204,8 @@ impl MvccStore {
         limit: usize,
     ) -> Vec<KvrpcLockInfo> {
         let mut locks = Vec::new();
-        let mut it = self.lock_store.new_iterator();
+        let lock_store = self.locks();
+        let mut it = lock_store.new_iterator();
         it.seek(raw_start);
         while it.valid() {
             if exceed_end_key(it.key(), raw_end) || locks.len() == limit {
@@ -1208,7 +1227,8 @@ impl MvccStore {
         limit: usize,
     ) -> Vec<KvrpcLockInfo> {
         let mut locks = Vec::new();
-        let mut it = self.lock_store.new_iterator();
+        let lock_store = self.locks();
+        let mut it = lock_store.new_iterator();
         it.seek(start_key);
         while it.valid() {
             if locks.len() == limit {
@@ -1230,7 +1250,8 @@ impl MvccStore {
         for_update_ts: u64,
     ) -> Vec<KvrpcLockInfo> {
         let mut locks = Vec::new();
-        let mut it = self.lock_store.new_iterator();
+        let lock_store = self.locks();
+        let mut it = lock_store.new_iterator();
         it.seek(raw_start);
         while it.valid() {
             if exceed_end_key(it.key(), raw_end) {
@@ -1252,7 +1273,7 @@ impl MvccStore {
     /// rollback with no keys rolls back every pessimistic lock of the
     /// transaction the region holds.
     pub fn pessimistic_rollback_with_scan_first(
-        &mut self,
+        &self,
         raw_start: &[u8],
         raw_end: &[u8],
         start_ts: u64,
@@ -1308,26 +1329,28 @@ impl MvccStore {
     /// Go `MVCCStore.UpdateSafePoint`: the safe point only rises, and the
     /// engine's versions below it are compacted away (see
     /// [`MemEngine::compact`]).
-    pub fn update_safe_point(&mut self, safe_point: u64) {
+    pub fn update_safe_point(&self, safe_point: u64) {
         // Go `SafePoint.UpdateTS`.
-        if self.safe_point < safe_point {
-            self.safe_point = safe_point;
-        }
+        self.safe_point.fetch_max(safe_point, Ordering::SeqCst);
         // Go `db.UpdateSafeTs(safePoint)` hands compaction the request's
         // safe point as given.
-        self.engine.compact(safe_point);
+        self.engine
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .compact(safe_point);
     }
 
     /// The GC safe point `update_safe_point` holds.
     #[must_use]
     pub fn safe_point(&self) -> u64 {
-        self.safe_point
+        self.safe_point.load(Ordering::SeqCst)
     }
 
     /// Go `MVCCStore.DeleteFileInRange`: the data in `[start, end)` and in
     /// its extra keyspace (each bound's first byte plus one) goes.
-    pub fn delete_file_in_range(&mut self, start: &[u8], end: &[u8]) {
-        self.engine.delete_range_entries(start, end);
+    pub fn delete_file_in_range(&self, start: &[u8], end: &[u8]) {
+        let mut engine = self.engine.write().unwrap_or_else(PoisonError::into_inner);
+        engine.delete_range_entries(start, end);
         let shifted = |key: &[u8]| {
             let mut key = key.to_vec();
             if let Some(first) = key.first_mut() {
@@ -1335,8 +1358,7 @@ impl MvccStore {
             }
             key
         };
-        self.engine
-            .delete_range_entries(&shifted(start), &shifted(end));
+        engine.delete_range_entries(&shifted(start), &shifted(end));
     }
 
     /// Go `dbWriter.DeleteRange` (`write.go`): every key in `[start, end)`
@@ -1345,13 +1367,13 @@ impl MvccStore {
     ///
     /// Badger writes a delete marker at that version; the engine records it
     /// as a committed delete (an empty value) with no start ts.
-    pub fn delete_range(&mut self, start: &[u8], end: &[u8]) -> Result<(), KvError> {
+    pub fn delete_range(&self, start: &[u8], end: &[u8]) -> Result<(), KvError> {
         if end.is_empty() {
             // Go `collectRangeKeys` panics here.
             return Err(KvError::Message("invalid end key".to_owned()));
         }
         let mut newest: Vec<(Vec<u8>, u64)> = Vec::new();
-        for ((key, inverted), _) in self.engine.entries.range((start.to_vec(), 0)..) {
+        for ((key, inverted), _) in self.engine().entries.range((start.to_vec(), 0)..) {
             if exceed_end_key(key, end) {
                 break;
             }
@@ -1359,10 +1381,16 @@ impl MvccStore {
                 newest.push((key.clone(), !*inverted));
             }
         }
-        for (key, version) in newest {
-            let deleted_at = version + 1;
-            self.engine
-                .set(&key, deleted_at, &[], DbUserMeta::new(0, deleted_at));
+        // Go `deleteKeysInBatch`: each batch of keys deleted under its
+        // latches.
+        for batch_keys in newest.chunks(DEL_RANGE_BATCH_SIZE) {
+            let keys: Vec<Vec<u8>> = batch_keys.iter().map(|(key, _)| key.clone()).collect();
+            let mut batch = WriteBatch::default();
+            for (key, version) in batch_keys {
+                batch.delete_version(key, version + 1);
+            }
+            let _latches = self.latches.acquire(&hash_vals_of(&keys));
+            self.db_writer.write_db(batch.db);
         }
         Ok(())
     }
@@ -1371,19 +1399,13 @@ impl MvccStore {
     /// lock — Go's `len(buf) == 0` test, kept as the emptiness of the copy.
     fn lock_bytes(&self, key: &[u8]) -> Vec<u8> {
         let mut buf = Vec::new();
-        self.lock_store.get(key, &mut buf);
+        self.locks().get(key, &mut buf);
         buf
     }
-
-    fn lock_store_put(&mut self, key: &[u8], value: &[u8]) {
-        // Go `MemStore.Put` inserts or replaces; the ported `put` does both.
-        self.lock_store.put(key, value);
-    }
-
-    fn lock_store_delete(&mut self, key: &[u8]) {
-        self.lock_store.delete(key);
-    }
 }
+
+/// Go `delRangeBatchSize` (`write.go`).
+const DEL_RANGE_BATCH_SIZE: usize = 4096;
 
 /// Go `InternalKeyPrefix` (`region.go:44`): scans never cross into the
 /// store's internal keyspace.
@@ -1675,10 +1697,10 @@ impl MvccStore {
             version
         };
         for key in remain {
-            if let Some((value, meta)) = self.engine.get_at(key, read_ts) {
+            if let Some((value, meta)) = self.engine_get(key, read_ts) {
                 if !value.is_empty() {
                     let error = if ctx.is_rc_check_ts() {
-                        check_write_meta_rc_check_ts(version, meta)
+                        check_write_meta_rc_check_ts(version, &meta)
                             .err()
                             .map(Box::new)
                     } else {
@@ -1687,7 +1709,7 @@ impl MvccStore {
                     pairs.push(KvPair {
                         commit_ts: if need_commit_ts { meta.commit_ts() } else { 0 },
                         key: key.clone(),
-                        value: value.to_vec(),
+                        value,
                         error,
                     });
                 }
@@ -1775,9 +1797,9 @@ impl MvccStore {
             keys.reverse();
         }
         for key in keys {
-            if let Some((value, meta)) = self.engine.get_at(&key, read_ts) {
+            if let Some((value, meta)) = self.engine_get(&key, read_ts) {
                 if ctx.is_rc_check_ts() {
-                    if let Err(err) = check_write_meta_rc_check_ts(req.version, meta) {
+                    if let Err(err) = check_write_meta_rc_check_ts(req.version, &meta) {
                         return Err(KvPair {
                             commit_ts: 0,
                             key: Vec::new(),
@@ -1793,7 +1815,7 @@ impl MvccStore {
                 if value.is_empty() {
                     continue;
                 }
-                if !visit(&key, value, meta.commit_ts()) {
+                if !visit(&key, &value, meta.commit_ts()) {
                     break;
                 }
             }
@@ -1860,7 +1882,8 @@ impl MvccStore {
         end_key: &[u8],
     ) -> Vec<KvPair> {
         let mut pairs = Vec::new();
-        let mut it = self.lock_store.new_iterator();
+        let lock_store = self.locks();
+        let mut it = lock_store.new_iterator();
         it.seek(start_key);
         while it.valid() {
             if it.key() >= end_key {
@@ -1913,7 +1936,7 @@ impl MvccStore {
     /// ascending — the engine walk `dbreader`'s iterator performs.
     fn committed_keys_in(&self, start_key: &[u8], end_key: &[u8]) -> Vec<Vec<u8>> {
         let mut keys: Vec<Vec<u8>> = Vec::new();
-        for (key, _) in self.engine.entries.range((start_key.to_vec(), 0)..) {
+        for (key, _) in self.engine().entries.range((start_key.to_vec(), 0)..) {
             if key.0.as_slice() >= end_key {
                 break;
             }
@@ -1968,7 +1991,9 @@ impl MvccStore {
     /// Go `MVCCStore.CheckTxnStatus` (`mvcc.go:497`): what a reader blocked
     /// by a lock asks about the lock's PRIMARY — alive, expired, committed,
     /// or gone — and what the store does about each answer.
-    pub fn check_txn_status(&mut self, req: &CheckTxnStatusReq) -> Result<TxnStatus, KvError> {
+    pub fn check_txn_status(&self, req: &CheckTxnStatusReq) -> Result<TxnStatus, KvError> {
+        let _latches = self.latches.acquire(&hash_vals_of(&[req.primary_key.clone()]));
+        let mut batch = WriteBatch::new(req.lock_ts, 0);
         let buf = self.lock_bytes(&req.primary_key);
         if !buf.is_empty() {
             let mut lock = decode_lock(&buf);
@@ -1997,22 +2022,16 @@ impl MvccStore {
                     {
                         // Go `batch.PessimisticRollback` (`write.go:284`):
                         // the lock dies, nothing else is written.
-                        self.lock_store_delete(&req.primary_key);
+                        batch.pessimistic_rollback(&req.primary_key);
+                        self.write(batch);
                         return Ok(TxnStatus {
                             commit_ts: 0,
                             action: KvrpcTxnAction::TtlExpirePessimisticRollback,
                             lock_info: None,
                         });
                     }
-                    // Go `batch.Rollback(key, true)`.
-                    let status_key = encode_extra_txn_status_key(&req.primary_key, req.lock_ts);
-                    self.engine.set(
-                        &status_key,
-                        req.lock_ts,
-                        &[],
-                        DbUserMeta::new(req.lock_ts, 0),
-                    );
-                    self.lock_store_delete(&req.primary_key);
+                    batch.rollback(&req.primary_key, true);
+                    self.write(batch);
                     return Ok(TxnStatus {
                         commit_ts: 0,
                         action: KvrpcTxnAction::TtlExpireRollback,
@@ -2032,7 +2051,8 @@ impl MvccStore {
                             std::cmp::max(req.caller_start_ts + 1, req.current_ts);
                         // Go persists through `batch.PessimisticLock`, which
                         // is a lock-store overwrite (`write.go:280`).
-                        self.lock_store_put(&req.primary_key, &lock.marshal_binary());
+                        batch.pessimistic_lock(&req.primary_key, &lock);
+                        self.write(batch);
                     }
                 }
                 return Ok(TxnStatus {
@@ -2075,13 +2095,8 @@ impl MvccStore {
             }
             // Go `batch.Rollback(key, false)`: the tombstone that makes a
             // late prewrite refuse, without a lock to delete.
-            let status_key = encode_extra_txn_status_key(&req.primary_key, req.lock_ts);
-            self.engine.set(
-                &status_key,
-                req.lock_ts,
-                &[],
-                DbUserMeta::new(req.lock_ts, 0),
-            );
+            batch.rollback(&req.primary_key, false);
+            self.write(batch);
             return Ok(TxnStatus {
                 commit_ts: 0,
                 action: KvrpcTxnAction::LockNotExistRollback,
@@ -2106,7 +2121,7 @@ impl MvccStore {
     /// A key whose lock has since vanished or changed hands is silently
     /// skipped — resolution races are the normal case, not an error.
     pub fn resolve_lock(
-        &mut self,
+        &self,
         lock_keys: &[Vec<u8>],
         start_ts: u64,
         commit_ts: u64,
@@ -2117,7 +2132,7 @@ impl MvccStore {
     /// Go `MVCCStore.ResolveLock` over the region `[raw_start, raw_end)`: an
     /// empty key list resolves every lock of the transaction inside it.
     pub fn resolve_lock_in_region(
-        &mut self,
+        &self,
         raw_start: &[u8],
         raw_end: &[u8],
         lock_keys: &[Vec<u8>],
@@ -2126,7 +2141,8 @@ impl MvccStore {
     ) -> Result<(), KvError> {
         let mut keys = lock_keys.to_vec();
         if keys.is_empty() {
-            let mut it = self.lock_store.new_iterator();
+            let lock_store = self.locks();
+            let mut it = lock_store.new_iterator();
             it.seek(raw_start);
             while it.valid() {
                 if exceed_end_key(it.key(), raw_end) {
@@ -2142,6 +2158,8 @@ impl MvccStore {
                 return Ok(());
             }
         }
+        let mut batch = WriteBatch::new(start_ts, commit_ts);
+        let _latches = self.latches.acquire(&hash_vals_of(&keys));
         for key in &keys {
             let buf = self.lock_bytes(key);
             if buf.is_empty() {
@@ -2152,25 +2170,12 @@ impl MvccStore {
                 continue;
             }
             if commit_ts > 0 {
-                // Go `batch.Commit` (`write.go:256`).
-                let meta = DbUserMeta::new(start_ts, commit_ts);
-                if lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8 {
-                    // nothing: as if pessimistic-rollbacked
-                } else if lock.hdr.op != KvrpcOp::Lock as i32 as u8 {
-                    self.engine.set(key, commit_ts, &lock.value, meta);
-                } else if *key == lock.primary {
-                    let status_key = encode_extra_txn_status_key(key, start_ts);
-                    self.engine.set(&status_key, start_ts, &[], meta);
-                }
-                self.lock_store_delete(key);
+                batch.commit(key, &lock);
             } else {
-                // Go `batch.Rollback(key, true)`.
-                let status_key = encode_extra_txn_status_key(key, start_ts);
-                self.engine
-                    .set(&status_key, start_ts, &[], DbUserMeta::new(start_ts, 0));
-                self.lock_store_delete(key);
+                batch.rollback(key, true);
             }
         }
+        self.write(batch);
         Ok(())
     }
 }
@@ -2227,7 +2232,7 @@ impl MvccStore {
     /// error at once. See [`Self::pessimistic_lock_with_waiter`] for the
     /// waiting form.
     pub fn pessimistic_lock(
-        &mut self,
+        &self,
         req: &PessimisticLockReq,
     ) -> Result<PessimisticLockResult, KvError> {
         let (result, waiter) = self.pessimistic_lock_with_waiter(req);
@@ -2242,7 +2247,7 @@ impl MvccStore {
     /// request, the waiter parked on the key comes back beside the lock
     /// error, for the caller to wait on outside the store.
     pub fn pessimistic_lock_with_waiter(
-        &mut self,
+        &self,
         req: &PessimisticLockReq,
     ) -> (
         Result<PessimisticLockResult, KvError>,
@@ -2255,7 +2260,7 @@ impl MvccStore {
 
     /// Go `MVCCStore.pessimisticLockInner`.
     fn pessimistic_lock_inner(
-        &mut self,
+        &self,
         req: &PessimisticLockReq,
         waiter: &mut Option<std::sync::Arc<tidb_unistore_lockwaiter::Waiter>>,
     ) -> Result<PessimisticLockResult, KvError> {
@@ -2263,6 +2268,7 @@ impl MvccStore {
         if !req.return_values {
             mutations.sort_by(|a, b| a.key.cmp(&b.key));
         }
+        let _latches = self.latches.acquire(&mutations_to_hash_vals(&mutations));
         let start_ts = req.start_version;
         if req.lock_only_if_exists && !req.return_values {
             // Go's literal contract error (`mvcc.go:251`).
@@ -2310,22 +2316,19 @@ impl MvccStore {
         }
         let items: Vec<Option<(Vec<u8>, DbUserMeta)>> = mutations
             .iter()
-            .map(|mutation| {
-                self.engine
-                    .get_at(&mutation.key, u64::MAX)
-                    .map(|(value, meta)| (value.to_vec(), meta.clone()))
-            })
+            .map(|mutation| self.engine_get(&mutation.key, u64::MAX))
             .collect();
         if !dup {
+            let mut batch = WriteBatch::new(start_ts, 0);
             for (mutation, item) in mutations.iter().zip(&items) {
                 let latest_extra = self.latest_extra_meta_for_key(&mutation.key);
                 if let Some(lock) =
                     build_pessimistic_lock(mutation, item.as_ref(), latest_extra.as_ref(), req)?
                 {
-                    // Go `batch.PessimisticLock` (`write.go:280`).
-                    self.lock_store_put(&mutation.key, &lock.marshal_binary());
+                    batch.pessimistic_lock(&mutation.key, &lock);
                 }
             }
+            self.write(batch);
         }
         let mut result = PessimisticLockResult::default();
         // Go's `req.Force` arm answers the FIRST key's latest committed
@@ -2359,7 +2362,7 @@ impl MvccStore {
 
     /// Go `prewritePessimistic` (`mvcc.go:849`), whole.
     fn prewrite_pessimistic(
-        &mut self,
+        &self,
         mutations: &[KvrpcMutation],
         req: &PrewriteReq,
     ) -> Result<PrewriteOutcome, KvError> {
@@ -2420,7 +2423,7 @@ impl MvccStore {
                     req.lock_ttl = u64::from(lock.hdr.ttl);
                 }
             } else if need_constraint_check {
-                if let Some((_, meta)) = self.engine.get_at(&mutation.key, u64::MAX) {
+                if let Some((_, meta)) = self.engine_get(&mutation.key, u64::MAX) {
                     if meta.commit_ts() > start_ts {
                         return Err(KvError::Conflict {
                             reason:
@@ -2450,11 +2453,7 @@ impl MvccStore {
         }
         let items: Vec<Option<(Vec<u8>, DbUserMeta)>> = mutations
             .iter()
-            .map(|mutation| {
-                self.engine
-                    .get_at(&mutation.key, u64::MAX)
-                    .map(|(value, meta)| (value.to_vec(), meta.clone()))
-            })
+            .map(|mutation| self.engine_get(&mutation.key, u64::MAX))
             .collect();
         self.prewrite_mutations(mutations, &items, &req)
     }
@@ -2462,10 +2461,12 @@ impl MvccStore {
     /// Go `MVCCStore.PessimisticRollback` (`mvcc.go:435`): only OUR
     /// pessimistic locks with a for-update ts at or below the request's die;
     /// everything else survives.
-    pub fn pessimistic_rollback(&mut self, keys: &[Vec<u8>], start_ts: u64, for_update_ts: u64) {
+    pub fn pessimistic_rollback(&self, keys: &[Vec<u8>], start_ts: u64, for_update_ts: u64) {
         let mut keys = keys.to_vec();
         keys.sort();
         let hash_vals = hash_vals_of(&keys);
+        let _latches = self.latches.acquire(&hash_vals);
+        let mut batch = WriteBatch::new(start_ts, 0);
         for key in &keys {
             let buf = self.lock_bytes(key);
             if buf.is_empty() {
@@ -2476,9 +2477,10 @@ impl MvccStore {
                 && lock.hdr.start_ts == start_ts
                 && lock.hdr.for_update_ts <= for_update_ts
             {
-                self.lock_store_delete(key);
+                batch.pessimistic_rollback(key);
             }
         }
+        self.write(batch);
         self.lock_waiter_manager.wake_up(start_ts, 0, &hash_vals);
         self.deadlock_detector.clean_up(start_ts);
     }
@@ -2486,11 +2488,12 @@ impl MvccStore {
     /// Go `MVCCStore.TxnHeartBeat` (`mvcc.go:465`): advise the primary's TTL
     /// upward; never downward.
     pub fn txn_heart_beat(
-        &mut self,
+        &self,
         primary: &[u8],
         start_ts: u64,
         advise_ttl: u64,
     ) -> Result<u64, KvError> {
+        let _latches = self.latches.acquire(&hash_vals_of(&[primary.to_vec()]));
         let buf = self.lock_bytes(primary);
         if !buf.is_empty() {
             let mut lock = decode_lock(&buf);
@@ -2501,7 +2504,9 @@ impl MvccStore {
                 }
                 if u64::from(lock.hdr.ttl) < advise_ttl {
                     lock.hdr.ttl = u32::try_from(advise_ttl).unwrap_or(u32::MAX);
-                    self.lock_store_put(primary, &lock.marshal_binary());
+                    let mut batch = WriteBatch::new(start_ts, 0);
+                    batch.pessimistic_lock(primary, &lock);
+                    self.write(batch);
                 }
                 return Ok(u64::from(lock.hdr.ttl));
             }
@@ -2518,7 +2523,7 @@ impl MvccStore {
     fn latest_extra_meta_for_key(&self, key: &[u8]) -> Option<DbUserMeta> {
         let start = encode_extra_txn_status_key(key, u64::MAX);
         let end = encode_extra_txn_status_key(key, 0);
-        for ((entry_key, _), (_, meta)) in self.engine.entries.range((start, 0)..) {
+        for ((entry_key, _), (_, meta)) in self.engine().entries.range((start, 0)..) {
             if entry_key > &end {
                 break;
             }
@@ -2617,12 +2622,14 @@ impl MvccStore {
     /// cannot commit. Only when every key still holds our real lock do the
     /// locks come back as the answer.
     pub fn check_secondary_locks(
-        &mut self,
+        &self,
         keys: &[Vec<u8>],
         start_ts: u64,
     ) -> Result<SecondaryLocksStatus, KvError> {
         let mut keys = keys.to_vec();
         keys.sort();
+        let _latches = self.latches.acquire(&hash_vals_of(&keys));
+        let mut batch = WriteBatch::new(start_ts, 0);
         let mut locks = Vec::with_capacity(keys.len());
         for key in &keys {
             let buf = self.lock_bytes(key);
@@ -2651,9 +2658,8 @@ impl MvccStore {
                 if !status.is_rollback {
                     // Go `batch.Rollback(key, false)`: the tombstone lands
                     // NOW, so the answer it gives is the answer that stays.
-                    let status_key = encode_extra_txn_status_key(key, start_ts);
-                    self.engine
-                        .set(&status_key, start_ts, &[], DbUserMeta::new(start_ts, 0));
+                    batch.rollback(key, false);
+                    self.write(batch);
                 }
                 return Ok(SecondaryLocksStatus::default());
             }
@@ -2662,10 +2668,8 @@ impl MvccStore {
                 // Go `batch.Rollback(key, true)`: tombstone AND the lock's
                 // death — the prewrite never replaced this lock, so the
                 // transaction cannot commit.
-                let status_key = encode_extra_txn_status_key(key, start_ts);
-                self.engine
-                    .set(&status_key, start_ts, &[], DbUserMeta::new(start_ts, 0));
-                self.lock_store_delete(key);
+                batch.rollback(key, true);
+                self.write(batch);
                 self.lock_waiter_manager
                     .wake_up(start_ts, 0, &hash_vals_of(&[key.clone()]));
                 self.deadlock_detector.clean_up(start_ts);
@@ -2789,6 +2793,43 @@ impl tidb_unistore_dbreader::DbReader for MvccStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `MVCCStore.Prewrite` under `regCtx.AcquireLatches`: two
+    /// transactions prewriting one key at the same moment never both lock it
+    /// -- the second sees the first's lock and answers `KeyIsLocked`.
+    #[test]
+    fn concurrent_prewrites_of_one_key_lock_it_once() {
+        let store = std::sync::Arc::new(MvccStore::new());
+        for round in 0..200u64 {
+            let key = format!("latch-{round}").into_bytes();
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let racers: Vec<_> = [10, 20]
+                .into_iter()
+                .map(|offset| {
+                    let (store, barrier, key) = (store.clone(), barrier.clone(), key.clone());
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        store
+                            .prewrite(&PrewriteReq {
+                                mutations: vec![KvrpcMutation {
+                                    op: KvrpcOp::Put as i32,
+                                    key: key.clone(),
+                                    value: b"v".to_vec(),
+                                    ..KvrpcMutation::default()
+                                }],
+                                primary_lock: key,
+                                start_version: round * 100 + offset,
+                                lock_ttl: 3000,
+                                ..PrewriteReq::default()
+                            })
+                            .is_ok()
+                    })
+                })
+                .collect();
+            let won: usize = racers.into_iter().map(|racer| usize::from(racer.join().unwrap())).sum();
+            assert_eq!(won, 1, "round {round}: both prewrites locked the key");
+        }
+    }
 
     // `TestBasicOptimistic` is TRANSCREATED from `tikv/mvcc_test.go:518`;
     // the rest are WRITTEN over the ported bodies — the upstream suite's
@@ -2941,7 +2982,7 @@ mod tests {
 
     #[test]
     fn commit_below_min_commit_ts_expires() {
-        let mut store = MvccStore::new();
+        let store = MvccStore::new();
         let key = b"k".as_slice();
         store
             .prewrite(&PrewriteReq {
@@ -2967,7 +3008,7 @@ mod tests {
     fn rollback_then_prewrite_is_already_rollback() {
         // `Rollback` writes the extra-status record; a later prewrite of the
         // PRIMARY finds it via `checkExtraTxnStatus` and refuses.
-        let mut store = MvccStore::new();
+        let store = MvccStore::new();
         let key = b"k".as_slice();
         store
             .rollback(&[key.to_vec()], 60)
@@ -3085,7 +3126,7 @@ mod tests {
 
     #[test]
     fn the_async_paths_refuse_by_name() {
-        let mut store = MvccStore::new();
+        let store = MvccStore::new();
         let refuse = store.prewrite(&PrewriteReq {
             use_async_commit: true,
             ..PrewriteReq::default()
@@ -3097,7 +3138,7 @@ mod tests {
     fn lock_only_if_exists_without_return_values_keeps_go_error_text() {
         // Go `pessimisticLockInner` (`mvcc.go:251`): the contract error is
         // raised before any key is examined.
-        let mut store = MvccStore::new();
+        let store = MvccStore::new();
         let refuse = store.pessimistic_lock(&PessimisticLockReq {
             lock_only_if_exists: true,
             return_values: false,
@@ -3118,7 +3159,7 @@ mod tests {
     fn txn_heart_beat_rejections_keep_go_error_texts() {
         // Go `TxnHeartBeat` (`mvcc.go:465-487`): both rejections are Go's
         // literal `errors.New` texts.
-        let mut store = MvccStore::new();
+        let store = MvccStore::new();
         assert_eq!(
             store.txn_heart_beat(b"pk", 5, 6_000).unwrap_err(),
             KvError::Unported("lock doesn't exists")
@@ -3147,7 +3188,7 @@ mod tests {
     fn prewrite_constraint_range_error_keeps_go_text() {
         // Go `prewritePessimistic` (`mvcc.go:856-858`): the formatted range
         // check carries the offending index and the mutation count.
-        let mut store = MvccStore::new();
+        let store = MvccStore::new();
         let refuse = store.prewrite(&PrewriteReq {
             mutations: vec![put(b"ck", b"v")],
             for_update_ts: 10,
@@ -3169,7 +3210,7 @@ mod tests {
         // DO_PESSIMISTIC_CHECK, commit, read — and the prewrite keeps the
         // pessimistic lock's LARGER ttl, Go's do-not-shrink rule.
         use tidb_proto::KvrpcPessimisticAction;
-        let mut store = MvccStore::new();
+        let store = MvccStore::new();
         let key = b"pess".as_slice();
         store
             .pessimistic_lock(&PessimisticLockReq {
@@ -3550,7 +3591,7 @@ mod tests {
     fn an_expired_lock_is_rolled_back_by_the_check() {
         // The TTL arm compares PHYSICAL milliseconds (ts >> 18), not raw
         // timestamps: a raw-ts comparison would expire nothing here.
-        let mut store = MvccStore::new();
+        let store = MvccStore::new();
         let pk = b"pk".as_slice();
         let start_ts = 5_u64 << 18;
         store
@@ -3590,7 +3631,7 @@ mod tests {
 
     #[test]
     fn check_without_rollback_flag_is_txn_not_found() {
-        let mut store = MvccStore::new();
+        let store = MvccStore::new();
         let err = store
             .check_txn_status(&CheckTxnStatusReq {
                 primary_key: b"nothing".to_vec(),
@@ -3882,7 +3923,7 @@ mod tests {
     /// refuses any commit at or below the push and admits the one above.
     #[test]
     fn test_min_commit_ts() {
-        let mut store = MvccStore::new();
+        let store = MvccStore::new();
         let (k, v) = (b"tk".as_slice(), b"v".as_slice());
         store
             .prewrite(&PrewriteReq {
@@ -5041,7 +5082,7 @@ mod tests {
     /// (`mvcc.go:1074`), publishing locks instead.
     #[test]
     fn test_one_pc_prewrite_commits_in_the_prewrite() {
-        let mut store = MvccStore::with_pd(std::sync::Arc::new(crate::tso::Tso::new()));
+        let store = MvccStore::with_pd(std::sync::Arc::new(crate::tso::Tso::new()));
         let (pk, val) = (b"onepc-pk".as_slice(), b"onepcVal".as_slice());
 
         // Full 1PC: the prewrite IS the commit.
@@ -5544,3 +5585,4 @@ mod tests {
         assert_eq!(pairs[0].commit_ts, 0);
     }
 }
+

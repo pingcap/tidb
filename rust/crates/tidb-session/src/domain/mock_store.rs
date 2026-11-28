@@ -386,9 +386,6 @@ impl NodeConn {
         let key = self.physical_key_for_test(key)?;
         let version = self.fresh_timestamp_for_test()?;
         let handler = self.mock_store().stack.rpc.handler();
-        let handler = handler
-            .lock()
-            .map_err(|_| "kv handler poisoned".to_owned())?;
         handler
             .store
             .get(&key, version)
@@ -431,9 +428,6 @@ impl NodeConn {
         let start = self.fresh_timestamp_for_test()?;
         let commit = self.fresh_timestamp_for_test()?;
         let handler = self.mock_store().stack.rpc.handler();
-        let mut handler = handler
-            .lock()
-            .map_err(|_| "kv handler poisoned".to_owned())?;
         handler
             .store
             .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {

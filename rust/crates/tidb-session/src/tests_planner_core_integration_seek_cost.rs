@@ -32,27 +32,9 @@ fn create(tk: &mut TestKit, sql: &str) {
 /// Go `h.DumpStatsDeltaToKV(true)`, `analyze table`, then `h.Update`: a late
 /// delta flush would raise the modify count and fall back to pseudo stats,
 /// which disables pruning.
-///
-/// The insert's secondary keys commit in the background after its primary
-/// (as client-go's `commitSecondaries` goroutine does), and ANALYZE reads at
-/// read-committed, which skips a key still locked: on this store a
-/// 100k-key commit takes a few hundred milliseconds, so ANALYZE runs again
-/// until its row count is the table's.
 fn analyze(tk: &mut TestKit, table: &str) {
-    let rows = tk.must_query(&format!("select count(*) from {table}")).rows()[0][0].clone();
     tk.must_exec(&format!("flush stats_delta test.{table}"));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    loop {
-        tk.must_exec(&format!("analyze table {table}"));
-        let analyzed = tk.must_query(&format!(
-            "select count from mysql.stats_meta where table_id = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = '{table}')"
-        ));
-        if analyzed.rows().first().is_some_and(|row| row[0] == rows) {
-            break;
-        }
-        assert!(std::time::Instant::now() < deadline, "ANALYZE never saw the {rows} rows of {table}");
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
+    tk.must_exec(&format!("analyze table {table}"));
     tk.session().update_stats_cache().unwrap();
 }
 

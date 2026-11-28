@@ -23,7 +23,7 @@
 //!   manager client, which is not ported. The store's keyspace is the one
 //!   its client-rust PD client is configured with (`Config::keyspace`).
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use tidb_txnkv::driver::tikv_store::{store_runtime, TikvStore};
 use tikv_client::proto::keyspacepb::KeyspaceMeta;
@@ -54,17 +54,17 @@ pub fn new(
 ) -> Result<(RpcClient, Arc<PdClient>, Arc<Cluster>), String> {
     let rm = Arc::new(MockRegionManager::new_mock_region_manager());
     let tso = Arc::new(Tso::new());
-    let handler = Arc::new(Mutex::new(KvHandler::new(
+    let handler = Arc::new(KvHandler::new(
         MvccStore::with_pd(Arc::clone(&tso)),
         Arc::clone(&rm),
-    )));
+    ));
     over(handler, rm, tso, cluster_keyspaces)
 }
 
 /// [`new`] over a store that already exists: its handler, the region manager
 /// the handler checks requests against, and the oracle its PD draws from.
 pub fn over(
-    handler: Arc<Mutex<KvHandler>>,
+    handler: Arc<KvHandler>,
     rm: Arc<MockRegionManager>,
     tso: Arc<Tso>,
     cluster_keyspaces: Vec<KeyspaceMeta>,

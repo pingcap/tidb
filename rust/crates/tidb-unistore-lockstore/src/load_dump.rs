@@ -133,7 +133,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("lockstore");
 
-        let mut src = MemStore::new(1 << 12);
+        let src = MemStore::new(1 << 12);
         for i in 0..500usize {
             let key = num_to_key(i);
             let val = key.repeat(3);

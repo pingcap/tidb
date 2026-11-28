@@ -17,10 +17,14 @@
 //! Every byte of accounting here is Go's: the same 8-byte alignment, the same
 //! `blockIdx+1 << 32 | blockOffset` address packing, the same per-block
 //! reference count, and the same delay before a drained block is handed back
-//! to the writable queue. What changes is only that the addresses index into
-//! `Vec<u8>` blocks rather than into raw memory.
+//! to the writable queue. A block's bytes are atomic 8-byte words, so a reader
+//! walks nodes while the single writer links new ones, as Go's readers do over
+//! raw memory with `atomic.LoadUint64`.
 
 use std::collections::VecDeque;
+use std::cmp::Ordering as CmpOrdering;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Go `arenaAddr`: a `blockIdx`/`blockOffset` pair packed into one word.
@@ -36,7 +40,7 @@ pub const NULL_ARENA_ADDR: ArenaAddr = ArenaAddr(0);
 
 /// Go `reuseSafeDuration`: the time waited before an emptied block is reused.
 ///
-/// Go needs the delay because its readers walk raw pointers without a lock, so
+/// Go needs the delay because its readers walk nodes without a lock, so
 /// data corruption can happen under this sequence:
 ///  1. a reader reads a node;
 ///  2. a writer deletes the node, frees the block, puts it into the writable
@@ -45,10 +49,9 @@ pub const NULL_ARENA_ADDR: ArenaAddr = ArenaAddr(0);
 ///  4. the reader reads the key/value of that deleted node.
 ///
 /// The window between 1 and 4 is very short, so it is very unlikely — but it
-/// can happen, hence the wait. Rust's borrow checker already excludes the race
-/// (see [`tidb_unistore::MemStore`]), but the delay is kept because it is observable:
-/// it decides when block reuse begins, and therefore how many blocks a
-/// workload allocates.
+/// can happen, hence the wait. Here it cannot happen at all: past the wait, a
+/// drained block becomes writable only after a [`Grace`] period, once every
+/// reader that could still hold one of its nodes has finished.
 pub const REUSE_SAFE_DURATION: Duration = Duration::from_millis(100);
 
 impl ArenaAddr {
@@ -84,11 +87,99 @@ struct PendingBlock {
     reusable_time: Instant,
 }
 
-/// Go `arena`.
+/// Go `arena.blocks`: the block list a reader walks, replaced whole when the
+/// arena grows (Go `grow` returns a new `arena` the store publishes).
+pub type Blocks = Arc<Vec<Arc<ArenaBlock>>>;
+
+/// The stripes of [`Grace`]'s reader counts, each on its own cache line.
+const GRACE_STRIPES: usize = 64;
+
+#[repr(align(128))]
+#[derive(Debug, Default)]
+struct Stripe(AtomicUsize);
+
+/// The readers' grace period: what makes a drained block safe to rewrite.
+/// A reader pins the current epoch while it reads; before the writer
+/// rewrites a drained block it flips the epoch and waits until no reader of
+/// the old epoch remains. A reader that pins after the flip starts after the
+/// block drained, so it cannot reach the block's nodes.
+#[derive(Debug)]
+pub struct Grace {
+    epoch: AtomicUsize,
+    readers: [[Stripe; GRACE_STRIPES]; 2],
+}
+
+impl Default for Grace {
+    fn default() -> Self {
+        Self {
+            epoch: AtomicUsize::new(0),
+            readers: std::array::from_fn(|_| std::array::from_fn(|_| Stripe::default())),
+        }
+    }
+}
+
+/// A reader's pin on [`Grace`], released on drop.
+#[derive(Debug)]
+pub struct GracePin<'a> {
+    grace: &'a Grace,
+    parity: usize,
+    stripe: usize,
+}
+
+impl Grace {
+    /// Pins the current epoch for a read.
+    pub fn pin(&self) -> GracePin<'_> {
+        thread_local! {
+            static STRIPE: usize = {
+                static NEXT: AtomicUsize = AtomicUsize::new(0);
+                NEXT.fetch_add(1, Ordering::Relaxed) % GRACE_STRIPES
+            };
+        }
+        let stripe = STRIPE.with(|stripe| *stripe);
+        loop {
+            let epoch = self.epoch.load(Ordering::SeqCst);
+            let parity = epoch & 1;
+            self.readers[parity][stripe].0.fetch_add(1, Ordering::SeqCst);
+            // A flip between the load and the count means the writer may not
+            // see this reader; it pins the new epoch instead.
+            if self.epoch.load(Ordering::SeqCst) == epoch {
+                return GracePin {
+                    grace: self,
+                    parity,
+                    stripe,
+                };
+            }
+            self.readers[parity][stripe].0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Waits until every reader pinned before this call has finished.
+    pub fn synchronize(&self) {
+        let parity = self.epoch.fetch_add(1, Ordering::SeqCst) & 1;
+        while self.readers[parity]
+            .iter()
+            .any(|stripe| stripe.0.load(Ordering::SeqCst) != 0)
+        {
+            std::thread::yield_now();
+        }
+    }
+}
+
+impl Drop for GracePin<'_> {
+    fn drop(&mut self) {
+        self.grace.readers[self.parity][self.stripe]
+            .0
+            .fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Go `arena`: the blocks plus the single writer's allocation state.
 #[derive(Debug)]
 pub struct Arena {
+    /// The readers' grace period this arena's block reuse waits on.
+    pub(crate) grace: Arc<Grace>,
     pub(crate) block_size: usize,
-    pub(crate) blocks: Vec<ArenaBlock>,
+    pub(crate) blocks: Blocks,
     pub(crate) writable_queue: Vec<usize>,
     pending_blocks: VecDeque<PendingBlock>,
 }
@@ -98,45 +189,12 @@ impl Arena {
     #[must_use]
     pub fn new(block_size: usize) -> Self {
         Self {
+            grace: Arc::new(Grace::default()),
             block_size,
-            blocks: vec![ArenaBlock::new(block_size)],
+            blocks: Arc::new(vec![Arc::new(ArenaBlock::new(block_size))]),
             writable_queue: vec![0],
             pending_blocks: VecDeque::new(),
         }
-    }
-
-    /// Go `(*arena).get`.
-    ///
-    /// # Panics
-    ///
-    /// Panics when `addr` names a block past the end, mirroring Go's
-    /// `log.S().Fatalf` on the same condition.
-    #[must_use]
-    pub fn get(&self, addr: ArenaAddr, size: usize) -> &[u8] {
-        assert!(
-            addr.block_idx() < self.blocks.len(),
-            "arena.get out of range. len(blocks)={}, addr.blockIdx()={}, addr.blockOffset()={}, size={size}",
-            self.blocks.len(),
-            addr.block_idx(),
-            addr.block_offset(),
-        );
-        self.blocks[addr.block_idx()].get(addr.block_offset(), size)
-    }
-
-    /// The mutable counterpart of [`Arena::get`].
-    ///
-    /// Go has no such method: it hands out one raw pointer and writes through
-    /// it. Rust needs the write path spelled out separately, which is what
-    /// makes the exclusivity of a write checkable at compile time.
-    pub fn get_mut(&mut self, addr: ArenaAddr, size: usize) -> &mut [u8] {
-        let block_idx = addr.block_idx();
-        assert!(
-            block_idx < self.blocks.len(),
-            "arena.get out of range. len(blocks)={}, addr.blockIdx()={block_idx}, addr.blockOffset()={}, size={size}",
-            self.blocks.len(),
-            addr.block_offset(),
-        );
-        self.blocks[block_idx].get_mut(addr.block_offset(), size)
     }
 
     /// Go `(*arena).alloc`: returns [`NULL_ARENA_ADDR`] when no writable block
@@ -149,13 +207,16 @@ impl Arena {
                     .pending_blocks
                     .pop_front_if(|pending| now > pending.reusable_time)
                 {
+                    // Go makes the drained block writable again; first every
+                    // reader that might still hold one of its nodes finishes.
+                    self.grace.synchronize();
                     self.writable_queue.push(pending.block_idx);
                     continue;
                 }
                 return NULL_ARENA_ADDR;
             }
             let avail_idx = *self.writable_queue.last().expect("queue is not empty");
-            let block_offset = self.blocks[avail_idx].alloc(size);
+            let block_offset = self.block(avail_idx).alloc(size);
             if block_offset != NULL_BLOCK_OFFSET {
                 return new_arena_addr(avail_idx, block_offset);
             }
@@ -171,11 +232,11 @@ impl Arena {
     /// only becomes writable again after [`REUSE_SAFE_DURATION`].
     pub fn free(&mut self, addr: ArenaAddr) {
         let block_idx = addr.block_idx();
-        let block = &mut self.blocks[block_idx];
-        block.ref_count -= 1;
+        let block = self.block(block_idx);
+        let ref_count = block.ref_count.fetch_sub(1, Ordering::Relaxed) - 1;
         // No reference, the arena block can be reused.
-        if block.ref_count == 0 && block.length > block.buf.len() {
-            block.length = 0;
+        if ref_count == 0 && block.length.load(Ordering::Relaxed) > block.size {
+            block.length.store(0, Ordering::Relaxed);
             self.pending_blocks.push_back(PendingBlock {
                 block_idx,
                 reusable_time: Instant::now() + REUSE_SAFE_DURATION,
@@ -183,20 +244,29 @@ impl Arena {
         }
     }
 
-    /// Go `(*arena).grow`.
-    ///
-    /// narrowing: Go builds a whole new `arena` value and swaps the store's
-    /// `arenaPtr` to it, because a lock-free reader may still be walking the
-    /// old block slice. Rust reaches the arena through `&`/`&mut`, so no
-    /// reader can be mid-walk while this runs and the new block is appended in
-    /// place. The result is identical: the same blocks in the same order, the
-    /// new index pushed onto the writable queue, and the pending list carried
-    /// over. Go's copy also drops the old writable queue, which is always
-    /// empty here — `alloc` only fails after emptying it.
+    /// Go `(*arena).grow`: a new block list holding the old blocks and one
+    /// more, which the store publishes for its readers; the new block is the
+    /// writable one and the pending list carries over. (Go's copy also drops
+    /// the old writable queue, always empty here: `alloc` only fails after
+    /// emptying it.)
     pub fn grow(&mut self) {
-        let avail_idx = self.blocks.len();
-        self.blocks.push(ArenaBlock::new(self.block_size));
+        let mut blocks = Vec::with_capacity(self.blocks.len() + 1);
+        blocks.extend(self.blocks.iter().cloned());
+        let avail_idx = blocks.len();
+        blocks.push(Arc::new(ArenaBlock::new(self.block_size)));
+        self.blocks = Arc::new(blocks);
         self.writable_queue.push(avail_idx);
+    }
+
+    /// The block at `idx`.
+    pub(crate) fn block(&self, idx: usize) -> &ArenaBlock {
+        &self.blocks[idx]
+    }
+
+    /// Go `len(arena.blocks)`.
+    #[must_use]
+    pub fn block_count(&self) -> usize {
+        self.blocks.len()
     }
 
     /// The number of blocks queued for delayed reuse. Go's test reads
@@ -207,15 +277,18 @@ impl Arena {
     }
 }
 
-/// Go `arenaBlock`.
+/// Go `arenaBlock`: `buf` as little-endian 8-byte words, so a node's links
+/// are single atomic words and its other bytes are read without a lock.
 #[derive(Debug)]
 pub struct ArenaBlock {
-    buf: Vec<u8>,
-    ref_count: u64,
+    buf: Box<[AtomicU64]>,
+    /// Go `len(buf)`.
+    size: usize,
+    ref_count: AtomicU64,
     /// Go's `length` deliberately runs past `len(buf)` on the allocation that
     /// overflows the block; `free` uses that overflow as the "this block is
     /// finished" marker.
-    length: usize,
+    length: AtomicUsize,
 }
 
 impl ArenaBlock {
@@ -223,34 +296,90 @@ impl ArenaBlock {
     #[must_use]
     pub fn new(block_size: usize) -> Self {
         Self {
-            buf: vec![0; block_size],
-            ref_count: 0,
-            length: 0,
+            buf: (0..block_size.div_ceil(8)).map(|_| AtomicU64::new(0)).collect(),
+            size: block_size,
+            ref_count: AtomicU64::new(0),
+            length: AtomicUsize::new(0),
         }
-    }
-
-    /// Go `(*arenaBlock).get`.
-    #[must_use]
-    pub fn get(&self, offset: u32, size: usize) -> &[u8] {
-        let offset = offset as usize;
-        &self.buf[offset..offset + size]
-    }
-
-    /// The mutable counterpart of [`ArenaBlock::get`].
-    pub fn get_mut(&mut self, offset: u32, size: usize) -> &mut [u8] {
-        let offset = offset as usize;
-        &mut self.buf[offset..offset + size]
     }
 
     /// Go `(*arenaBlock).alloc`: the returned offset is 8-byte aligned.
-    pub fn alloc(&mut self, size: usize) -> u32 {
-        let offset = (self.length + 7) & ALIGN_MASK;
-        self.length = offset + size;
-        if self.length > self.buf.len() {
+    pub fn alloc(&self, size: usize) -> u32 {
+        let offset = (self.length.load(Ordering::Relaxed) + 7) & ALIGN_MASK;
+        self.length.store(offset + size, Ordering::Relaxed);
+        if offset + size > self.size {
             return NULL_BLOCK_OFFSET;
         }
-        self.ref_count += 1;
+        self.ref_count.fetch_add(1, Ordering::Relaxed);
         offset as u32
+    }
+
+    /// The aligned word at byte `offset`, Go's `atomic.LoadUint64`.
+    pub(crate) fn load_word(&self, offset: usize) -> u64 {
+        self.buf[offset / 8].load(Ordering::Acquire)
+    }
+
+    /// Go's `atomic.StoreUint64` of the aligned word at byte `offset`: what
+    /// publishes a node to readers.
+    pub(crate) fn store_word(&self, offset: usize, value: u64) {
+        self.buf[offset / 8].store(value, Ordering::Release);
+    }
+
+    /// Copies `len` bytes from byte `offset` into `out`.
+    pub(crate) fn read_bytes(&self, offset: usize, len: usize, out: &mut Vec<u8>) {
+        let mut pos = 0;
+        while pos < len {
+            let at = offset + pos;
+            let word = self.buf[at / 8].load(Ordering::Relaxed).to_le_bytes();
+            let start = at % 8;
+            let take = (8 - start).min(len - pos);
+            out.extend_from_slice(&word[start..start + take]);
+            pos += take;
+        }
+    }
+
+    /// `bytes.Compare(buf[offset:offset+len], other)`.
+    pub(crate) fn cmp_bytes(&self, offset: usize, len: usize, other: &[u8]) -> CmpOrdering {
+        let shared = len.min(other.len());
+        let mut pos = 0;
+        // Whole words from an aligned start compare as big-endian integers:
+        // lexicographic order on eight bytes.
+        if offset % 8 == 0 {
+            while pos + 8 <= shared {
+                let word = self.buf[(offset + pos) / 8].load(Ordering::Relaxed).swap_bytes();
+                let theirs = u64::from_be_bytes(other[pos..pos + 8].try_into().expect("eight bytes"));
+                match word.cmp(&theirs) {
+                    CmpOrdering::Equal => pos += 8,
+                    unequal => return unequal,
+                }
+            }
+        }
+        while pos < shared {
+            let at = offset + pos;
+            let word = self.buf[at / 8].load(Ordering::Relaxed).to_le_bytes();
+            let start = at % 8;
+            let take = (8 - start).min(shared - pos);
+            match word[start..start + take].cmp(&other[pos..pos + take]) {
+                CmpOrdering::Equal => pos += take,
+                unequal => return unequal,
+            }
+        }
+        len.cmp(&other.len())
+    }
+
+    /// Writes `bytes` at byte `offset` of a node no reader can reach yet.
+    pub(crate) fn write_bytes(&self, offset: usize, bytes: &[u8]) {
+        let mut pos = 0;
+        while pos < bytes.len() {
+            let at = offset + pos;
+            let cell = &self.buf[at / 8];
+            let mut word = cell.load(Ordering::Relaxed).to_le_bytes();
+            let start = at % 8;
+            let take = (8 - start).min(bytes.len() - pos);
+            word[start..start + take].copy_from_slice(&bytes[pos..pos + take]);
+            cell.store(u64::from_le_bytes(word), Ordering::Relaxed);
+            pos += take;
+        }
     }
 }
 
@@ -268,14 +397,14 @@ mod tests {
         assert!(!addr.is_null());
         assert!(NULL_ARENA_ADDR.is_null());
 
-        let mut block = ArenaBlock::new(64);
+        let block = ArenaBlock::new(64);
         assert_eq!(block.alloc(5), 0);
         // 5 rounds up to the next multiple of 8.
         assert_eq!(block.alloc(5), 8);
         assert_eq!(block.alloc(8), 16);
         // Overflowing the block yields the null offset and marks it finished.
         assert_eq!(block.alloc(64), NULL_BLOCK_OFFSET);
-        assert!(block.length > block.buf.len());
+        assert!(block.length.load(Ordering::Relaxed) > block.size);
     }
 
     /// Not a Go test: pins the writable-queue/pending-block cycle that Go's

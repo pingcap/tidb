@@ -96,10 +96,10 @@ mod transaction_buffer_tests {
     fn the_embedded_store_checks_visibility_against_its_txn_safe_point() {
         let pd = InProcessPd::new();
         let regions = Arc::new(tidb_unistore::cluster::new_region_manager());
-        let handler = Arc::new(std::sync::Mutex::new(KvHandler::new(
+        let handler = Arc::new(KvHandler::new(
             MvccStore::with_pd(pd.oracle()),
             Arc::clone(&regions),
-        )));
+        ));
         let (store, _rpc) =
             embedded_tikv_store(handler, regions, &pd, &ClusterSecurity::plaintext()).unwrap();
         let visibility = store.visibility();
@@ -364,8 +364,6 @@ impl BootstrapImage {
         let drained_by = std::time::Instant::now() + IN_PROCESS_TIMEOUT;
         while stack
             .handler
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .store
             .has_locks()
             && std::time::Instant::now() < drained_by
@@ -374,8 +372,6 @@ impl BootstrapImage {
         }
         let data = stack
             .handler
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .store
             .data_image();
         Ok(Self {
