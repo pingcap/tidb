@@ -20,7 +20,7 @@
 //! process serves itself.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, Once, PoisonError};
 use std::time::Duration;
 
 use tidb_autoid::cluster_auto_id::{ClusterAutoIdStore, AUTO_ID_LEADER_PATH};
@@ -352,6 +352,11 @@ pub struct Service {
     store: Arc<dyn Storage>,
     /// Go `s.store.GetCodec().GetKeyspaceID()`; `u32::MAX` is Nullspace.
     keyspace_id: u32,
+    /// Go `cancel`: the owner manager's context, canceled on `Close` before
+    /// the campaign is joined.
+    owner_ctx: Option<tidb_owner::Context>,
+    /// Go `closeOnce`.
+    close_once: Once,
 }
 
 /// Go `ownerListener`.
@@ -392,14 +397,35 @@ impl Service {
         store: Arc<dyn Storage>,
         keyspace_id: u32,
     ) -> Result<Arc<Self>, String> {
+        Self::new_with_context(&tidb_gocontext::Context::background(), self_addr, owner_store, store, keyspace_id)
+    }
+
+    /// Go `NewWithContext` (e52b3131151): `ctx` may cancel the service's
+    /// initialization. Once it succeeds, `ctx` no longer controls the
+    /// service; the caller must close it.
+    ///
+    /// # Errors
+    ///
+    /// The campaign cannot start, or `ctx` ended during it.
+    pub fn new_with_context(
+        ctx: &tidb_gocontext::Context,
+        self_addr: &str,
+        owner_store: Arc<dyn tidb_owner::OwnerStore>,
+        store: Arc<dyn Storage>,
+        keyspace_id: u32,
+    ) -> Result<Arc<Self>, String> {
+        // Go `newWithCli`: the owner manager runs under its own context,
+        // which startup cancellation reaches only until construction
+        // completes.
+        let owner_ctx = tidb_owner::Context::cancelable();
         let leadership: Arc<dyn tidb_owner::Manager> = Arc::new(tidb_owner::OwnerManager::new(
-            tidb_owner::Context::background(),
+            owner_ctx.clone(),
             owner_store,
             "autoid",
             self_addr,
             AUTO_ID_LEADER_PATH,
         ));
-        Self::new_with_manager(self_addr, leadership, store, keyspace_id)
+        Self::new_with_manager_context(ctx, self_addr, leadership, Some(owner_ctx), store, keyspace_id)
     }
 
     /// Go `newWithCli`: the service over `leadership`, which it campaigns
@@ -414,19 +440,50 @@ impl Service {
         store: Arc<dyn Storage>,
         keyspace_id: u32,
     ) -> Result<Arc<Self>, String> {
+        Self::new_with_manager_context(
+            &tidb_gocontext::Context::background(),
+            self_addr,
+            leadership,
+            None,
+            store,
+            keyspace_id,
+        )
+    }
+
+    /// Go `newWithCli`'s body: a failed or canceled campaign closes the
+    /// service, revoking any ownership it gained, and answers the error.
+    fn new_with_manager_context(
+        ctx: &tidb_gocontext::Context,
+        self_addr: &str,
+        leadership: Arc<dyn tidb_owner::Manager>,
+        owner_ctx: Option<tidb_owner::Context>,
+        store: Arc<dyn Storage>,
+        keyspace_id: u32,
+    ) -> Result<Arc<Self>, String> {
         let auto_id_map = AutoIdMap::default();
         leadership.set_listener(Arc::new(OwnerListener {
             auto_id_map: Arc::clone(&auto_id_map),
             self_addr: self_addr.to_owned(),
         }));
-        // 10 means that autoid service's etcd lease is 10s.
-        leadership.campaign_owner(&[10])?;
-        Ok(Arc::new(Self {
+        let mut service = Arc::new(Self {
             auto_id_map,
-            leadership: Some(leadership),
+            leadership: Some(Arc::clone(&leadership)),
             store,
             keyspace_id,
-        }))
+            owner_ctx,
+            close_once: Once::new(),
+        });
+        // 10 means that autoid service's etcd lease is 10s.
+        let mut result = leadership.campaign_owner(&[10]);
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/autoid_service/afterAutoIDCampaign", &mut service);
+        if let Some(error) = ctx.err() {
+            result = Err(error.to_string());
+        }
+        if let Err(error) = result {
+            service.close();
+            return Err(error);
+        }
+        Ok(service)
     }
 
     /// Go `MockForTest`: the service a store without a cluster serves
@@ -438,14 +495,22 @@ impl Service {
             leadership: None,
             store,
             keyspace_id,
+            owner_ctx: None,
+            close_once: Once::new(),
         })
     }
 
-    /// Go `Close`.
+    /// Go `Close`: once, canceling the election's context before joining
+    /// the campaign.
     pub fn close(&self) {
-        if let Some(leadership) = &self.leadership {
-            leadership.close();
-        }
+        self.close_once.call_once(|| {
+            if let Some(owner_ctx) = &self.owner_ctx {
+                owner_ctx.cancel();
+            }
+            if let Some(leadership) = &self.leadership {
+                leadership.close();
+            }
+        });
     }
 
     /// Go `IsOwner`.
@@ -702,6 +767,122 @@ mod autoid_test {
     fn store() -> Arc<dyn Storage> {
         let (_pd, opener) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
         Arc::new(opener)
+    }
+
+    /// An owner manager whose campaign wins or fails as told, recording
+    /// its `Close` calls (Go's lease revocation).
+    struct CampaignManager {
+        fail: Option<&'static str>,
+        owner: std::sync::atomic::AtomicBool,
+        closes: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CampaignManager {
+        fn new(fail: Option<&'static str>) -> Arc<Self> {
+            Arc::new(Self {
+                fail,
+                owner: std::sync::atomic::AtomicBool::new(false),
+                closes: std::sync::atomic::AtomicUsize::new(0),
+            })
+        }
+
+        fn closes(&self) -> usize {
+            self.closes.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl tidb_owner::Manager for CampaignManager {
+        fn id(&self) -> &str {
+            "candidate"
+        }
+        fn is_owner(&self) -> bool {
+            self.owner.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn retire_owner(&self) {
+            self.owner.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn get_owner_id(&self, _context: &tidb_owner::Context) -> Result<String, String> {
+            Ok("candidate".to_owned())
+        }
+        fn set_owner_op_value(&self, _context: &tidb_owner::Context, _op: tidb_owner::OpType) -> Result<(), String> {
+            Ok(())
+        }
+        fn campaign_owner(&self, _with_ttl: &[i64]) -> Result<(), String> {
+            if let Some(error) = self.fail {
+                return Err(error.to_owned());
+            }
+            self.owner.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        fn campaign_cancel(&self) {}
+        fn break_campaign_loop(&self) {}
+        fn resign_owner(&self, _context: &tidb_owner::Context) -> Result<(), String> {
+            Ok(())
+        }
+        fn close(&self) {
+            self.owner.store(false, std::sync::atomic::Ordering::SeqCst);
+            self.closes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn set_listener(&self, _listener: Arc<dyn tidb_owner::Listener>) {}
+        fn force_to_be_owner(&self, _context: &tidb_owner::Context) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// Go master e52b3131151's `TestGRPC` subtests "canceled startup
+    /// revokes lease" and the campaign error path: a service whose startup
+    /// was canceled after it won ownership, or whose campaign failed, is
+    /// closed (its ownership revoked) and answers the error; once built,
+    /// startup cancellation no longer controls it and `Close` runs once.
+    #[test]
+    fn test_canceled_or_failed_startup_closes_the_service() {
+        // canceled startup revokes ownership
+        let manager = CampaignManager::new(None);
+        let (ctx, cancel) = tidb_gocontext::Context::with_cancel(&tidb_gocontext::Context::background());
+        let cancel = std::sync::Mutex::new(Some(cancel));
+        let _guard = tidb_failpoint::enable_call_for_test(
+            "github.com/pingcap/tidb/pkg/autoid_service/afterAutoIDCampaign",
+            move |service| {
+                let service = service.downcast_mut::<Arc<Service>>().unwrap();
+                assert!(service.is_owner());
+                if let Some(cancel) = cancel.lock().unwrap().take() {
+                    cancel.cancel();
+                }
+            },
+        );
+        let error = Service::new_with_manager_context(&ctx, "addr", manager.clone(), None, store(), NULLSPACE)
+            .err()
+            .expect("canceled startup fails");
+        assert_eq!(error, "context canceled");
+        assert_eq!(manager.closes(), 1);
+        assert!(!tidb_owner::Manager::is_owner(manager.as_ref()));
+        drop(_guard);
+
+        // a failed campaign closes the service
+        let manager = CampaignManager::new(Some("campaign failed"));
+        let error = Service::new_with_manager(
+            "addr",
+            Arc::clone(&manager) as Arc<dyn tidb_owner::Manager>,
+            store(),
+            NULLSPACE,
+        )
+        .err()
+        .expect("a failed campaign fails");
+        assert_eq!(error, "campaign failed");
+        assert_eq!(manager.closes(), 1);
+
+        // once built, cancellation does not control the service; Close
+        // runs once
+        let manager = CampaignManager::new(None);
+        let (ctx, cancel) = tidb_gocontext::Context::with_cancel(&tidb_gocontext::Context::background());
+        let service = Service::new_with_manager_context(&ctx, "addr", manager.clone(), None, store(), NULLSPACE).unwrap();
+        cancel.cancel();
+        assert!(service.is_owner());
+        assert_eq!(manager.closes(), 0);
+        service.close();
+        service.close();
+        assert_eq!(manager.closes(), 1);
+        assert!(!service.is_owner());
     }
 
     fn auto_id_request(

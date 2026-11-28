@@ -4976,6 +4976,8 @@ version = "0.0.0"
 dependencies = [
  "tidb-autoid",
  "tidb-ddl",
+ "tidb-failpoint",
+ "tidb-gocontext",
  "tidb-log",
  "tidb-logutil",
  "tidb-meta",

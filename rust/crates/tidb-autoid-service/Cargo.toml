@@ -14,6 +14,8 @@ workspace = true
 tidb-autoid = { path = "../tidb-autoid" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-owner = { path = "../tidb-owner" }
+tidb-failpoint = { path = "../tidb-failpoint" }
+tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-log = { path = "../tidb-log" }
 tidb-logutil = { path = "../tidb-logutil" }
@@ -22,5 +24,6 @@ tonic.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 tidb-ddl = { path = "../tidb-ddl" }
 tokio-stream = { workspace = true, features = ["net"] }

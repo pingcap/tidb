@@ -106,13 +106,13 @@ fn setup_auto_id_service(
             );
             Some(service)
         }
-        Err(error) => {
-            tidb_logutil::bg_logger().error(
-                "new autoid service fail",
-                &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
-            );
-            None
-        }
+        // Go master e52b3131151: `logutil.BgLogger().Fatal("initialize auto
+        // ID service failed")` unless shutdown canceled the initialization,
+        // which this synchronous boot never does.
+        Err(error) => tidb_logutil::bg_logger().fatal(
+            "initialize auto ID service failed",
+            &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
+        ),
     }
 }
 
