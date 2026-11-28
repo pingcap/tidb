@@ -778,16 +778,36 @@ impl DataSource {
                 // The path's `IdxCols`: the schema columns behind the
                 // collection's ids, a prefix up to the first absent one.
                 let schema = self.base.base.schema();
+                let declared = self
+                    .index_info_2_full_cols(index)
+                    .into_iter()
+                    .map_while(|column| column)
+                    .collect::<Vec<_>>();
+                let appended = self.handle_cols_to_append(index, &declared);
                 hist_coll
                     .map(|coll| {
                         coll.index_columns(index.read().id)
                             .iter()
-                            .map_while(|id| {
-                                schema?
+                            .enumerate()
+                            .map_while(|(position, id)| {
+                                let column = schema?
                                     .columns
                                     .iter()
                                     .find(|column| column.unique_id == *id)
-                                    .cloned()
+                                    .cloned()?;
+                                // Go `IdxColLens`: the declared key parts' own
+                                // lengths, then the appended handle's.
+                                let length = declared
+                                    .get(position)
+                                    .map(|(_, length)| *length)
+                                    .or_else(|| {
+                                        appended
+                                            .iter()
+                                            .find(|(handle, _)| handle.unique_id == *id)
+                                            .map(|(_, length)| *length)
+                                    })
+                                    .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH);
+                                Some((column, length))
                             })
                             .collect()
                     })
@@ -798,11 +818,26 @@ impl DataSource {
         paths
     }
 
-    /// Go `fillIndexPath`'s suffix (`stats.go:177-197`): a complete,
-    /// non-unique secondary key gains the signed integer handle, in the path
-    /// columns and in `HistColl.Idx2ColUniqueIDs`. A clustered common handle
-    /// is never appended there; Go extends with it only while matching a
-    /// sort property (`find_best_task.go:1105`).
+    /// Go `HasV0NewCollationStringHandle`: `CommonHandleVersion == 0` with
+    /// new collation enabled and a non-binary string handle column, whose
+    /// index-stored bytes are collation sort keys, not values.
+    #[must_use]
+    pub fn has_v0_new_collation_string_handle(&self) -> bool {
+        if self.common_handle_version() != 0 || !tidb_datatype::new_collation_enabled() {
+            return false;
+        }
+        self.common_handle_cols.iter().any(|column| {
+            column.ret_type.as_ref().is_some_and(|ty| {
+                ty.eval_type() == tidb_datatype::EvalType::String
+                    && !ty.has_flag(tidb_datatype::FieldTypeFlags::BINARY)
+            })
+        })
+    }
+
+    /// Go `HandleColsToAppend`: the clustered-handle columns (with their
+    /// lengths) TiKV physically appends to a complete non-unique secondary
+    /// index's key, which `fillIndexPath` adds to the path and to
+    /// `HistColl.Idx2ColUniqueIDs`; empty when no append applies.
     #[must_use]
     pub fn handle_cols_to_append(
         &self,
@@ -811,6 +846,41 @@ impl DataSource {
     ) -> Vec<(Column, i64)> {
         if index.read().unique || index.read().primary || declared.len() != index.read().columns.len() {
             return Vec::new();
+        }
+        if self.is_common_handle() {
+            // Go master f994e8da277. An unresolved handle column (Go's nil
+            // placeholder) leaves the columns shorter than their lengths.
+            if self.common_handle_cols.is_empty() || self.common_handle_lens.len() != self.common_handle_cols.len() {
+                return Vec::new();
+            }
+            // Global indexes (V1+) encode the partition ID between the index
+            // columns and the handle, and MV/columnar indexes build their
+            // ranges specially, so appended columns would not align with the
+            // physical key layout. V0-new-collation string handles are stored
+            // as sortKey bytes without restored data and cannot be ranged
+            // over.
+            let index_info = index.read();
+            if index_info.global
+                || index_info.mv_index
+                || index_info.is_columnar_index()
+                || self.has_v0_new_collation_string_handle()
+            {
+                return Vec::new();
+            }
+            // A handle column already among the declared columns appears
+            // twice in the physical key; appending only the missing ones
+            // would misalign the ranges, so nothing is appended.
+            if self.common_handle_cols.iter().any(|handle| {
+                declared.iter().any(|(column, _)| column.unique_id == handle.unique_id)
+            }) {
+                return Vec::new();
+            }
+            return self
+                .common_handle_cols
+                .iter()
+                .cloned()
+                .zip(self.common_handle_lens.iter().copied())
+                .collect();
         }
         let Some(handle) = self
             .base

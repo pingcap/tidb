@@ -112,3 +112,52 @@ fn index_merge_partials_cap_full_handle_points_and_keep_pruned_bounds() {
     }
 }
 
+
+/// Go `TestIndexRangeEstimationWithPrefixedCommonHandle` (70cff7d9f66): a
+/// clustered handle whose leading column is a prefixed index column. Every
+/// appended handle column needs its own length entry in `Selectivity`.
+#[test]
+fn test_index_range_estimation_with_prefixed_common_handle() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table t(p1 varchar(64), p2 int, c int, primary key(p1(2), p2) clustered, key ic(c))");
+    tk.session().handle_ddl_events_for_test();
+    // Every p1 shares the same 2-character prefix.
+    let vals = (1..=100).map(|i| format!("('pp_{i:03}', {i}, {})", i % 10)).collect::<Vec<_>>().join(",");
+    tk.must_exec(&format!("insert into t values {vals}"));
+    tk.must_exec("analyze table t all columns");
+    let plan_row = |tk: &mut TestKit, sql: &str, operator: &str| -> (String, String) {
+        let rows = tk.must_query(&format!("explain format='brief' {sql}"));
+        rows.rows()
+            .iter()
+            .find(|row| row[0].contains(operator))
+            .map(|row| (row[1].clone(), row[4].clone()))
+            .unwrap_or_else(|| panic!("no {operator} in plan for {sql:?}: {:?}", rows.rows()))
+    };
+
+    // Equality on the prefixed handle column ranges over the stored prefix
+    // only; the full predicate stays as a table-side filter.
+    let sql = "select * from t use index(ic) where c = 5 and p1 = 'pp_055'";
+    let (_, op_info) = plan_row(&mut tk, sql, "IndexRangeScan");
+    assert!(op_info.contains(r#"range:[5 "pp",5 "pp"]"#), "the handle range must use the stored prefix: {op_info}");
+    let (_, op_info) = plan_row(&mut tk, sql, "Selection");
+    assert!(op_info.contains(r#"eq(test.t.p1, "pp_055")"#), "the prefixed predicate must be re-checked: {op_info}");
+    tk.must_query(sql).check(["pp_055 55 5"]);
+
+    // The column after the prefixed one is still ranged over.
+    let sql = "select * from t use index(ic) where c = 5 and p1 = 'pp_055' and p2 = 55";
+    let (_, op_info) = plan_row(&mut tk, sql, "IndexRangeScan");
+    assert!(op_info.contains(r#"range:[5 "pp" 55,5 "pp" 55]"#), "the handle range must keep the p2 dimension: {op_info}");
+    tk.must_query(sql).check(["pp_055 55 5"]);
+
+    // A tuple comparison spanning the index column and the whole handle.
+    let sql = "select * from t where (c, p1, p2) > (5, 'pp_055', 55)";
+    let (est_rows, _) = plan_row(&mut tk, sql, "Selection");
+    assert_eq!(est_rows, "40.00");
+    assert_eq!(tk.must_query(sql).rows().len(), 44);
+
+    let sql = "select * from t use index(ic) where (c, p1, p2) > (5, 'pp_055', 55)";
+    let (est_rows, op_info) = plan_row(&mut tk, sql, "IndexRangeScan");
+    assert!(op_info.contains(r#"range:[5 "pp",5 +inf], (5,+inf]"#), "the handle range must use the stored prefix: {op_info}");
+    assert_eq!(est_rows, "50.00");
+    assert_eq!(tk.must_query(sql).rows().len(), 44);
+}

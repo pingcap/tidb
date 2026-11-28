@@ -2398,7 +2398,7 @@ pub(super) fn index_path_matches_order(
         && !index.read().primary
         && !ds.common_handle_cols.is_empty()
         && ds.index_info_2_full_cols(index).iter().all(Option::is_some)
-        && !has_v0_new_collation_string_handle(ds)
+        && !ds.has_v0_new_collation_string_handle()
     {
         for (handle, length) in ds.common_handle_cols.iter().zip(&ds.common_handle_lens) {
             if !columns
@@ -2488,18 +2488,6 @@ pub(crate) fn common_handle_cols(
 }
 
 /// Go `hasV0NewCollationStringHandle`.
-fn has_v0_new_collation_string_handle(ds: &tidb_planner_core_operator_logicalop::DataSource) -> bool {
-    if ds.common_handle_version() != 0 || !tidb_datatype::new_collation_enabled() {
-        return false;
-    }
-    ds.common_handle_cols.iter().any(|column| {
-        column.ret_type.as_ref().is_some_and(|ty| {
-            ty.eval_type() == tidb_datatype::EvalType::String
-                && ty.flags() & tidb_datatype::FieldTypeFlags::BINARY == 0
-        })
-    })
-}
-
 /// Go `PhysicalIndexScan.AddSelectionConditionForGlobalIndex`
 /// (`physical_index_scan.go:443`): a global index holds every partition's
 /// entries, so its scan keeps only the partitions the statement reads --
@@ -7176,10 +7164,12 @@ mod tests {
         }
     }
 
-    /// Go `fillIndexPath` appends only the signed integer handle; a clustered
-    /// common handle never extends a secondary index path.
+    /// Go master `HandleColsToAppend` (f994e8da277): a complete non-unique
+    /// secondary index on a clustered table is followed by the whole common
+    /// handle with its lengths; a handle column the index already holds
+    /// suppresses the append.
     #[test]
-    fn a_common_handle_is_never_appended_to_an_index_path() {
+    fn a_common_handle_is_appended_to_a_non_unique_index_path() {
         use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
         let ty = FieldType::new(FieldTypeCode::LongLong);
         let declared = tidb_expr::column::Column::new(1, ty);
@@ -7202,14 +7192,23 @@ mod tests {
             ..tidb_model::IndexInfo::default()
         });
         let prefix = vec![(declared, -1)];
-        assert!(source.handle_cols_to_append(&index, &prefix).is_empty());
+        let appended = source.handle_cols_to_append(&index, &prefix);
+        assert_eq!(
+            appended.iter().map(|(column, length)| (column.unique_id, *length)).collect::<Vec<_>>(),
+            vec![(2, 3)]
+        );
+        // The index already holds the handle column: nothing is appended.
+        let overlapping = vec![(source.common_handle_cols[0].clone(), -1)];
+        assert!(source.handle_cols_to_append(&index, &overlapping).is_empty());
     }
 
     #[test]
-    fn a_secondary_index_range_stops_at_its_declared_column() {
-        // Go's `fillIndexPath` never appends a clustered common handle, so a
-        // tuple comparison ranges over the declared `a` key part alone;
-        // Go prints `range:[1,+inf]` for this shape.
+    fn a_secondary_index_range_reaches_into_the_appended_common_handle() {
+        // Go master `HandleColsToAppend` (f994e8da277) appends the clustered
+        // common handle (b, c) to the non-unique `ia(a)`, so the tuple
+        // comparison becomes ranges over (a, b, c) with no filter left: Go's
+        // `TestCommonHandleIndexRangesWithTupleCompare` prints
+        // `range:(1 2 3,1 2 +inf], (1 2,1 +inf], (1,+inf]`.
         use tidb_planner_util::path::AccessPath;
         use tidb_planner_core_operator_logicalop::DataSource;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
@@ -7305,25 +7304,20 @@ mod tests {
         }; fixture.set_table_id(7); fixture });
         let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx).expect("plans");
 
-        // The rest of the tuple filters the index side above the scan.
         let index_plan = match task.plan().expect("physical plan") {
             PhysicalPlan::IndexLookUpReader(reader) => reader.index_plan.as_deref(),
             PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref(),
             other => panic!("expected an index reader, got {other:?}"),
         };
-        let scan = match index_plan {
-            Some(PhysicalPlan::Selection(selection)) => match selection.base.children() {
-                [PhysicalPlan::IndexScan(scan)] => scan,
-                other => panic!("expected an index scan under the filter, got {other:?}"),
-            },
-            other => panic!("expected an index-side filter, got {other:?}"),
+        let Some(PhysicalPlan::IndexScan(scan)) = index_plan else {
+            panic!("expected the index scan with no filter above it, got {index_plan:?}");
         };
         let rendered = scan
             .ranges
             .iter()
             .map(tidb_ranger::types::Range::to_display_string)
             .collect::<Vec<_>>();
-        assert_eq!(rendered, ["[1,+inf]"]);
+        assert_eq!(rendered, ["(1 2 3,1 2 +inf]", "(1 2,1 +inf]", "(1,+inf]"]);
     }
 
     #[test]

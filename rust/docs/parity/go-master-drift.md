@@ -19,7 +19,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - Placement bundles and label rules are sent to PD at commit time (`real_tikv_ddl` delivery), so a PD refusal retries the step where Go's `onCreateTable` / `onTruncateTable` cancel the job.
 - 7193401b674 (keyspace half; SHOW AFFINITY's lookup of only its groups is ported): NextGen affinity group ids (`_tidb_ks{id}_...`) and keyspace-encoded group key ranges. The DDL job steps have no keyspace codec: label rules use `CodecV1` too, so both are keyspace-unaware under NextGen.
 - fe1f4b41b44: the warning-only check that the advertised status endpoint (`advertise-address` + status port `/info`) answers this TiDB's `ddl_id` (`pkg/server/internal/advertisedstatus`) is unported.
-- Clustered common-handle columns are never appended to a non-unique secondary index's ranges: Rust `DataSource::handle_cols_to_append` appends only the integer handle, Go `HandleColsToAppend` (`logical_datasource.go`) also the `CommonHandleCols`/`CommonHandleLens` (not for global, MV, columnar indexes or V0-new-collation string handles). 70cff7d9f66's tests (`TestIndexRangeEstimationWithPrefixedCommonHandle`, `TestCommonHandleIndexRangesWithTupleCompare`) depend on it; its per-column length change in `Selectivity` is ported.
 - TRUNCATE TABLE does no `preSplitAndScatterTable` (Rust pre-splits only at CREATE TABLE, in the executor).
 - c09f6278deb: needs hypothetical expression indexes, which Rust refuses.
 - c767f6fd8c0: the storage-class transition manager is unported, and with it 56ee5bb2684's transition-completion half and 64e8c4c05ec.
@@ -34,7 +33,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 ## Candidates (unverified)
 
 - c50aae2b1b2 2026-07-13 5/5 pkg/objstore: suppress expected S3 region redirect warning (#69551)
-- f994e8da277 2026-07-15 1/1 planner: build secondary index scan ranges from clustered PK predicates (#69745)
 - 10292a4f869 2026-07-15 1/1 session: use resource group runtime state for paging (#69633)
 - a9e28f252ed 2026-07-20 8/8 session: reserve bootstrap versions for release-nextgen-202603 (#69886)
 - ed2376acc6e 2026-07-23 1/1 server: limit accumulated COM_STMT_SEND_LONG_DATA size (#69694)

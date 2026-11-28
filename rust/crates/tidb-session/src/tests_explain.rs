@@ -733,87 +733,6 @@ fn explain_select() {
     );
 }
 
-/// A tuple comparison over a secondary index of a clustered table ranges
-/// over the declared index column only: Go's `fillIndexPath` never appends a
-/// common handle, and the rest of the tuple stays a filter. Go prints
-/// `range:[1,+inf]` for both tables below.
-#[test]
-fn common_handle_tuple_comparison_ranges_the_declared_index_column() {
-    let mut session = Session::new();
-    session
-        .run(
-            "CREATE TABLE tuple_ranges (
-                a BIGINT NOT NULL,
-                b BIGINT NOT NULL,
-                c BIGINT NOT NULL,
-                PRIMARY KEY (b, c) CLUSTERED,
-                KEY ia(a)
-            )",
-        )
-        .unwrap();
-    session
-        .run("INSERT INTO tuple_ranges VALUES (1,2,3), (1,2,4), (1,3,1), (2,1,1)")
-        .unwrap();
-
-    let explain = row_text(session.run(
-        "EXPLAIN SELECT * FROM tuple_ranges USE INDEX (ia) \
-         WHERE (a, b, c) > (1, 2, 3)",
-    ));
-    assert!(
-        explain
-            .iter()
-            .any(|row| row.iter().any(|cell| cell.contains("range:[1,+inf],"))),
-        "the range stops at the declared index column: {explain:?}"
-    );
-    assert_eq!(
-        row_text(session.run(
-            "SELECT a, b, c FROM tuple_ranges USE INDEX (ia) \
-             WHERE (a, b, c) > (1, 2, 3) ORDER BY a, b, c",
-        )),
-        [
-            vec!["1".to_owned(), "2".to_owned(), "4".to_owned()],
-            vec!["1".to_owned(), "3".to_owned(), "1".to_owned()],
-            vec!["2".to_owned(), "1".to_owned(), "1".to_owned()],
-        ]
-    );
-
-    session
-        .run(
-            "CREATE TABLE tuple_ranges3 (
-                a BIGINT NOT NULL,
-                b BIGINT NOT NULL,
-                c BIGINT NOT NULL,
-                d BIGINT NOT NULL,
-                PRIMARY KEY (b, c, d) CLUSTERED,
-                KEY ia(a)
-            )",
-        )
-        .unwrap();
-    session
-        .run("INSERT INTO tuple_ranges3 VALUES (1,2,3,4), (1,2,3,5), (1,2,4,1)")
-        .unwrap();
-    let explain = row_text(session.run(
-        "EXPLAIN SELECT * FROM tuple_ranges3 USE INDEX (ia) \
-         WHERE (a, b, c, d) > (1, 2, 3, 4)",
-    ));
-    assert!(
-        explain
-            .iter()
-            .any(|row| row.iter().any(|cell| cell.contains("range:[1,+inf],"))),
-        "a three-column common handle is not a range dimension either: {explain:?}"
-    );
-    assert_eq!(
-        row_text(session.run(
-            "SELECT * FROM tuple_ranges3 USE INDEX (ia) \
-             WHERE (a, b, c, d) > (1, 2, 3, 4) ORDER BY a, b, c, d",
-        )),
-        [
-            vec!["1".to_owned(), "2".to_owned(), "3".to_owned(), "5".to_owned()],
-            vec!["1".to_owned(), "2".to_owned(), "4".to_owned(), "1".to_owned()],
-        ]
-    );
-}
-
 /// Go `detachCondAndBuildRangeForPath` (`core/stats.go`): the integer
 /// handle appended to a secondary index narrows its execution range; the
 /// estimate ranges are pruned to the declared column and the handle range is
@@ -2279,12 +2198,13 @@ fn explain_partial_stats_match_go_plan_matrix() {
     );
 }
 
-/// A clustered common handle is never appended to a secondary index path
-/// (Go `fillIndexPath`): its predicates stay index-side filters over the
-/// declared range, which Go prints as `range:[1,1]` at 100 rows, then a
-/// build-side Selection of 2.85.
+/// Go master `HandleColsToAppend` (f994e8da277) appends the clustered
+/// common handle (b, c) to `ia(a)`, so its predicates become the range
+/// `[1 1 11,1 1 19]`, estimated from the pruned `a = 1` prefix with the
+/// handle credited (12d24af9894): 16.87 rows, no index-side filter, 9.00 for
+/// the plan (Go master testkit).
 #[test]
-fn common_handle_predicates_filter_the_declared_index_range() {
+fn common_handle_predicates_range_the_appended_handle() {
     let mut session = Session::new();
     session
         .run(
@@ -2327,102 +2247,10 @@ fn common_handle_predicates_filter_the_declared_index_range() {
     assert_eq!(scan(&prefix)[1], "100.00", "{prefix:?}");
     let with_handle = explain(&mut session, "a = 1 AND b = 1 AND c BETWEEN 11 AND 19");
     let with_handle_scan = scan(&with_handle);
-    assert_eq!(with_handle_scan[1], "100.00", "{with_handle:?}");
-    assert!(with_handle_scan[4].starts_with("range:[1,1],"), "{with_handle:?}");
-    let filter = with_handle
-        .iter()
-        .find(|row| row[0].contains("Selection") && row[0].contains("(Build)"))
-        .unwrap_or_else(|| panic!("handle predicates filter the index side: {with_handle:?}"));
-    assert_eq!(filter[1], "2.85", "{with_handle:?}");
-}
-
-/// A prefixed clustered common handle on a secondary index: the handle is
-/// never a range dimension (Go `fillIndexPath`), so its predicates are
-/// filters over the declared `c` range. Every plan number below is Go's own
-/// output.
-#[test]
-fn prefixed_common_handle_ranges_match_go_cardinality_cases() {
-    let mut session = Session::new();
-    session
-        .run(
-            "CREATE TABLE prefixed_common_handle_estimate (
-                p1 VARCHAR(64),
-                p2 INT,
-                c INT,
-                PRIMARY KEY (p1(2), p2) CLUSTERED,
-                KEY ic(c)
-            )",
-        )
-        .unwrap();
-    let values = (1..=100)
-        .map(|id| format!("('pp_{id:03}', {id}, {})", id % 10))
-        .collect::<Vec<_>>()
-        .join(",");
-    session
-        .run(&format!(
-            "INSERT INTO prefixed_common_handle_estimate VALUES {values}"
-        ))
-        .unwrap();
-    session
-        .run("ANALYZE TABLE prefixed_common_handle_estimate ALL COLUMNS")
-        .unwrap();
-
-    let explain = |session: &mut Session, sql: &str| row_text(session.run(sql));
-    let prefix_query = "SELECT * FROM prefixed_common_handle_estimate USE INDEX (ic) \
-                        WHERE c = 5 AND p1 = 'pp_055'";
-    let prefix_plan = explain(&mut session, &format!("EXPLAIN {prefix_query}"));
-    let prefix_scan = prefix_plan
-        .iter()
-        .find(|row| row[0].contains("IndexRangeScan"))
-        .unwrap_or_else(|| panic!("missing prefix index scan: {prefix_plan:?}"));
-    assert!(prefix_scan[4].contains("range:[5,5],"), "{prefix_scan:?}");
-    assert_eq!(prefix_scan[1], "10.00", "{prefix_plan:?}");
-    let selection = prefix_plan
-        .iter()
-        .find(|row| row[0].contains("Selection"))
-        .unwrap_or_else(|| panic!("missing prefix predicate recheck: {prefix_plan:?}"));
-    assert!(
-        selection[4].contains("eq(test.prefixed_common_handle_estimate.p1, \"pp_055\")"),
-        "{selection:?}"
-    );
-
-    let second_handle_query = "EXPLAIN SELECT * FROM prefixed_common_handle_estimate \
-        USE INDEX (ic) WHERE c = 5 AND p1 = 'pp_055' AND p2 = 55";
-    let second_handle_plan = explain(&mut session, second_handle_query);
-    let second_handle_scan = second_handle_plan
-        .iter()
-        .find(|row| row[0].contains("IndexRangeScan"))
-        .unwrap_or_else(|| panic!("missing two-column handle range: {second_handle_plan:?}"));
-    assert!(second_handle_scan[4].contains("range:[5,5],"), "{second_handle_scan:?}");
-    let second_handle_filter = second_handle_plan
-        .iter()
-        .find(|row| row[0].contains("Selection") && row[0].contains("(Build)"))
-        .unwrap_or_else(|| panic!("p2 filters the index side: {second_handle_plan:?}"));
-    assert!(
-        second_handle_filter[4].contains("eq(test.prefixed_common_handle_estimate.p2, 55)"),
-        "{second_handle_filter:?}"
-    );
-
-    let tuple_query = "SELECT * FROM prefixed_common_handle_estimate \
-                       WHERE (c, p1, p2) > (5, 'pp_055', 55)";
-    let tuple_plan = explain(&mut session, &format!("EXPLAIN {tuple_query}"));
-    let tuple_selection = tuple_plan
-        .iter()
-        .find(|row| row[0].contains("Selection"))
-        .unwrap_or_else(|| panic!("missing tuple Selection: {tuple_plan:?}"));
-    assert_eq!(tuple_selection[1], "40.00", "{tuple_plan:?}");
-    assert_eq!(row_text(session.run(tuple_query)).len(), 44);
-
-    let forced_tuple_query = "SELECT * FROM prefixed_common_handle_estimate USE INDEX (ic) \
-                              WHERE (c, p1, p2) > (5, 'pp_055', 55)";
-    let forced_tuple_plan = explain(&mut session, &format!("EXPLAIN {forced_tuple_query}"));
-    let forced_tuple_scan = forced_tuple_plan
-        .iter()
-        .find(|row| row[0].contains("IndexRangeScan"))
-        .unwrap_or_else(|| panic!("missing forced tuple scan: {forced_tuple_plan:?}"));
-    assert!(forced_tuple_scan[4].contains("range:[5,+inf],"), "{forced_tuple_scan:?}");
-    assert_eq!(forced_tuple_scan[1], "50.00");
-    assert_eq!(row_text(session.run(forced_tuple_query)).len(), 44);
+    assert_eq!(with_handle_scan[1], "16.87", "{with_handle:?}");
+    assert!(with_handle_scan[4].starts_with("range:[1 1 11,1 1 19],"), "{with_handle:?}");
+    assert!(!with_handle.iter().any(|row| row[0].contains("Selection")), "{with_handle:?}");
+    assert_eq!(with_handle[0][1], "9.00", "{with_handle:?}");
 }
 
 /// Go `TestDefaultStringMatchSelectivityZeroImprovesLikeEstimation`:

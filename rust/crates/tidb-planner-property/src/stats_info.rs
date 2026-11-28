@@ -272,8 +272,12 @@ impl HistCollExt for HistColl {
         self.for_each_index(|id, index| {
             let columns = self.index_columns(id);
             let declared = index.info.as_ref().map_or(0, |info| info.read().columns.len());
-            if index.histogram.ndv > 0 && !columns.is_empty() && columns.len() == declared {
-                ndvs.insert(id, (columns.to_vec(), index.histogram.ndv as f64));
+            // `Idx2ColUniqueIDs` may hold only a prefix of the index columns,
+            // or more: the appended handle columns -- one for an int handle,
+            // possibly several for a common handle (Go master f994e8da277)
+            // -- which are ignored.
+            if index.histogram.ndv > 0 && !columns.is_empty() && declared > 0 && columns.len() >= declared {
+                ndvs.insert(id, (columns[..declared].to_vec(), index.histogram.ndv as f64));
             }
             false
         });

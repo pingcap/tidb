@@ -3002,7 +3002,10 @@ impl PhysicalIndexScan {
         is_double_read: bool,
         alloc_plan_column_id: &dyn Fn() -> Result<i64, PlanError>,
     ) -> Result<Vec<Column>, PlanError> {
-        let mut index_cols: Vec<Column> = Vec::with_capacity(index.columns.len() + 1);
+        // Go master f994e8da277: `IdxCols` may exceed the declared index
+        // columns when handle columns were appended (one for an int handle,
+        // possibly several for a common handle).
+        let mut index_cols: Vec<Column> = Vec::with_capacity(idx_cols.len().max(index.columns.len()) + 1);
         index_cols.extend(idx_cols.iter().cloned());
         for i in idx_cols.len()..index.columns.len() {
             if let Some(Some(column)) = idx_expr_cols.get(i) {
@@ -3021,7 +3024,12 @@ impl PhysicalIndexScan {
                 index_cols.push(column);
             }
         }
-        if table.is_common_handle {
+        // `fillIndexPath` may have appended the full common-handle suffix to
+        // `IdxCols`, in which case the columns already end with the handle;
+        // otherwise the handle segment is appended verbatim, complete even
+        // when a handle column repeats a declared index column, because the
+        // executor addresses the handle right after the declared columns.
+        if table.is_common_handle && idx_cols.len() <= index.columns.len() {
             index_cols.extend(idx_expr_cols.iter().skip(index.columns.len()).flatten().cloned());
         }
         let mut set_handle = index_cols.len() > index.columns.len();

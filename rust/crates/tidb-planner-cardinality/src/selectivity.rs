@@ -118,7 +118,10 @@ impl MvIndexFilters for NoMvIndexFilters {
 /// access path that carries an index, with the unique IDs of that path's
 /// `IdxCols` when the estimate runs. A common-handle table path carries its
 /// PRIMARY index with no columns until `deriveCommonHandleTablePathStats`.
-pub type FilledPaths = std::collections::BTreeMap<i64, Vec<Column>>;
+/// Each column carries the path's `IdxColLens` entry: Go builds a filled
+/// path's ranges with those lengths, the stored prefix of an appended
+/// clustered handle included.
+pub type FilledPaths = std::collections::BTreeMap<i64, Vec<(Column, i64)>>;
 
 impl<'a> SelectivityContext<'a> {
     /// A context with no range-fallback recorder and plan caching off.
@@ -274,8 +277,12 @@ pub fn selectivity(
         let info = info.as_ref().map(|(_, column_lengths)| column_lengths);
         // Go `findPrefixOfIndexByCol`: a possible path decides by its own
         // `IdxCols`; an index without one by `Idx2ColUniqueIDs`.
-        let index_columns = match filled_paths.and_then(|paths| paths.get(&index_id)) {
-            Some(path_columns) => find_prefix_of_index_by_col(&extracted, path_columns),
+        let filled_path = filled_paths.and_then(|paths| paths.get(&index_id));
+        let index_columns = match filled_path {
+            Some(path_columns) => {
+                let path_columns = path_columns.iter().map(|(column, _)| column.clone()).collect::<Vec<_>>();
+                find_prefix_of_index_by_col(&extracted, &path_columns)
+            }
             None => find_prefix_of_index(&extracted, coll.index_columns(index_id)),
         };
         if index_columns.is_empty() {
@@ -296,6 +303,14 @@ pub fn selectivity(
         // estimation, which compare against the handle columns' untruncated
         // statistics.
         lengths.resize(index_columns.len().max(lengths.len()), tidb_ranger::checker::UNSPECIFIED_LENGTH);
+        // A filled path's ranges are Go's `cachedPath.Ranges`, built over the
+        // path's own `IdxColLens`: an appended clustered handle keeps its
+        // stored prefix there.
+        if let Some(path_columns) = filled_path {
+            for (length, (_, path_length)) in lengths.iter_mut().zip(path_columns).skip(declared) {
+                *length = *path_length;
+            }
+        }
         // Go `getMaskAndRanges` takes a filled access path's own ranges
         // (`cachedPath`) instead of building them again; this port derives
         // them again here, before the path is filled, so only an index
