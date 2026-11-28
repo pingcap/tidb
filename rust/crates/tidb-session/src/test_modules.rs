@@ -31,6 +31,7 @@ mod tests_bdr;
 mod tests_binding;
 mod tests_builtin_survey;
 mod tests_calibrate_resource;
+mod tests_cardinality_truncated_handle_range;
 mod tests_cast_int_truncation;
 mod tests_cast_vector;
 mod tests_charset;

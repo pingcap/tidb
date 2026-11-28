@@ -288,11 +288,14 @@ pub fn selectivity(
                     .unwrap_or(tidb_ranger::checker::UNSPECIFIED_LENGTH)
             })
             .collect();
-        // The found columns exceed the index's own: the integer handle the
-        // key stores after the index columns.
-        if index_columns.len() > declared {
-            lengths.push(tidb_ranger::checker::UNSPECIFIED_LENGTH);
-        }
+        // Go master 70cff7d9f66: the found columns can outnumber the index's
+        // own, because the key stores the handle after the index columns --
+        // one column for an int handle, possibly several for a clustered
+        // common handle. Every appended column needs its own length entry,
+        // at full length: these lengths only shape the ranges built for
+        // estimation, which compare against the handle columns' untruncated
+        // statistics.
+        lengths.resize(index_columns.len().max(lengths.len()), tidb_ranger::checker::UNSPECIFIED_LENGTH);
         // Go `getMaskAndRanges` takes a filled access path's own ranges
         // (`cachedPath`) instead of building them again; this port derives
         // them again here, before the path is filled, so only an index
@@ -763,6 +766,132 @@ pub fn get_row_count_by_index_ranges(
         }
     };
     get_index_row_count(&stats, &virtual_columns, &recursive, ranges, options, &record_position)
+}
+
+/// Go `AdjustRowCountForAppendedHandleColumns` (`row_count_index.go`, Go
+/// master 12d24af9894): a non-unique index's key ends with the handle, so
+/// ranges built over the index columns plus the appended handle columns
+/// carry handle predicates the index statistics cannot see. The estimate
+/// over the ranges pruned to the `declared_col_cnt` index columns
+/// (`prefix_count`) is damped by each fully bound handle column's
+/// selectivity with exponential backoff, and capped at the number of point
+/// ranges when every range pins the index columns and the whole handle.
+#[must_use]
+pub fn adjust_row_count_for_appended_handle_columns(
+    coll: &HistColl,
+    ranges: &[Range],
+    idx_cols_with_handle: &[Column],
+    declared_col_cnt: usize,
+    prefix_count: tidb_stats::RowEstimate,
+    options: &EstimatorOptions,
+) -> tidb_stats::RowEstimate {
+    let realtime_count = coll.realtime_count() as f64;
+    if realtime_count <= 0.0 || ranges.is_empty() || idx_cols_with_handle.len() <= declared_col_cnt {
+        return prefix_count;
+    }
+    let mut sels = Vec::with_capacity(idx_cols_with_handle.len() - declared_col_cnt);
+    for (dim, col) in idx_cols_with_handle.iter().enumerate().skip(declared_col_cnt) {
+        // Go `ColumnStatsIsInvalid(coll.GetCol(col.UniqueID), ...)`.
+        let Some(column_stats) = coll.histogram_for_estimation(col.unique_id) else {
+            continue;
+        };
+        let mut col_ranges = Vec::with_capacity(ranges.len());
+        let mut all_bound = true;
+        for ran in ranges {
+            if ran.low_val.len() <= dim || ran.high_val.len() <= dim {
+                // Some range does not constrain this dimension, so the column
+                // is not bound across the whole path and must not contribute
+                // selectivity.
+                all_bound = false;
+                break;
+            }
+            col_ranges.push(Range {
+                low_val: vec![ran.low_val[dim].clone()].into(),
+                high_val: vec![ran.high_val[dim].clone()].into(),
+                collators: ran.collators.get(dim).cloned().into_iter().collect(),
+                // The exclusion flags of a multi-column range apply to its
+                // last dimension.
+                low_exclude: ran.low_exclude && dim == ran.low_val.len() - 1,
+                high_exclude: ran.high_exclude && dim == ran.high_val.len() - 1,
+            });
+        }
+        if !all_bound {
+            continue;
+        }
+        // Ranges that differ only in earlier dimensions repeat the same handle
+        // bound; merge them so the column row count is not summed once per
+        // range.
+        let Ok(merged) = tidb_ranger::ranger::union_ranges(col_ranges, false) else {
+            continue;
+        };
+        let column_ranges = merged
+            .iter()
+            .map(|range| {
+                ColumnRange::new(range.low_val[0].clone(), range.high_val[0].clone(), range.low_exclude, range.high_exclude)
+            })
+            .collect::<Vec<_>>();
+        // Go reads the collator each range carries for the dimension.
+        let Some(collation) = ranges[0].collators.get(dim).cloned().or_else(|| col.ret_type.as_ref().map(|ft| ft.collation())) else {
+            continue;
+        };
+        let is_handle = coll.column(col.unique_id).is_some_and(|stats| stats.is_handle);
+        let stats = crate::read(&column_stats);
+        let Ok(count) = get_row_count_by_column_ranges(
+            Some(&stats),
+            &column_ranges,
+            collation,
+            coll.realtime_count(),
+            coll.modify_count(),
+            is_handle,
+            options,
+        ) else {
+            continue;
+        };
+        let sel = count.est / realtime_count;
+        if sel > 0.0 && sel < 1.0 {
+            sels.push(sel);
+        }
+    }
+    let mut adjusted = prefix_count;
+    if !sels.is_empty() {
+        sels.sort_by(f64::total_cmp);
+        let mut factor = 1.0;
+        let mut indep_factor = 1.0;
+        for (i, &sel) in sels.iter().enumerate() {
+            indep_factor *= sel;
+            // The prefix estimate occupies the full-weight slot, so the i-th
+            // handle selectivity gets weight 1/2^(i+1).
+            if i + 1 < crate::MAX_EXPONENTIAL_BACKOFF_COLS {
+                let mut sel = sel;
+                for _ in 0..=i {
+                    sel = sel.sqrt();
+                }
+                factor *= sel;
+            }
+        }
+        adjusted.est *= factor;
+        // Damping should not push the estimate below 1 row unless the prefix
+        // estimate is already < 1.
+        adjusted.est = adjusted.est.max(prefix_count.est.min(1.0));
+        // Full independence gives the most optimistic count; the unadjusted
+        // prefix estimate remains the upper bound in MaxEst.
+        adjusted.min_est = (adjusted.min_est * indep_factor).min(adjusted.est);
+    }
+    // A point range over the declared columns plus the full handle identifies
+    // at most one row, because the physical key of a non-unique index ends
+    // with the complete handle and is therefore unique.
+    let full_points = ranges.iter().all(|ran| {
+        ran.low_val.len() == idx_cols_with_handle.len()
+            && ran.high_val.len() == idx_cols_with_handle.len()
+            && ran.is_point(options.regard_null_as_point)
+    });
+    if full_points {
+        let point_cap = ranges.len() as f64;
+        adjusted.est = adjusted.est.min(point_cap);
+        adjusted.min_est = adjusted.min_est.min(adjusted.est);
+        adjusted.max_est = adjusted.max_est.min(point_cap);
+    }
+    adjusted
 }
 
 /// Go `GetSelectivityByFilter`: a single-column filter evaluated over the

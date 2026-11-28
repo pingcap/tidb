@@ -19,7 +19,7 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - Placement bundles and label rules are sent to PD at commit time (`real_tikv_ddl` delivery), so a PD refusal retries the step where Go's `onCreateTable` / `onTruncateTable` cancel the job.
 - 7193401b674 (keyspace half; SHOW AFFINITY's lookup of only its groups is ported): NextGen affinity group ids (`_tidb_ks{id}_...`) and keyspace-encoded group key ranges. The DDL job steps have no keyspace codec: label rules use `CodecV1` too, so both are keyspace-unaware under NextGen.
 - fe1f4b41b44: the warning-only check that the advertised status endpoint (`advertise-address` + status port `/info`) answers this TiDB's `ddl_id` (`pkg/server/internal/advertisedstatus`) is unported.
-- Index row-count estimation over an appended handle (one batch, whole functions: Go `deriveIndexPathStats`/`pruneEstimateRange` in `core/stats.go` and `cardinality/row_count_index.go`): 12d24af9894, 94b834d94b6, 70cff7d9f66, 38d990578c4 and later. Rust still estimates with July's `pruneEstimateRange` (exclusivity kept, no union); gomaster probe for `tests_explain.rs` `truncated_handle_estimate`: `a=5 AND id>10` 10.00 (Rust 12.50), `id<10` 10.00 (12.50), `id IN (11,22)` 2.00 (20.00), `id=7` 1.00 (10.00); unsigned handle 10.00 (same).
+- Clustered common-handle columns are never appended to a non-unique secondary index's ranges: Rust `DataSource::handle_cols_to_append` appends only the integer handle, Go `HandleColsToAppend` (`logical_datasource.go`) also the `CommonHandleCols`/`CommonHandleLens` (not for global, MV, columnar indexes or V0-new-collation string handles). 70cff7d9f66's tests (`TestIndexRangeEstimationWithPrefixedCommonHandle`, `TestCommonHandleIndexRangesWithTupleCompare`) depend on it; its per-column length change in `Selectivity` is ported.
 - TRUNCATE TABLE does no `preSplitAndScatterTable` (Rust pre-splits only at CREATE TABLE, in the executor).
 - c09f6278deb: needs hypothetical expression indexes, which Rust refuses.
 - c767f6fd8c0: the storage-class transition manager is unported, and with it 56ee5bb2684's transition-completion half and 64e8c4c05ec.
@@ -37,7 +37,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - f994e8da277 2026-07-15 1/1 planner: build secondary index scan ranges from clustered PK predicates (#69745)
 - 10292a4f869 2026-07-15 1/1 session: use resource group runtime state for paging (#69633)
 - a9e28f252ed 2026-07-20 8/8 session: reserve bootstrap versions for release-nextgen-202603 (#69886)
-- 12d24af9894 2026-07-21 2/2 planner: credit appended handle predicates in index row count estimation (#69749)
 - ed2376acc6e 2026-07-23 1/1 server: limit accumulated COM_STMT_SEND_LONG_DATA size (#69694)
 - 7f48017da68 2026-07-24 2/2 objstore: abort GCS multipart upload on error path (#69988)
 - 2ddad9e3a5c 2026-07-28 3/3 session: retry waiting for SYSTEM keyspace bootstrap (#70085)
@@ -92,7 +91,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - f137844d4ff 2026-10-23 4/4 sessionctx: preserve variables and read timestamps during session migration (#72050)
 - 74dc8d6e872 2026-10-26 2/2 executor: use backend scan bytes for NextGen statement RU (#71976)
 - a35c499c9b8 2026-10-27 10/10 dxf: clean orphan global-sort data (#72420)
-- 1c0793ea576 2026-10-28 9/9 planner: prune IN-list based upon seek cost (#66394)
 - 9f32fa65d03 2026-10-29 1/1 crossks, executor: give runtime sessions an auto-ID client and an MPP server ID (#72507)
 - 79dd4407009 2026-10-29 2/2 server, config: allow non-root diagnostic mode with skip-grant-table (#72431)
 - 8d826c0273a 2026-11-03 2/2 stmtsummary: preserve history across ambiguous rotation times (#72596)

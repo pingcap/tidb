@@ -443,31 +443,28 @@ fn the_handle_range_corpus_matches_go() {
         );
     }
 
-    // The mixed predicate under pseudo statistics, as Go prints it:
+    // The mixed predicate under pseudo statistics, as Go master prints it
+    // (testkit):
     //
     // ```text
-    // TableReader        33.33    root
-    // `-Projection       33.33    cop[tikv]
-    //   `-Selection      33.33    cop[tikv]  eq(test.sbtest1.k, 4)
-    //     `-TableRangeScan 3333.33 cop[tikv] range:(0,+inf]
+    // Projection           33.33  root
+    // `-IndexLookUp        33.33  root
+    //   |-IndexRangeScan   33.33  cop[tikv]  index:k_1(k) range:(4 0,4 +inf]
+    //   `-TableRowIDScan   33.33  cop[tikv]
     // ```
     //
-    // `k_1`'s path estimates its range pruned to the declared `k`
-    // (`pruneEstimateRange`), so the handle range wins. Operator IDs are not
+    // `k_1`'s ranges reach into the appended handle; their estimate prunes
+    // them to `k` and credits the handle range (Go master 94b834d94b6,
+    // 12d24af9894), so the index path wins. Operator IDs are not
     // significant.
     let rows = row_text(session.run("EXPLAIN SELECT c FROM sbtest1 WHERE id > 0 AND k = 4"));
     let scan = rows
         .iter()
-        .find(|row| row[0].contains("TableRangeScan_"))
-        .unwrap_or_else(|| panic!("the mixed predicate reads the handle range: {rows:?}"));
-    assert_eq!(scan[1], "3333.33", "{rows:?}");
-    assert!(scan[4].starts_with("range:(0,+inf]"), "{rows:?}");
-    let selection = rows
-        .iter()
-        .find(|row| row[0].contains("Selection_"))
-        .unwrap_or_else(|| panic!("k = 4 stays a filter: {rows:?}"));
-    assert_eq!(selection[1], "33.33", "{rows:?}");
-    assert!(selection[4].contains("eq(test.sbtest1.k, 4)"), "{rows:?}");
+        .find(|row| row[0].contains("IndexRangeScan_"))
+        .unwrap_or_else(|| panic!("the mixed predicate reads k_1 with the handle range: {rows:?}"));
+    assert_eq!(scan[1], "33.33", "{rows:?}");
+    assert!(scan[4].starts_with("range:(4 0,4 +inf]"), "{rows:?}");
+    assert!(rows.iter().any(|row| row[0].contains("IndexLookUp_") && row[1] == "33.33"), "{rows:?}");
 }
 
 /// The sysbench WRITE shapes, as the source row of their plan.

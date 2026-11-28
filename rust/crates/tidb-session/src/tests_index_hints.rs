@@ -1482,11 +1482,14 @@ fn union_partials_prune_index_prefix_before_appended_handle_estimation() {
         .filter(|row| row[0].contains("IndexRangeScan"))
         .collect::<Vec<_>>();
     assert_eq!(scans.len(), 2, "{plan:?}");
-    // Go prunes each partial's estimate ranges to the declared column
-    // (`pruneEstimateRange`, no union), so the two points of `a = 5` count
-    // twice: 20.00 per partial, and 3.96 for the union.
+    // Go master prunes each partial's estimate ranges to the declared column
+    // and merges the two points of `a = 5` (`pruneEstimateRange`,
+    // 94b834d94b6), then credits the handle points
+    // (`AdjustRowCountForAppendedHandleColumns`, 12d24af9894): 10 *
+    // sqrt(2/100) = 1.41 per partial (Go master testkit), and 3.96 for the
+    // union.
     for scan in scans {
-        assert_eq!(scan[1], "20.00", "{plan:?}");
+        assert_eq!(scan[1], "1.41", "{plan:?}");
     }
     let merge = plan
         .iter()

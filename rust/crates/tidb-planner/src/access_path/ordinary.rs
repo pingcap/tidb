@@ -287,7 +287,22 @@ pub(crate) fn derive_index_path_stats(
             if let (Some(filtered), Some(table)) =
                 (source.base.base.stats_info(), source.table_stats.as_ref())
             {
-                if estimate.est + tidb_planner_core_cost::TOLERANCE_FACTOR < filtered.row_count() {
+                if estimate.est + tidb_planner_core_cost::TOLERANCE_FACTOR < filtered.row_count()
+                    && super::index_merge::path_ranges_include_appended_handle(&path)
+                {
+                    // Go `adjustCountAfterAccess`: "the handle predicates were
+                    // credited with deliberately damped exponential backoff, so
+                    // falling below the independence-leaning stats.RowCount is
+                    // expected ... Align to stats.RowCount without the
+                    // SelectionFactor penalty."
+                    estimate.min_est = if estimate.min_est > 0.0 {
+                        estimate.min_est.min(estimate.est)
+                    } else {
+                        estimate.est
+                    };
+                    estimate.est = filtered.row_count();
+                    estimate.max_est = estimate.max_est.max(estimate.est);
+                } else if estimate.est + tidb_planner_core_cost::TOLERANCE_FACTOR < filtered.row_count() {
                     estimate.min_est = if estimate.min_est > 0.0 {
                         estimate.min_est.min(estimate.est)
                     } else {
@@ -488,8 +503,13 @@ fn is_handle_eq_correlated(condition: &Expression, handle: &Column) -> bool {
 pub(crate) fn prune_estimate_range(
     ranges: &[tidb_ranger::Range],
     keep_columns: usize,
-) -> Vec<tidb_ranger::Range> {
-    ranges
+) -> Result<tidb_ranger::types::Ranges, tidb_codec::CodecError> {
+    // Go master 94b834d94b6: truncating a bound widens it to the whole
+    // prefix, so a bound that lost values becomes inclusive (otherwise
+    // `(10 1, 10 +inf]` would collapse to the empty `(10, 10]`), and ranges
+    // that collapse to the same prefix are merged so the prefix rows are not
+    // counted once per pruned range.
+    let estimate_ranges = ranges
         .iter()
         .map(|range| {
             let width = keep_columns.min(range.low_val.len());
@@ -497,11 +517,12 @@ pub(crate) fn prune_estimate_range(
                 low_val: range.low_val[..width].to_vec().into(),
                 high_val: range.high_val[..width].to_vec().into(),
                 collators: range.collators[..width.min(range.collators.len())].to_vec(),
-                low_exclude: range.low_exclude,
-                high_exclude: range.high_exclude,
+                low_exclude: range.low_exclude && range.low_val.len() <= keep_columns,
+                high_exclude: range.high_exclude && range.high_val.len() <= keep_columns,
             }
         })
-        .collect()
+        .collect();
+    tidb_ranger::ranger::union_ranges(estimate_ranges, false)
 }
 
 /// Go `deriveTablePathStats` / `deriveCommonHandleTablePathStats` over the

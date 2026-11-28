@@ -814,10 +814,12 @@ fn common_handle_tuple_comparison_ranges_the_declared_index_column() {
     );
 }
 
-/// Go `detachCondAndBuildRangeForPath` (`core/stats.go:425-447`): the
-/// integer handle appended to a secondary index narrows its execution range,
-/// but the path's estimate ranges are pruned to the declared column, so the
-/// index scan still prints Go's 100 rows for both predicates.
+/// Go `detachCondAndBuildRangeForPath` (`core/stats.go`): the integer
+/// handle appended to a secondary index narrows its execution range; the
+/// estimate ranges are pruned to the declared column and the handle range is
+/// then credited (`AdjustRowCountForAppendedHandleColumns`, Go master
+/// 12d24af9894): 100 rows for `a = 1`, 100 * sqrt(10/100) = 31.62 with the
+/// handle range (Go master testkit).
 #[test]
 fn appended_integer_handle_range_keeps_the_declared_index_estimate() {
     let mut session = Session::new();
@@ -858,7 +860,7 @@ fn appended_integer_handle_range_keeps_the_declared_index_estimate() {
     assert_eq!(index_scan_estimate(&mut session, "a = 1"), 100.0);
     assert_eq!(
         index_scan_estimate(&mut session, "a = 1 AND id BETWEEN 10 AND 19"),
-        100.0
+        31.62
     );
 }
 
@@ -1901,103 +1903,6 @@ fn within_bucket_range_skew_setting_changes_analyzed_index_estimate() {
     session
         .run("SET GLOBAL tidb_opt_risk_range_skew_ratio = DEFAULT")
         .unwrap();
-}
-
-/// Go `pruneEstimateRange` keeps each range's exclusivity while cutting it to
-/// the declared column, so `(5 10,5 +inf]` estimates `(5,5]`: one row, then
-/// `adjustCountAfterAccess` lifts it to rows/0.8. Two handle points count the
-/// `a = 5` point twice. Every number below is Go's own output.
-#[test]
-fn truncated_integer_handle_ranges_match_go_cardinality_estimates() {
-    let mut session = Session::new();
-    session
-        .run(
-            "CREATE TABLE truncated_handle_estimate (
-                id BIGINT PRIMARY KEY CLUSTERED,
-                a INT,
-                KEY ia(a)
-            )",
-        )
-        .unwrap();
-    let values = (1..=100)
-        .map(|id| format!("({id}, {})", id % 10))
-        .collect::<Vec<_>>()
-        .join(",");
-    session
-        .run(&format!(
-            "INSERT INTO truncated_handle_estimate VALUES {values}"
-        ))
-        .unwrap();
-    session
-        .run("ANALYZE TABLE truncated_handle_estimate ALL COLUMNS")
-        .unwrap();
-
-    let index_scan = |session: &mut Session, predicate: &str| {
-        let rows = row_text(session.run(&format!(
-            "EXPLAIN SELECT * FROM truncated_handle_estimate USE INDEX (ia) WHERE {predicate}"
-        )));
-        rows.iter()
-            .find(|row| row[0].contains("IndexRangeScan"))
-            .unwrap_or_else(|| panic!("missing index scan for {predicate}: {rows:?}"))
-            .clone()
-    };
-
-    let low_exclusive = index_scan(&mut session, "a = 5 AND id > 10");
-    assert!(
-        low_exclusive[4].contains("range:(5 10,5 +inf]"),
-        "{low_exclusive:?}"
-    );
-    assert_eq!(low_exclusive[1], "12.50");
-
-    let high_exclusive = index_scan(&mut session, "a = 5 AND id < 10");
-    assert!(
-        high_exclusive[4].contains("range:[5 -inf,5 10)"),
-        "{high_exclusive:?}"
-    );
-    assert_eq!(high_exclusive[1], "12.50");
-
-    let handle_points = index_scan(&mut session, "a = 5 AND id IN (11, 22)");
-    assert!(
-        handle_points[4].contains("range:[5 11,5 11], [5 22,5 22]"),
-        "{handle_points:?}"
-    );
-    assert_eq!(handle_points[1], "20.00");
-
-    let full_point = index_scan(&mut session, "a = 5 AND id = 7");
-    assert!(full_point[4].contains("range:[5 7,5 7]"), "{full_point:?}");
-    assert_eq!(full_point[1], "10.00");
-
-    session
-        .run(
-            "CREATE TABLE unsigned_handle_estimate (
-                id BIGINT UNSIGNED PRIMARY KEY CLUSTERED,
-                a INT,
-                KEY ia(a)
-            )",
-        )
-        .unwrap();
-    session
-        .run(&format!(
-            "INSERT INTO unsigned_handle_estimate VALUES {values}"
-        ))
-        .unwrap();
-    session
-        .run("ANALYZE TABLE unsigned_handle_estimate ALL COLUMNS")
-        .unwrap();
-    let unsigned_point = row_text(session.run(
-        "EXPLAIN SELECT * FROM unsigned_handle_estimate USE INDEX (ia) \
-         WHERE a = 5 AND id IN (11, 22)",
-    ));
-    let unsigned_scan = unsigned_point
-        .iter()
-        .find(|row| row[0].contains("IndexRangeScan"))
-        .unwrap_or_else(|| panic!("missing unsigned index scan: {unsigned_point:?}"));
-    assert!(
-        unsigned_scan[4].contains("range:[5,5]"),
-        "{unsigned_scan:?}"
-    );
-    assert!(!unsigned_scan[4].contains("5 11"), "{unsigned_scan:?}");
-    assert_eq!(unsigned_scan[1], "10.00");
 }
 
 /// Go `cardinality.recordUsedItemStatsStatus` and scan `FormatForExplain`:

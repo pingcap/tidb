@@ -205,10 +205,16 @@ pub(super) fn estimate_partial_index_ranges(
 
 /// Go `detachCondAndBuildRangeForPath`'s `GetRowCountByIndexRanges` over
 /// `ranges` of `source_index`, whose usable key columns are `columns`.
+///
+/// Go `detachCondAndBuildRangeForPath`'s estimate (and
+/// `buildPrunedRangeAccessPath`'s): the ranges are pruned to the declared
+/// index columns when they reach into the appended handle columns, and the
+/// handle predicates are then credited by
+/// `AdjustRowCountForAppendedHandleColumns` (Go master 12d24af9894).
 pub(crate) fn estimate_index_ranges(
     ds: &DataSource,
     source_index: &tidb_model::GoShared<tidb_model::IndexInfo>,
-    ranges: &tidb_ranger::types::Ranges,
+    execution_ranges: &tidb_ranger::types::Ranges,
     columns: &[(tidb_expr::column::Column, i64)],
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Result<tidb_stats::RowEstimate, PlanError> {
@@ -216,7 +222,22 @@ pub(crate) fn estimate_index_ranges(
     // Go `GetRowCountByIndexRanges` records the index it reads before any
     // fast path (`row_count_index.go:48`).
     ds.record_used_item(ctx.used_stats_recorder, source_index.read().id, true);
-    let ranges = &super::ordinary::prune_estimate_range(ranges, declared);
+    // Go: "Non-unique index paths may append handle columns in
+    // `path.IdxCols` for execution ranges. Rebuild estimation ranges with the
+    // same column set used in row-count estimation."
+    let need_prune_estimate_range = columns.len() > declared
+        && execution_ranges
+            .iter()
+            .any(|range| range.low_val.len() > declared || range.high_val.len() > declared);
+    let pruned;
+    let ranges = if need_prune_estimate_range {
+        pruned = super::ordinary::prune_estimate_range(execution_ranges, declared).map_err(|error| {
+            PlanError::from(tidb_plannererrors::ERR_INTERNAL.gen_with_stack_by_args(&[error.to_string().into()]))
+        })?;
+        &pruned
+    } else {
+        execution_ranges
+    };
     let Some(hist) = ds.table_stats.as_ref().and_then(|stats| stats.hist_coll()) else {
         // Go's table always carries a collection; a profile without one
         // keeps the pseudo rate.
@@ -230,16 +251,16 @@ pub(crate) fn estimate_index_ranges(
             ),
         ));
     };
-    let columns = columns
+    let declared_columns = columns
         .iter()
         .take(declared)
         .map(|(column, _)| column.clone())
         .collect::<Vec<_>>();
-    tidb_planner_cardinality::selectivity::get_row_count_by_index_ranges(
+    let count = tidb_planner_cardinality::selectivity::get_row_count_by_index_ranges(
         hist,
         source_index.read().id,
         ranges,
-        &columns,
+        &declared_columns,
         &ctx.estimator_options,
         &|column_id| ds.record_used_item(ctx.used_stats_recorder, column_id, false),
     )
@@ -248,7 +269,37 @@ pub(crate) fn estimate_index_ranges(
             tidb_plannererrors::ERR_INTERNAL
                 .gen_with_stack_by_args(&[(error.to_string()).into()]),
         )
-    })
+    })?;
+    if !need_prune_estimate_range {
+        return Ok(count);
+    }
+    // Go: "The pruned estimate gives the appended handle predicates no
+    // credit; damp it with the handle columns' selectivities."
+    let idx_cols = columns.iter().map(|(column, _)| column.clone()).collect::<Vec<_>>();
+    Ok(tidb_planner_cardinality::selectivity::adjust_row_count_for_appended_handle_columns(
+        hist,
+        execution_ranges,
+        &idx_cols,
+        declared,
+        count,
+        &ctx.estimator_options,
+    ))
+}
+
+/// Go `pathRangesIncludeAppendedHandle`: whether the ranges of a non-unique
+/// index path extend past the declared index columns into the appended
+/// handle columns.
+pub(crate) fn path_ranges_include_appended_handle(path: &AccessPath) -> bool {
+    let Some(index) = path.index.as_ref() else {
+        return false;
+    };
+    let declared = index.read().columns.len();
+    if path.idx_cols.len() <= declared {
+        return false;
+    }
+    path.ranges
+        .iter()
+        .any(|range| range.low_val.len() > declared || range.high_val.len() > declared)
 }
 
 /// Go `generateNormalIndexPartialPath4And`.
