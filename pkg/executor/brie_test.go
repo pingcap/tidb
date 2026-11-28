@@ -372,4 +372,23 @@ func TestBRIEBuilderOptions(t *testing.T) {
 		require.ErrorContains(t, builder.err, "parse storage URL query failed")
 		require.NotContains(t, builder.err.Error(), "private-context")
 	}
+
+	// TOS credentials must be extracted for execution and redacted from BRIE display fields.
+	stmt, err = p.ParseOneStmt("BACKUP TABLE `a` TO 'tos://bucket/prefix?region=cn-beijing&access-key=ak-1&secret-access-key=private-secret&session-token=private-token'", "", "")
+	require.NoError(t, err)
+	builder.err = nil
+	exec = builder.buildBRIE(stmt.(*ast.BRIEStmt), schema)
+	require.NoError(t, builder.err)
+	e, ok = exec.(*BRIEExec)
+	require.True(t, ok)
+	require.Equal(t, "tos://bucket/prefix", e.backupCfg.Storage)
+	require.Equal(t, "tos://bucket/prefix", e.info.storage)
+	require.Equal(t, "cn-beijing", e.backupCfg.S3.Region)
+	require.Equal(t, "ak-1", e.backupCfg.S3.AccessKey)
+	require.Equal(t, "private-secret", e.backupCfg.S3.SecretAccessKey)
+	require.Equal(t, "private-token", e.backupCfg.S3.SessionToken)
+	require.NotContains(t, e.info.storage, "private-secret")
+	require.NotContains(t, e.info.storage, "private-token")
+	require.NotContains(t, e.info.query, "private-secret")
+	require.NotContains(t, e.info.query, "private-token")
 }

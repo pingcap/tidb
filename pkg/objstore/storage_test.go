@@ -18,12 +18,17 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/objstore/tosstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -144,4 +149,96 @@ func TestNewMemStorage(t *testing.T) {
 	s, err := objstore.NewFromURL(context.Background(), url)
 	require.NoError(t, err)
 	require.IsType(t, (*objstore.MemStorage)(nil), s)
+}
+
+func TestNewTOSStorage(t *testing.T) {
+	backend, err := objstore.ParseBackend("tos://bucket/prefix?region=cn-beijing", &objstore.BackendOptions{
+		S3: s3like.S3BackendOptions{AccessKey: "test-id", SecretAccessKey: "sk"},
+	})
+	require.NoError(t, err)
+	s, err := objstore.New(context.Background(), backend, nil)
+	require.NoError(t, err)
+	defer s.Close()
+	require.IsType(t, (*tosstore.TOSStore)(nil), s)
+	require.Equal(t, "tos://bucket/prefix/", s.URI())
+}
+
+func TestCopyFromBetweenOSSAndS3CompatibleOSS(t *testing.T) {
+	var (
+		mu         sync.Mutex
+		copySource string
+		copyPath   string
+		copyCalls  int
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		if r.Method == http.MethodGet && r.URL.Query().Has("location") {
+			_, _ = w.Write([]byte(`<LocationConstraint>oss-cn-hangzhou</LocationConstraint>`))
+			return
+		}
+		if r.Method == http.MethodPut && r.Header.Get("x-oss-copy-source") != "" {
+			mu.Lock()
+			copyCalls++
+			copySource = r.Header.Get("x-oss-copy-source")
+			copyPath = r.URL.Path
+			mu.Unlock()
+			_, _ = w.Write([]byte(`<CopyObjectResult><ETag>"etag"</ETag><LastModified>2026-01-01T00:00:00.000Z</LastModified></CopyObjectResult>`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	srcBackend, err := objstore.ParseBackend(
+		"s3://src-bucket/src?provider=alibaba&region=cn-hangzhou&access-key=ak&secret-access-key=sk&force-path-style=true&endpoint="+server.URL,
+		nil,
+	)
+	require.NoError(t, err)
+	srcStore, err := objstore.New(ctx, srcBackend, &storeapi.Options{HTTPClient: server.Client()})
+	require.NoError(t, err)
+	defer srcStore.Close()
+
+	dstBackend, err := objstore.ParseBackend(
+		"oss://dst-bucket/dst?region=cn-hangzhou&access-key=ak&secret-access-key=sk&endpoint="+server.URL,
+		nil,
+	)
+	require.NoError(t, err)
+	dstStore, err := objstore.New(ctx, dstBackend, &storeapi.Options{HTTPClient: server.Client()})
+	require.NoError(t, err)
+	defer dstStore.Close()
+
+	copier, ok := dstStore.(storeapi.Copier)
+	require.True(t, ok)
+	err = copier.CopyFrom(ctx, srcStore, storeapi.CopySpec{
+		From: "file.sst",
+		To:   "file.sst",
+	})
+	require.NoError(t, err)
+	mu.Lock()
+	require.Equal(t, 1, copyCalls)
+	require.Equal(t, "/src-bucket/src/file.sst", copySource)
+	require.Equal(t, "/dst-bucket/dst/file.sst", copyPath)
+	mu.Unlock()
+
+	// TOSStore.CopyFrom requires a *TOSStore source and rejects non-TOS sources before any request.
+	tosBackend, err := objstore.ParseBackend(
+		"tos://src-bucket/src?region=cn-beijing&access-key=ak&secret-access-key=sk&endpoint="+server.URL,
+		nil,
+	)
+	require.NoError(t, err)
+	tosStore, err := objstore.New(ctx, tosBackend, &storeapi.Options{HTTPClient: server.Client()})
+	require.NoError(t, err)
+	defer tosStore.Close()
+
+	tosCopier, ok := tosStore.(storeapi.Copier)
+	require.True(t, ok)
+	require.ErrorIs(t, tosCopier.CopyFrom(ctx, dstStore, storeapi.CopySpec{
+		From: "file.sst",
+		To:   "file.sst",
+	}), berrors.ErrStorageInvalidConfig)
+
+	mu.Lock()
+	require.Equal(t, 1, copyCalls)
+	mu.Unlock()
 }

@@ -146,7 +146,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		noop := &backuppb.Noop{}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Noop{Noop: noop}}, nil
 
-	case "s3", "ks3", "oss":
+	case "s3", "ks3", "oss", "tos":
 		if u.Host == "" {
 			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", RedactURL(rawURL))
 		}
@@ -159,7 +159,12 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if err := ExtractQueryParameters(u, &s3Options); err != nil {
 			return nil, errors.Trace(err)
 		}
-		s3Options.SetForcePathStyle(rawURL)
+		if u.Scheme == "tos" {
+			s3Options.Provider = s3like.TOSProvider
+			s3Options.ForcePathStyle = false
+		} else {
+			s3Options.SetForcePathStyle(rawURL)
+		}
 		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -291,6 +296,8 @@ func FormatBackendURL(backend *backuppb.StorageBackend) (u url.URL) {
 		u.Path = "/"
 	case *backuppb.StorageBackend_S3:
 		switch b.S3.Provider {
+		case s3like.TOSProvider:
+			u.Scheme = "tos"
 		case s3like.OSSProvider:
 			u.Scheme = "oss"
 		case s3like.KS3SDKProvider:
@@ -328,5 +335,5 @@ func IsLocal(u *url.URL) bool {
 
 // IsS3Like returns true if the URL is an S3 like store URL.
 func IsS3Like(u *url.URL) bool {
-	return u.Scheme == "s3" || u.Scheme == "oss"
+	return u.Scheme == "s3" || u.Scheme == "oss" || u.Scheme == "tos"
 }

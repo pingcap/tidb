@@ -271,12 +271,12 @@ func (options *S3BackendOptions) SetForcePathStyle(rawURL string) {
 	// In some cases, we need to set ForcePathStyle to false.
 	// Refer to: https://rclone.org/s3/#s3-force-path-style
 	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" ||
-		options.UseAccelerateEndpoint || useVirtualHostStyleForAWSS3(options, rawURL) {
+		options.UseAccelerateEndpoint || useVirtualHostStyleByDefault(options, rawURL) {
 		options.ForcePathStyle = false
 	}
 }
 
-func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
+func useVirtualHostStyleByDefault(opts *S3BackendOptions, rawURL string) bool {
 	// If user has explicitly specified ForcePathStyle, use the specified value
 	if rawURL == "" ||
 		strings.Contains(rawURL, "force-path-style") ||
@@ -284,7 +284,7 @@ func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
 		return false
 	}
 
-	return opts.Provider == "aws" || strings.Contains(opts.Endpoint, domainAWS) || opts.RoleARN != ""
+	return opts.Provider == "aws" || opts.Provider == "volcengine" || strings.Contains(opts.Endpoint, domainAWS) || opts.RoleARN != ""
 }
 
 // DefineS3Flags defines the command line flags for S3BackendOptions.

@@ -996,6 +996,7 @@ func TestHash(t *testing.T) {
 			equal         bool
 		}{
 			{"s3://bucket/prefix?access-key=old", "s3://bucket/prefix?access-key=new", true},
+			{"tos://bucket/prefix?access-key=old&secret-access-key=old&session-token=old", "tos://bucket/prefix?access-key=new&secret-access-key=new&session-token=new", true},
 			{"s3://bucket/prefix?access-key=old", "s3://bucket/prefix", false},
 			{"s3://bucket/prefix?future-token=old", "s3://bucket/prefix?future-token=new", false},
 			{"s3://bucket/prefix?endpoint=https://first", "s3://bucket/prefix?endpoint=https://second", false},

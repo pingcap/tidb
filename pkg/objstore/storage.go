@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/objstore/tosstore"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -91,6 +92,8 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *storeapi.O
 		}
 		if backend.S3.Provider == s3like.KS3SDKProvider {
 			return s3store.NewKS3Storage(ctx, backend.S3, opts)
+		} else if backend.S3.Provider == s3like.TOSProvider {
+			return tosstore.NewTOSStorage(ctx, backend.S3, opts)
 		} else if backend.S3.Provider == s3like.OSSProvider {
 			return ossstore.NewOSSStorage(ctx, backend.S3, opts)
 		}

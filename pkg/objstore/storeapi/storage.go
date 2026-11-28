@@ -159,7 +159,10 @@ type ReaderOption struct {
 
 // Copier copier.
 type Copier interface {
-	// CopyFrom copies a object to the current external storage by the specification.
+	// CopyFrom copies an object to the current external storage by the specification.
+	// Callers must ensure that e and the receiver belong to the same object storage
+	// service, because server-side copy locates the source object using only its
+	// bucket and key on the destination service.
 	CopyFrom(ctx context.Context, e Storage, spec CopySpec) error
 }
 

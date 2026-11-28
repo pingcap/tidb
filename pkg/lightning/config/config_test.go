@@ -237,6 +237,7 @@ func TestCheckAndAdjustFilePath(t *testing.T) {
 		{"s3://bucket_name", ""},
 		{"s3://bucket_name/path/to/dir", "/path/to/dir"},
 		{"oss://bucketname", ""},
+		{"tos://bucketname/path/to/dir?region=cn-beijing", "/path/to/dir"},
 		{"oss://bucketname/path/to/dir", "/path/to/dir"},
 		{"oss://bucketname/path/to/dir?region=cn-hangzhou&endpoint=https://oss-cn-hangzhou.aliyuncs.com", "/path/to/dir"},
 		{"gcs://bucketname/path/to/dir", "/path/to/dir"},

@@ -1,0 +1,56 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tosstore",
+    srcs = [
+        "client.go",
+        "credential.go",
+        "store.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/objstore/tosstore",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/errors",
+        "//pkg/ingestor/errdef",
+        "//pkg/objstore/objectio",
+        "//pkg/objstore/recording",
+        "//pkg/objstore/s3like",
+        "//pkg/objstore/storeapi",
+        "//pkg/util",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_volcengine_ve_tos_golang_sdk_v2//tos",
+        "@com_github_volcengine_ve_tos_golang_sdk_v2//tos/enum",
+        "@com_github_volcengine_volcengine_go_sdk//service/sts",
+        "@com_github_volcengine_volcengine_go_sdk//volcengine",
+        "@com_github_volcengine_volcengine_go_sdk//volcengine/credentials",
+        "@com_github_volcengine_volcengine_go_sdk//volcengine/session",
+        "@com_github_volcengine_volcengine_go_sdk//volcengine/volcengineerr",
+        "@org_golang_x_sync//errgroup",
+    ],
+)
+
+go_test(
+    name = "tosstore_test",
+    timeout = "short",
+    srcs = [
+        "client_test.go",
+        "credential_test.go",
+        "store_test.go",
+    ],
+    embed = [":tosstore"],
+    flaky = True,
+    shard_count = 15,
+    deps = [
+        "//br/pkg/errors",
+        "//pkg/ingestor/errdef",
+        "//pkg/objstore/recording",
+        "//pkg/objstore/s3like",
+        "//pkg/objstore/storeapi",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_volcengine_ve_tos_golang_sdk_v2//tos",
+    ],
+)

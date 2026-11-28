@@ -26,6 +26,8 @@ import (
 const (
 	// OSSProvider is the provider name for Alibaba Cloud OSS.
 	OSSProvider = "oss-sdk"
+	// TOSProvider is the provider name for native Volcengine TOS.
+	TOSProvider = "tos-sdk"
 	// KS3SDKProvider is the provider name for KingSoft Cloud KS3.
 	KS3SDKProvider = "ks3-sdk"
 )

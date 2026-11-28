@@ -6810,6 +6810,12 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 		}
 	}
 
+	// Volcengine STS AssumeRole does not accept an ExternalId parameter, so
+	// tenant-isolated role-arn authentication is unsupported for TOS under SEM.
+	if strings.EqualFold(u.Scheme, "tos") && hasRoleARN {
+		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from TOS with role ARN")
+	}
+
 	if !hasRoleARN && !(hasAccessKey && hasSecretAccessKey) {
 		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}

@@ -106,7 +106,7 @@ require (
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20261029034354-9192d38c8b67
 	github.com/pingcap/log v1.1.1-0.20261007233122-0034994d1a22
-	github.com/pingcap/metering_sdk v0.0.0-20260814062708-9e3b68cd9adf
+	github.com/pingcap/metering_sdk v0.0.0-20261118092607-18aaee053664
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20261015020031-7adb3bb014c4
@@ -136,6 +136,8 @@ require (
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
+	github.com/volcengine/ve-tos-golang-sdk/v2 v2.9.2
+	github.com/volcengine/volcengine-go-sdk v1.2.24
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
 	github.com/zyedidia/generic v1.2.1
 	go.etcd.io/etcd/api/v3 v3.5.15
@@ -269,6 +271,7 @@ require (
 	github.com/jfcg/sixb v1.3.8 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
+	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/jonboulle/clockwork v0.4.0 // indirect
 	github.com/klauspost/cpuid v1.3.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
@@ -322,6 +325,7 @@ require (
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20220101234140-673ab2c3ae75 // indirect
 	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect
+	github.com/volcengine/volc-sdk-golang v1.0.23 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect

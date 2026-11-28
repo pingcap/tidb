@@ -1305,6 +1305,7 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
 		"s3://bucket?external-id=aaa&external_id=abc&access-key=ak&secret-access-key=sk",
 		"oss://bucket?External-id=abc&role-arn=arn",
+		"tos://bucket?External-id=abc&role-arn=arn",
 		"oSS://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
 	} {
 		u, err := url.Parse(str)
@@ -1320,13 +1321,28 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		"s3://bucket?external-id=aaa&external_id=aaa&access-key=ak&secret-access-key=sk",
 		"s3://bucket?access-key=ak&secret-access-key=sk",
 		"s3://bucket?access_key=ak&secret_access_key=sk",
+		"s3://bucket?provider=tos-sdk&role-arn=arn",
 		"oss://bucket?role-arn=arn",
 		"oss://bucket?role_arn=arn",
+		"tos://bucket?access-key=ak&secret-access-key=sk",
+		"tos://bucket?external-id=aaa&access-key=ak&secret-access-key=sk",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
 		err = checkNextGenS3PathWithSem(u)
 		require.NoError(t, err)
+	}
+
+	for _, str := range []string{
+		"tos://bucket?role-arn=arn",
+		"tos://bucket?role_arn=arn",
+		"TOS://bucket?role-arn=arn&access-key=ak&secret-access-key=sk",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkNextGenS3PathWithSem(u)
+		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+		require.ErrorContains(t, err, "IMPORT INTO from TOS with role ARN")
 	}
 
 	for _, str := range []string{
@@ -1336,7 +1352,9 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		"s3://bucket?secret-access-key=sk",
 		"s3://bucket?profile=dev",
 		"oss://bucket",
+		"tos://bucket",
 		"oss://bucket?role-arn=",
+		"tos://bucket?role-arn=",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
@@ -1354,6 +1372,7 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
 		"s3://bucket?external-id=aaa&external_id=abc&access-key=ak&secret-access-key=sk",
 		"oss://bucket?External-id=abc&role-arn=arn",
+		"tos://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
@@ -1361,11 +1380,19 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		require.NoError(t, checkNextGenS3PathWithSem(u))
 	}
 
+	u, err := url.Parse("tos://bucket?External-id=abc&role-arn=arn")
+	require.NoError(t, err)
+	require.NoError(t, checkStarterS3Path(u))
+	err = checkNextGenS3PathWithSem(u)
+	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+	require.ErrorContains(t, err, "IMPORT INTO from TOS with role ARN")
+
 	for _, str := range []string{
 		"s3://bucket?access-key=ak&secret-access-key=sk",
 		"s3://bucket?external-id=&access-key=ak&secret-access-key=sk",
 		"s3://bucket?external-id=abc&external_id=&access-key=ak&secret-access-key=sk",
 		"oss://bucket?role-arn=arn",
+		"tos://bucket?role-arn=arn",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
@@ -1373,7 +1400,7 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		require.ErrorContains(t, err, "external ID is required for Starter deployments")
 	}
 
-	u, err := url.Parse("s3://bucket?external-id=allowed")
+	u, err = url.Parse("s3://bucket?external-id=allowed")
 	require.NoError(t, err)
 	require.NoError(t, checkStarterS3Path(u))
 	err = checkNextGenS3PathWithSem(u)

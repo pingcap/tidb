@@ -2396,6 +2396,16 @@ func TestMetering(t *testing.T) {
 			},
 		},
 		{
+			name: "tos",
+			uri:  "tos://test-bucket/test-prefix?region-id=test-region",
+			checkFunc: func(t *testing.T, mcfg *meter_config.MeteringConfig) {
+				require.Equal(t, "tos", string(mcfg.Type))
+				require.Equal(t, "test-bucket", mcfg.Bucket)
+				require.Equal(t, "test-prefix", mcfg.Prefix)
+				require.Equal(t, "test-region", mcfg.Region)
+			},
+		},
+		{
 			name: "azure",
 			uri:  "azure://metering-data/test-prefix?account-name=test-account&account-key=test-key",
 			checkFunc: func(t *testing.T, mcfg *meter_config.MeteringConfig) {

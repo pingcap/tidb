@@ -495,6 +495,7 @@ func TestRedactURL(t *testing.T) {
 		{args{"s3://bucket/file?external-id=tenant-123&role-arn=role&profile=default"}, "s3://bucket/file?external-id=tenant-123&profile=default&role-arn=role"},
 		{args{"ks3://bucket/file?access-key=123"}, "ks3://bucket/file?access-key=xxxxxx"},
 		{args{"ks3://bucket/file?secret-access-key=123"}, "ks3://bucket/file?secret-access-key=xxxxxx"},
+		{args{"tos://bucket/file?region=cn-beijing&session-token=fake"}, "tos://bucket/file?region=cn-beijing&session-token=xxxxxx"},
 		{args{"oss://bucket/file?access-key=123"}, "oss://bucket/file?access-key=xxxxxx"},
 		{args{"oss://bucket/file?secret-access-key=123"}, "oss://bucket/file?secret-access-key=xxxxxx"},
 		// underline

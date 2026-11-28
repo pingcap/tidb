@@ -24,6 +24,8 @@ const (
 	BackendS3 = "s3"
 	// BackendOSS is the metric label value for Alibaba Cloud OSS.
 	BackendOSS = "oss"
+	// BackendTOS is the metric label value for Volcengine TOS.
+	BackendTOS = "tos"
 	// BackendKS3 is the metric label value for Kingsoft Cloud KS3.
 	BackendKS3 = "ks3"
 

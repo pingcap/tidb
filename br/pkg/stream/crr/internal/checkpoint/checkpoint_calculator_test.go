@@ -42,7 +42,7 @@ func TestCheckpointCalculatorValidatesMetaScanStorage(t *testing.T) {
 	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
 	require.NoError(t, err)
 
-	for _, scheme := range []string{"s3", "file", "gcs", "oss", "azure"} {
+	for _, scheme := range []string{"s3", "file", "gcs", "oss", "tos", "azure"} {
 		t.Run(scheme, func(t *testing.T) {
 			_, err := checkpoint.NewCalculator(
 				checkpoint.CalculatorDeps{

@@ -39,7 +39,7 @@ func storageURLForRestoreHash(rawURL string) string {
 	u.User = nil
 	var credentialKeys map[string]struct{}
 	switch strings.ToLower(u.Scheme) {
-	case "s3", "ks3", "oss":
+	case "s3", "ks3", "oss", "tos":
 		credentialKeys = map[string]struct{}{
 			"access-key":        {},
 			"secret-access-key": {},
