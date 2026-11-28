@@ -121,6 +121,7 @@ mod tests_partition_prune_collation;
 mod tests_partition_reorganize;
 mod tests_partition_show_go;
 mod tests_planner_checks;
+mod tests_planner_core_integration_seek_cost;
 mod tests_planner_core_rewriter;
 mod tests_planner_results;
 mod tests_positional_orderby;

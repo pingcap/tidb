@@ -82,6 +82,10 @@ pub struct AccessPath {
     /// a single value at execution time, so the columns after them stay
     /// sorted. (Plan-time constants come from the pushed conditions.)
     pub const_col_ids: Vec<i64>,
+    /// Go `ConstCols` as `detachCondAndBuildRangeForPath` fills it: per
+    /// `IdxCols` entry, whether the ranger's `ColumnValues` pins it to one
+    /// value. The `markConstCol` half is [`Self::const_col_ids`].
+    pub const_cols: Vec<bool>,
     /// Go `Forced`: a USE/FORCE INDEX hint names this path.
     pub forced: bool,
     /// Go `ForceKeepOrder` (`ORDER_INDEX` hint).

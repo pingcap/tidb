@@ -238,6 +238,7 @@ fn topn_plan(limit: u64) -> (String, String) {
             rows: 1.0,
             row_size: scan_row_size,
             is_child_of_inl: None,
+            seek_ranges: 0,
             has_full_range_scan: true,
             penalty: TableScanPenaltyInput {
                 analyze_row_count: 1,
@@ -319,6 +320,7 @@ fn table_range_scan_plan(rows: f64) -> (String, String) {
             rows,
             row_size: int_row_size(3),
             is_child_of_inl: None,
+            seek_ranges: 0,
             has_full_range_scan: false,
             penalty: t_penalty(),
             allow_prefer_range_scan: true,
@@ -365,6 +367,7 @@ fn index_range_scan_plan(rows: f64) -> (String, String) {
         rows,
         int_row_size(1),
         &factors.tikv_scan,
+        1,
         vars.index_scan,
         // The tie-breaker is deliberately below the printed precision.
         Some(1),
@@ -406,6 +409,7 @@ fn table_full_scan_forced() -> CostVer2 {
             rows: T_ROWS,
             row_size: int_row_size(3),
             is_child_of_inl: None,
+            seek_ranges: 0,
             has_full_range_scan: true,
             penalty: t_penalty(),
             allow_prefer_range_scan: true,
@@ -427,6 +431,7 @@ fn test_golden_full_scan_penalty_is_charged_only_when_forced() {
             rows: T_ROWS,
             row_size: int_row_size(3),
             is_child_of_inl: None,
+            seek_ranges: 0,
             has_full_range_scan: true,
             penalty: t_penalty(),
             allow_prefer_range_scan: true,
@@ -671,6 +676,7 @@ fn test_golden_index_lookup_reader() {
             rows,
             int_row_size(2),
             &factors.tikv_scan,
+            1,
             vars.index_scan,
             Some(1),
         );
@@ -683,6 +689,7 @@ fn test_golden_index_lookup_reader() {
                 rows,
                 row_size: int_row_size(3),
                 is_child_of_inl: Some(true),
+                seek_ranges: 0,
                 has_full_range_scan: true,
                 penalty: t_penalty(),
                 allow_prefer_range_scan: true,
@@ -729,6 +736,7 @@ fn join_inputs() -> (CostVer2, CostVer2) {
                 rows,
                 row_size: int_row_size(3),
                 is_child_of_inl: None,
+                seek_ranges: 0,
                 has_full_range_scan: full_range,
                 penalty: t_penalty(),
                 allow_prefer_range_scan: true,
@@ -838,6 +846,7 @@ fn test_golden_index_join_and_its_double_read_penalty() {
         9990.0,
         pseudo_row_size,
         &factors.tikv_scan,
+        1,
         vars.index_scan,
         None,
     );
@@ -864,6 +873,7 @@ fn test_golden_index_join_and_its_double_read_penalty() {
         probe_scan_rows,
         pseudo_row_size,
         &factors.tikv_scan,
+        1,
         vars.index_scan,
         None,
     );
@@ -945,6 +955,7 @@ fn test_golden_true_card_cost_trace() {
             rows: 0.0,
             row_size,
             is_child_of_inl: None,
+            seek_ranges: 0,
             has_full_range_scan: true,
             penalty: TableScanPenaltyInput {
                 pseudo_stats: true,
@@ -1076,6 +1087,7 @@ fn test_source_scan_clamps_apply_to_every_scan_but_a_row_id_scan() {
         rows: 0.4,
         row_size: 1.5,
         is_child_of_inl,
+        seek_ranges: 0,
         has_full_range_scan: false,
         penalty: TableScanPenaltyInput::default(),
         allow_prefer_range_scan: true,
@@ -1142,6 +1154,7 @@ fn test_source_index_scan_tie_breaker_separates_equal_indexes() {
             10.0,
             16.0,
             &factors.tikv_scan,
+            1,
             vars.index_scan,
             index_id,
         )

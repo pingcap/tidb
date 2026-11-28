@@ -692,6 +692,19 @@ pub fn index_join_seeking_cost(
     )
 }
 
+/// `rangeSeekCostVer2`: each seek is charged as a scan of ten 8-byte rows
+/// (from the experiments in Go #62499), `indexJoinSeekingCostVer2`'s model
+/// without the build-row multiplier (Go master 1c0793ea576).
+#[must_use]
+pub fn range_seek_cost(option: Option<&PlanCostOption>, num_ranges: f64, scan_factor: &CostVer2Factor) -> CostVer2 {
+    new_cost_ver2(
+        option,
+        scan_factor,
+        num_ranges * 10.0 * 8.0_f64.log2() * scan_factor.value(),
+        || format!("rangeSeek({num_ranges}*10*log2(8)*{scan_factor})"),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Operator costs
 // ---------------------------------------------------------------------------
@@ -729,16 +742,26 @@ pub fn projection_cost(
 /// `getPlanCostVer24PhysicalIndexScan`. `index_id` supplies the source's
 /// untraced tie-breaker `(index-id % 100) / 1e6`, which separates indexes that
 /// would otherwise cost the same; `None` is Go's `p.Index == nil`.
+/// `seek_ranges` is the scan's range count when it pays its own seeks (Go
+/// `len(p.Ranges)` with no `RangeInfo`; an index join inner scan's seeks are
+/// charged per build row by `indexJoinSeekingCostVer2`), else 0.
 #[must_use]
 pub fn index_scan_cost(
     option: Option<&PlanCostOption>,
     rows: f64,
     row_size: f64,
     scan_factor: &CostVer2Factor,
+    seek_ranges: usize,
     index_scan_cost_factor: f64,
     index_id: Option<i64>,
 ) -> CostVer2 {
-    let cost = scan_cost(option, rows, row_size, scan_factor);
+    let mut cost = scan_cost(option, rows, row_size, scan_factor);
+    // Each range is a separate seek in TiKV; charge it so that many-range
+    // scans (typically from IN-lists) are not costed as if they were one
+    // contiguous scan.
+    if seek_ranges > 1 {
+        cost = sum_cost_ver2(&[cost, range_seek_cost(option, seek_ranges as f64, scan_factor)]);
+    }
     let cost = mul_cost_ver2(&cost, index_scan_cost_factor);
     record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_INDEX_SCAN_COST_FACTOR);
     match index_id {
@@ -788,6 +811,9 @@ pub struct TableScanInput {
     pub row_size: f64,
     /// Go's variadic `isChildOfINL`: `None` when the argument is absent.
     pub is_child_of_inl: Option<bool>,
+    /// `len(p.Ranges)` of a TiKV scan that pays its own seeks (no
+    /// `RangeInfo`), else 0; a row-id scan's seeks are its parent's.
+    pub seek_ranges: usize,
     /// `ranger.HasFullRange(p.Ranges, unsignedIntHandle)`.
     pub has_full_range_scan: bool,
     /// The penalty inputs.
@@ -821,6 +847,10 @@ pub fn table_scan_cost(
     };
 
     let mut cost = scan_cost(option, rows, row_size, scan_factor);
+    // Per-range TiKV seeks, as for index scans (Go master 1c0793ea576).
+    if !is_row_id_scan && input.seek_ranges > 1 {
+        cost = sum_cost_ver2(&[cost, range_seek_cost(option, input.seek_ranges as f64, scan_factor)]);
+    }
     if !is_row_id_scan && input.has_full_range_scan {
         let penalty_rows = table_scan_penalty(
             input.penalty,

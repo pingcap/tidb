@@ -446,6 +446,13 @@ impl Ver2Coster {
                             rows,
                             row_size,
                             is_child_of_inl,
+                            seek_ranges: if scan.store_type == tidb_kv::store_type::StoreType::TiKv
+                                && scan.range_info.is_empty()
+                            {
+                                scan.ranges.len()
+                            } else {
+                                0
+                            },
                             // Go `ranger.HasFullRange(ts.Ranges, unsignedIntHandle)`:
                             // a scan without ranges (an index lookup's row-id
                             // scan) has no full range.
@@ -494,6 +501,7 @@ impl Ver2Coster {
                     task_type,
                     scan.desc,
                 ),
+                if scan.range_info.is_empty() { scan.ranges.len() } else { 0 },
                 self.session_factors.index_scan,
                 Some(scan.index_id),
             ),

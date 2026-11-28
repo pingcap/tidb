@@ -61,6 +61,7 @@ fn full_scan_under_table_reader(factors: &CostFactorVars) -> CostVer2 {
             rows: T_ROWS,
             row_size: SELECT_ALL_ROW_SIZE,
             is_child_of_inl: None,
+            seek_ranges: 0,
             has_full_range_scan: true,
             penalty: analyzed_stable_table_penalty(),
             allow_prefer_range_scan: true,
@@ -90,6 +91,7 @@ fn range_scan_under_table_reader(factors: &CostFactorVars) -> CostVer2 {
             rows: RANGE_ROWS,
             row_size: SELECT_ALL_ROW_SIZE,
             is_child_of_inl: None,
+            seek_ranges: 0,
             has_full_range_scan: false,
             penalty: analyzed_stable_table_penalty(),
             allow_prefer_range_scan: true,
@@ -121,6 +123,7 @@ fn covering_index_range_scan_under_index_reader(factors: &CostFactorVars) -> Cos
         RANGE_ROWS,
         B_COLUMN_ROW_SIZE,
         &factors_v2.tikv_scan,
+        1,
         factors.index_scan,
         Some(1),
     );

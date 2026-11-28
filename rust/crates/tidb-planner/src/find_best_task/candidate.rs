@@ -799,3 +799,203 @@ mod skyline_tests {
         assert_eq!(candidates[1].as_ref().unwrap().eq_or_in_count, 2);
     }
 }
+
+/// Go `buildPrunedRangeAccessPath` (Go master 1c0793ea576): a path over the
+/// same index whose ranges use only its first `cutoff` index columns, so the
+/// dropped IN-lists become filters. `Ok(None)` when the cutoff leaves nothing
+/// to prune or the ranges are empty; the error is the ranger's.
+pub(super) fn build_pruned_range_access_path(
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
+    original: &tidb_planner_util::path::AccessPath,
+    cutoff: usize,
+    ctx: &super::dispatch::DispatchContext<'_>,
+) -> Result<Option<tidb_planner_util::path::AccessPath>, String> {
+    if cutoff >= original.idx_cols.len() || cutoff < 1 {
+        return Ok(None);
+    }
+    let Some(index) = original.index.clone() else {
+        return Ok(None);
+    };
+    let derivation = ctx.access_path_derivation_context();
+    let (columns, lengths): (Vec<_>, Vec<_>) = original.idx_cols[..cutoff].iter().cloned().unzip();
+    let detached = derivation
+        .detach_index_range(&ds.pushed_down_conds, &columns, &lengths)
+        .map_err(|error| error.to_string())?;
+    if detached.ranges.is_empty() {
+        return Ok(None);
+    }
+    // The hint and plan-cache state carry over, so the pruned alternative
+    // obeys the same constraints as the path it was derived from.
+    let mut pruned = original.clone();
+    pruned.ranges = detached.ranges;
+    pruned.access_conds = detached.access_conds;
+    pruned.eq_cond_count = detached.eq_cond_count;
+    pruned.eq_or_in_cond_count = detached.eq_or_in_count;
+    pruned.is_dnf_cond = detached.is_dnf_cond;
+    pruned.min_access_conds_for_dnf_cond = 0;
+    pruned.correlated_access_count = 0;
+    pruned.const_col_ids = Vec::new();
+    pruned.const_cols = (0..original.idx_cols.len())
+        .map(|i| detached.column_values.get(i).is_some_and(Option::is_some))
+        .collect();
+    // Go `splitIndexFilterConditions`: the remaining conditions the index
+    // covers are index filters, the rest table filters.
+    let (index_filters, table_filters): (Vec<_>, Vec<_>) =
+        detached.remained_conds.into_iter().partition(|condition| {
+            tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
+                ds,
+                &index,
+                condition,
+                derivation.opt_prefix_index_single_scan,
+            )
+        });
+    pruned.index_filters = index_filters;
+    pruned.table_filters = table_filters;
+    // As in `detachCondAndBuildRangeForPath`, the estimate reads the index
+    // statistics over the ranges projected to the declared index columns.
+    let count = crate::access_path::index_merge::estimate_index_ranges(
+        ds,
+        &index,
+        &pruned.ranges,
+        &pruned.idx_cols,
+        &derivation,
+    )
+    .map_err(|error| error.to_string())?;
+    // The pruned ranges are a superset of the original ranges, so they
+    // cannot return fewer rows. Bound the estimate by the original path's
+    // CountAfterAccess, which has already been through
+    // adjustCountAfterAccess; adjusting again would charge the selection
+    // factor penalty twice.
+    let count_after_access = count.est.max(original.count_after_access().unwrap_or(0.0));
+    pruned.row_estimate = Some(tidb_stats::RowEstimate::new(
+        count_after_access,
+        count.min_est,
+        count.max_est.max(count_after_access),
+    ));
+    pruned.count_after_index = Some(if pruned.index_filters.is_empty() {
+        count_after_access
+    } else {
+        (count_after_access * crate::access_path::ordinary::filter_selectivity(ds, &pruned.index_filters, &derivation))
+            .max(ds.base.base.stats_info().map_or(0.0, |stats| stats.row_count()))
+    });
+    Ok(Some(pruned))
+}
+
+/// Go `prunedRangeMaxRowsPerSavedSeek`: how many rows a pruned-range
+/// alternative may scan, at its upper-bound row estimate, for each seek it
+/// saves. The cost model charges a seek as roughly 30 rows
+/// (`rangeSeekCostVer2`), so this allows about three times the break-even
+/// scan before the alternative is rejected regardless of its estimated cost.
+const PRUNED_RANGE_MAX_ROWS_PER_SAVED_SEEK: f64 = 100.0;
+
+/// Go `appendPrunedRangeCandidates`: for each index candidate that survived
+/// skyline pruning, alternatives that build ranges on a shorter prefix of its
+/// EqOrIn columns, trading seeks for scanned rows. The derived paths go
+/// through the same task conversion and cost comparison as every other
+/// candidate. Eligibility: a strong equality prefix (EqCondCount > 1) or at
+/// least 2 IN-list columns.
+pub(super) fn append_pruned_range_candidates(
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
+    candidates: &[&tidb_planner_util::path::AccessPath],
+    ctx: &super::dispatch::DispatchContext<'_>,
+) -> Vec<tidb_planner_util::path::AccessPath> {
+    let mut derived = Vec::new();
+    // Pruned candidates are index scans, which TiFlash and TableSample don't
+    // support.
+    if ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0
+        || ds.sample_info.is_some()
+    {
+        return derived;
+    }
+    for &path in candidates {
+        let Some(index) = path.index.as_ref() else {
+            continue;
+        };
+        if !path.partial_index_paths.is_empty()
+            || path.is_table_path()
+            || path.is_dnf_cond
+            || index.read().mv_index
+            || path.eq_or_in_cond_count <= path.eq_cond_count
+            || path.ranges.len() <= 1
+        {
+            continue;
+        }
+        // Count actual IN-list columns using ConstCols: a column in the
+        // EqOrIn prefix that is not constant is an IN-list column. This
+        // handles `a IN (1,2) AND b = 1 AND c IN (1,2)`, where EqCondCount =
+        // 0 but b is an equality.
+        let in_list_count = (0..path.eq_or_in_cond_count)
+            .filter(|&i| i < path.const_cols.len() && !const_col(path, i))
+            .count();
+        if (path.eq_cond_count <= 1 && in_list_count < 2) || !index_has_analyzed_stats(ds, index) {
+            continue;
+        }
+        // Full-key ranges on a unique index read at most one row each and
+        // can become a [Batch]PointGet; shortening them saves no meaningful
+        // work.
+        if index.read().unique && ranges_cover_all_index_columns(path, index) {
+            continue;
+        }
+        for cutoff in path.eq_cond_count.max(1)..path.eq_or_in_cond_count {
+            // The pruned path is only an optional alternative: if building it
+            // fails, log it and keep the original path.
+            let pruned = match build_pruned_range_access_path(ds, path, cutoff, ctx) {
+                Ok(pruned) => pruned,
+                Err(error) => {
+                    // Go `logSkippedPrunedRangePath`.
+                    tracing::debug!(index = %index.read().name.original(), cutoff, %error, "skip pruned-range alternative");
+                    continue;
+                }
+            };
+            let Some(pruned) = pruned.filter(|pruned| pruned.ranges.len() < path.ranges.len()) else {
+                continue;
+            };
+            // Safeguard: the dropped columns may be selective, and the cost
+            // comparison trusts the row estimate. Reject the alternative if,
+            // at its upper-bound estimate, it scans too many rows for the
+            // seeks it saves.
+            let saved_seeks = (path.ranges.len() - pruned.ranges.len()) as f64;
+            if pruned.row_estimate.is_some_and(|estimate| {
+                estimate.max_est > saved_seeks * PRUNED_RANGE_MAX_ROWS_PER_SAVED_SEEK
+            }) {
+                continue;
+            }
+            // A required partial order the pruned ranges no longer match is
+            // refused where the path loop matches it (Go checks
+            // `partialOrderMatchResult` here).
+            derived.push(pruned);
+        }
+    }
+    derived
+}
+
+/// Go `ConstCols[i]`: the ranger's value or `markConstCol`'s mark.
+fn const_col(path: &tidb_planner_util::path::AccessPath, i: usize) -> bool {
+    path.const_cols.get(i).copied().unwrap_or(false)
+        || path.idx_cols.get(i).is_some_and(|(column, _)| path.const_col_ids.contains(&column.unique_id))
+}
+
+/// Go `rangesCoverAllIndexColumns`: whether every range of `path` fixes all
+/// columns of its index.
+fn ranges_cover_all_index_columns(
+    path: &tidb_planner_util::path::AccessPath,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
+) -> bool {
+    let columns = index.read().columns.len();
+    path.ranges.iter().all(|range| range.low_val.len() == columns)
+}
+
+/// Go `indexHasAnalyzedStats`: the row estimates that decide between the
+/// original and the pruned ranges come from the index histogram, and are
+/// not reliable enough to trade seeks for scanned rows without it.
+fn index_has_analyzed_stats(
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
+) -> bool {
+    let Some(table) = ds.statistic_table.as_ref().filter(|table| !table.hist_coll.pseudo) else {
+        return false;
+    };
+    table.hist_coll.get_index(index.read().id).is_some_and(|stats| {
+        stats.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_analyzed()
+    })
+}

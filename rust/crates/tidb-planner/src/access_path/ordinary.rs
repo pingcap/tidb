@@ -125,6 +125,15 @@ pub(crate) fn fill_index_path(
     path.count_after_index = None;
     path.correlated_access_count = correlated_access_count;
     path.const_col_ids = const_col_ids;
+    // Go `detachCondAndBuildRangeForPath`: `ConstCols[i] = ColumnValues[i]
+    // != nil`; IndexMerge partial paths (Go `fillIndexPath`) leave it unset.
+    path.const_cols = if correlated_access {
+        (0..path.idx_cols.len())
+            .map(|i| detached.column_values.get(i).is_some_and(Option::is_some))
+            .collect()
+    } else {
+        Vec::new()
+    };
     Ok(())
 }
 

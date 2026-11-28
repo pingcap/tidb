@@ -205,7 +205,7 @@ pub(super) fn estimate_partial_index_ranges(
 
 /// Go `detachCondAndBuildRangeForPath`'s `GetRowCountByIndexRanges` over
 /// `ranges` of `source_index`, whose usable key columns are `columns`.
-pub(super) fn estimate_index_ranges(
+pub(crate) fn estimate_index_ranges(
     ds: &DataSource,
     source_index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     ranges: &tidb_ranger::types::Ranges,
