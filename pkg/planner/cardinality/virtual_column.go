@@ -90,7 +90,7 @@ func virtualColumnStatsNode(
 		return nil
 	}
 	histPoints := 0
-	if isCaseMapping(col.VirtualExpr) && !shortens(col.RetType, col.VirtualExpr) {
+	if isCaseMapping(col.VirtualExpr) && col.RetType.EvalType() == types.ETString && !shortens(col.RetType, col.VirtualExpr) {
 		histPoints = pointCount(col, conds)
 	}
 	ok, sel, err := getSelectivityByFilter(ctx, coll, filter, histPoints)
@@ -106,7 +106,7 @@ func virtualColumnStatsNode(
 }
 
 // isCaseMapping reports whether expr is LOWER or UPPER of a column, possibly
-// under casts that don't shorten the value. One value of such an expression
+// under string casts that don't shorten the value. One value of such an expression
 // usually comes from only the few case variants of a base value, so a point
 // condition on it selects about as many base values as it has points. That
 // doesn't hold in general: mod(c, 2) = 0 selects half of all values, and so
@@ -120,8 +120,10 @@ func isCaseMapping(expr expression.Expression) bool {
 		}
 		switch f.FuncName.L {
 		case ast.Cast:
+			// Only string casts that keep the whole value: CAST(LOWER(c) AS
+			// SIGNED) maps '1' and '01' to the same value.
 			arg := f.GetArgs()[0]
-			if shortens(f.RetType, arg) {
+			if f.RetType.EvalType() != types.ETString || shortens(f.RetType, arg) {
 				return false
 			}
 			expr = arg

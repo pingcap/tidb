@@ -1048,6 +1048,30 @@ func TestVirtualColumnEstimatedFromBaseColumn(t *testing.T) {
 	require.GreaterOrEqual(t, estRows, 700.0)
 	require.LessOrEqual(t, estRows, 1400.0)
 
+	// A frequent value forms a single-value bucket, whose matching lower and upper
+	// bounds are one value: the cap applies, and keeps the bucket's exact count.
+	tk.MustExec(`create table t5(id int primary key, c varchar(32) collate utf8mb4_bin,
+		lc varchar(32) collate utf8mb4_bin as (lower(c)) virtual)`)
+	tk.MustExec(`insert into t5(id, c)
+		select x.a, if(x.a <= 500, 'alpha', concat('item-', x.a))
+		from (with recursive x as (select 1 as a union all select a + 1 from x where a < 1000) select a from x) as x`)
+	tk.MustExec("analyze table t5 all columns with 4 buckets, 0 topn")
+	estRows = getTableReaderEstRows(t, tk, "select * from t5 where lc = 'alpha'")
+	require.GreaterOrEqual(t, estRows, 450.0)
+	require.LessOrEqual(t, estRows, 550.0)
+
+	// A non-string cast is many-to-one ('7', '07', ... all cast to 7), so no cap:
+	// with one bucket only its lower bound matches, and the cap would estimate
+	// about 1 row instead of 300.
+	tk.MustExec(`create table t6(id int primary key, c varchar(16) collate utf8mb4_bin,
+		g varchar(32) collate utf8mb4_bin as (cast(cast(lower(c) as signed) as char(32))) virtual)`)
+	tk.MustExec(`insert into t6(id, c)
+		select x.a, if(x.a <= 300, concat(repeat('0', mod(x.a, 15)), '7'), cast(x.a - 201 as char))
+		from (with recursive x as (select 1 as a union all select a + 1 from x where a < 1000) select a from x) as x`)
+	tk.MustExec("analyze table t6 all columns with 1 buckets, 0 topn")
+	estRows = getTableReaderEstRows(t, tk, "select * from t6 where g = '7'")
+	require.GreaterOrEqual(t, estRows, 100.0)
+
 	// Only index statistics on the base column: their histogram bounds are
 	// encoded index keys, not values of c's type, so they must not be evaluated
 	// (all of them would fail lower(c) = 'alpha'). lc keeps the default

@@ -15,6 +15,7 @@
 package cardinality
 
 import (
+	"bytes"
 	"cmp"
 	"maps"
 	"math"
@@ -926,7 +927,9 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 // of average size. Evaluating the bucket bounds samples the histogram at only
 // 2 * buckets points, which can't estimate a few rare values: one matching
 // bound already counts as a whole bucket. The cap doesn't apply when more
-// bounds match than there are points.
+// distinct bound values match than there are points. Matching values strictly
+// inside a bucket are invisible to the bounds either way, so the cap can
+// underestimate a point that many distinct values map to.
 func getSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters expression.Expression, histPoints int) (ok bool, selectivity float64, err error) {
 	// 1. Make sure the expressions
 	//   (1) are safe to be evaluated here,
@@ -1044,6 +1047,10 @@ func getSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 			return false, 0, err
 		}
 		var bucketRepeatTotalCnt, bucketRepeatSelectedCnt, lowerBoundMatchCnt, upperBoundMatchCnt int64
+		// The number of distinct values among the matching bounds: the lower and
+		// upper bounds of a single-value bucket are the same value.
+		var matchedBoundValues int64
+		boundsCol := histBounds.Column(0)
 		for i := range hist.Buckets {
 			bucketRepeatTotalCnt += hist.Buckets[i].Repeat
 			if len(selected) < 2*i {
@@ -1052,10 +1059,14 @@ func getSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 			}
 			if selected[2*i] {
 				lowerBoundMatchCnt++
+				matchedBoundValues++
 			}
 			if selected[2*i+1] {
 				upperBoundMatchCnt++
 				bucketRepeatSelectedCnt += hist.Buckets[i].Repeat
+				if !selected[2*i] || !bytes.Equal(boundsCol.GetRaw(2*i), boundsCol.GetRaw(2*i+1)) {
+					matchedBoundValues++
+				}
 			}
 		}
 		var lowerBoundsRatio, upperBoundsRatio, lowerBoundsSel, upperBoundsSel float64
@@ -1066,11 +1077,14 @@ func getSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 		}
 		lowerBoundsSel = float64(lowerBoundMatchCnt) / float64(histBucketsLen)
 		histSel = lowerBoundsSel*lowerBoundsRatio + upperBoundsSel*upperBoundsRatio
-		// Cap at histPoints values of average frequency, unless more bounds match
-		// than there are points: the bounds are distinct values, so then several
-		// values map to one point and the sampled estimate stands.
-		if histPoints > 0 && hist.NDV > 0 && lowerBoundMatchCnt+upperBoundMatchCnt <= int64(histPoints) {
-			histSel = min(histSel, float64(histPoints)/float64(hist.NDV))
+		// Cap at histPoints values, unless more distinct bound values match than
+		// there are points: then several values map to one point and the sampled
+		// estimate stands. A matching upper bound counts with its exact frequency
+		// (Repeat), the other points with the average frequency.
+		if histPoints > 0 && hist.NDV > 0 && matchedBoundValues <= int64(histPoints) {
+			otherPoints := max(int64(histPoints)-upperBoundMatchCnt, 0)
+			capSel := float64(bucketRepeatSelectedCnt)/histTotalCnt + float64(otherPoints)/float64(hist.NDV)
+			histSel = min(histSel, capSel)
 		}
 		histSel *= histTotalCnt / totalCnt
 	}
