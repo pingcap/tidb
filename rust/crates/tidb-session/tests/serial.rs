@@ -18,14 +18,13 @@
 //! never observes them. Each holds `support::testkit`'s serial lock (taken by
 //! `update_global_config` or `serial()`) while it runs.
 
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();
+
 #[allow(dead_code)]
 mod support;
 mod check_constraint_write_source;
 mod serial_column_flags_and_limits_source;
 mod serial_db_integration_config_source;
-mod serial_multi_schema_change_config_source;
-
 mod serial_ddl_ingest_source;
-
-// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
-tidb_planner_init::link!();
+mod serial_multi_schema_change_config_source;
