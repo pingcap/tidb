@@ -54,3 +54,11 @@ priority = 100
 # minute and a half, not a gate's worth of time. Targeted tests take seconds.
 [profile.quick]
 slow-timeout = { period = "30s", terminate-after = 3 }
+
+# The documented long tests (above) run ~2 min when healthy: adminpause runs
+# 39 index cases at Go's 600 ms schema lease (134 s in the 2026-11-28 gate).
+# The quick profile's 90 s cut would kill them on every run, so they keep the
+# default profile's limit.
+[[profile.quick.overrides]]
+filter = 'test(/adminpause::/) | test(/materialized_view::/)'
+slow-timeout = { period = "60s", terminate-after = 10 }
