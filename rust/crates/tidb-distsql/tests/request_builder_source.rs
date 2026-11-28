@@ -360,6 +360,74 @@ fn test_index_look_up_push_down_scan_concurrency() {
     }
 }
 
+// Go pkg/distsql/request_builder_test.go::TestScanLimitConcurrencyWithRowCountUpperBound (e48ac5fef19).
+#[test]
+fn test_scan_limit_concurrency_with_row_count_upper_bound() {
+    let context = DistSqlContext::new();
+    let default_concurrency = context.request.dist_sql_concurrency as isize;
+    for (name, bound, concurrency) in [
+        ("NoBound", None, 1),
+        ("BoundBelowLimit", Some(35), default_concurrency),
+        ("BoundEqualsLimit", Some(100), default_concurrency),
+        ("BoundAboveLimit", Some(101), 1),
+    ] {
+        let dag = RequestEnvelope::new(vec![ExecutorShape::new(ExecutorKind::IndexScan), ExecutorShape::limit(100, None)]);
+        let mut builder = RequestBuilder::new();
+        match bound {
+            Some(bound) => builder.set_dag_request_bytes_with_row_count_upper_bound(&dag, DAG_BYTES.to_vec().into(), bound),
+            None => builder.set_dag_request(dag, DAG_BYTES),
+        };
+        builder.set_from_context(&context);
+        assert_eq!(builder.build().expect(name).concurrency, concurrency, "{name}");
+    }
+
+    // The bound only relaxes the plain Scan -> Limit case, not the
+    // pushed-down IndexLookUp one.
+    let dag = RequestEnvelope::new(vec![
+        ExecutorShape::new(ExecutorKind::IndexScan),
+        ExecutorShape::limit(100, Some(3)),
+        ExecutorShape::new(ExecutorKind::TableScan),
+        ExecutorShape::new(ExecutorKind::IndexLookup),
+    ]);
+    let mut builder = RequestBuilder::new();
+    builder
+        .set_dag_request_bytes_with_row_count_upper_bound(&dag, DAG_BYTES.to_vec().into(), 1)
+        .set_from_context(&context);
+    assert_eq!(builder.build().expect("lookup").concurrency, 1);
+}
+
+// Go pkg/distsql/request_builder_test.go::TestScanLimitWithMinimalConcurrency (e48ac5fef19).
+#[test]
+fn test_scan_limit_with_minimal_concurrency() {
+    use tidb_proto::tipb::{DagRequest, ExecType, Executor, Limit};
+    let scan = || Executor { tp: Some(ExecType::TypeIndexScan as i32), ..Executor::default() };
+    let limit_of = |n: u64, parent_idx: Option<u32>| Executor {
+        tp: Some(ExecType::TypeLimit as i32),
+        limit: Some(Box::new(Limit { limit: Some(n), ..Limit::default() })),
+        parent_idx,
+        ..Executor::default()
+    };
+    for (name, executors, expected) in [
+        ("ScanLimit", vec![scan(), limit_of(100, None)], Some(100)),
+        ("LargeLimit", vec![scan(), limit_of(tidb_distsql::ESTIMATED_REGION_ROW_COUNT, None)], None),
+        ("ScanOnly", vec![scan()], None),
+        ("ScanSelection", vec![scan(), Executor { tp: Some(ExecType::TypeSelection as i32), ..Executor::default() }], None),
+        (
+            "IndexLookUp",
+            vec![
+                scan(),
+                limit_of(100, Some(3)),
+                Executor { tp: Some(ExecType::TypeTableScan as i32), ..Executor::default() },
+                Executor { tp: Some(ExecType::TypeIndexLookUp as i32), ..Executor::default() },
+            ],
+            None,
+        ),
+    ] {
+        let dag = DagRequest { executors, ..DagRequest::default() };
+        assert_eq!(tidb_distsql::scan_limit_with_minimal_concurrency(&dag), expected, "{name}");
+    }
+}
+
 #[test]
 fn dag_concurrency_preserves_builder_call_order() {
     let ranges = vec![vec![], vec![], vec![], vec![], vec![], vec![]];

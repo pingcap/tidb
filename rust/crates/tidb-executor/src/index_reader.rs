@@ -136,8 +136,10 @@ impl IndexReaderExecutor {
         {
             return false;
         }
-        match &self.index_plan {
-            PhysicalPlan::IndexScan(scan) => {
+        // Go `e.plans[0]`: the index scan under the pushed-down operators.
+        let plans = tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(&self.index_plan);
+        match plans.first().copied() {
+            Some(PhysicalPlan::IndexScan(scan)) => {
                 adaptive_limit_single_read_table(scan.table.as_ref()) && scan.group_by_col_idxs.is_empty()
             }
             _ => false,
@@ -309,10 +311,14 @@ impl IndexReaderExecutor {
         (self.table_ids[0], self.index_id)
     }
 
-    /// Go `buildKVRangesForIndexReader`.
-    fn build_kv_ranges(&self) -> Result<Vec<tidb_txnkv::KeyRange>, ExecError> {
+    /// Go `buildKVRangesForIndexReader`, with Go `e.ranges` as `Open` left
+    /// them (rebuilt over the outer row under `corColInAccess`); `None` for
+    /// the key ranges an index join's caller built.
+    fn build_kv_ranges(
+        &self,
+    ) -> Result<(Vec<tidb_txnkv::KeyRange>, Option<Vec<tidb_ranger::types::Range>>), ExecError> {
         if let Some(fixed) = &self.fixed_kv_ranges {
-            return Ok(fixed.clone());
+            return Ok((fixed.clone(), None));
         }
         // Go `corColInAccess`: the ranges rebuilt over the outer row, and
         // `groupedRanges` with them when the scan groups them.
@@ -329,6 +335,7 @@ impl IndexReaderExecutor {
             }
             None => (self.ranges.clone(), self.grouped_ranges.clone()),
         };
+        let open_ranges = ranges.clone();
         // Go `groupedRanges`, or the ranges as one group.
         let grouped_ranges = if grouped_ranges.is_empty() { vec![ranges] } else { grouped_ranges };
         let zone = tidb_exprctx::Columns::time_zone(&self.ctx);
@@ -343,7 +350,34 @@ impl IndexReaderExecutor {
                 results.extend(kv_ranges.into_iter().flatten());
             }
         }
-        Ok(results)
+        Ok((results, Some(open_ranges)))
+    }
+
+    /// Go `Open`'s `rowCountUpperBound`: only a Scan -> Limit DAG with a
+    /// small limit not smaller than the number of ranges needs it. With
+    /// `partRangeMap`, `e.ranges` is not what each partition is sent, so no
+    /// bound is derived.
+    fn row_count_upper_bound(
+        &self,
+        dag: &tidb_proto::tipb::DagRequest,
+        ranges: Option<&[tidb_ranger::types::Range]>,
+    ) -> Option<u64> {
+        let ranges = ranges?;
+        let limit = tidb_distsql::scan_limit_with_minimal_concurrency(dag)?;
+        if ranges.len() as u64 > limit || self.part_range_map.as_ref().is_some_and(|map| !map.is_empty()) {
+            return None;
+        }
+        let plans = tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(&self.index_plan);
+        let Some(PhysicalPlan::IndexScan(scan)) = plans.first().copied() else {
+            return None;
+        };
+        let table = scan.table.as_ref()?.read();
+        tidb_ranger::row_count_bound::row_count_upper_bound_by_unique_key(
+            Some(&table),
+            &scan.idx_cols,
+            &scan.idx_col_lens,
+            ranges,
+        )
     }
 
     /// Go `buildIndexReaderForIndexJoin` over a dynamically pruned
@@ -439,7 +473,7 @@ impl Executor for IndexReaderExecutor {
     fn open(&mut self) -> Result<(), ExecError> {
         let statement = crate::remote_scan::pushdown_statement_context(&self.ctx)
             .with_estimated_net_bytes(self.net_data_size);
-        let mut kv_ranges = self.build_kv_ranges()?;
+        let (mut kv_ranges, open_ranges) = self.build_kv_ranges()?;
         // Go `ConstructDAGReq(b.sctx, v.IndexPlans, kv.TiKV)`, rebuilt here,
         // so a correlated filter reads the outer row as `corColInFilter` does.
         let plans = tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(&self.index_plan);
@@ -451,6 +485,9 @@ impl Executor for IndexReaderExecutor {
         )
         .map_err(|error| ExecError::Internal(error.to_string().into()))?;
         dag.output_offsets.clone_from(&self.output_offsets);
+        let row_count_upper_bound = self.row_count_upper_bound(&dag, open_ranges.as_deref());
+        // Go `buildKVReq`: `SetDAGRequestWithRowCountUpperBound` when the
+        // ranges bound the rows.
         self.result = None;
         // Treat temporary table as dummy table, avoid sending distsql request
         // to TiKV (its KV ranges are left in build order).
@@ -480,7 +517,7 @@ impl Executor for IndexReaderExecutor {
                 .map(|kv_range| {
                     self.select_result(
                         &statement,
-                        crate::cop_reader::TableReadDag::Prepared(&dag),
+                        crate::cop_reader::TableReadDag::Prepared(&dag).with_row_count_upper_bound(row_count_upper_bound),
                         vec![kv_range],
                     )
                 })
@@ -495,7 +532,7 @@ impl Executor for IndexReaderExecutor {
             self.result = Some(ReaderResult::Sorted(merged));
             return Ok(());
         }
-        self.result = Some(ReaderResult::One(self.select_result(&statement, dag.into(), kv_ranges)?));
+        self.result = Some(ReaderResult::One(self.select_result(&statement, crate::cop_reader::TableReadDag::from(dag).with_row_count_upper_bound(row_count_upper_bound), kv_ranges)?));
         Ok(())
     }
 

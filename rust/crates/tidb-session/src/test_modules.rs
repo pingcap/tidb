@@ -52,6 +52,7 @@ mod tests_ddl_service;
 mod tests_deadlock_history;
 mod tests_decorrelate_count_having;
 mod tests_derived_agg_pruning;
+mod tests_distsqltest;
 mod tests_dml_lock_keys;
 mod tests_domain_plan_replayer_source;
 mod tests_domain_serverinfo_info_source;

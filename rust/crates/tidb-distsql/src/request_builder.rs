@@ -253,7 +253,7 @@ impl RequestBuilder {
         if self.error.is_some() {
             return self;
         }
-        self.attach_dag_request(&dag, data.into().into())
+        self.attach_dag_request(&dag, data.into().into(), None)
     }
 
     /// Attaches an encoded DAG that can be shared by multiple requests.
@@ -261,10 +261,26 @@ impl RequestBuilder {
         if self.error.is_some() {
             return self;
         }
-        self.attach_dag_request(dag, data)
+        self.attach_dag_request(dag, data, None)
     }
 
-    fn attach_dag_request(&mut self, dag: &RequestEnvelope, data: Bytes) -> &mut Self {
+    /// Go `SetDAGRequestWithRowCountUpperBound`: `SetDAGRequest` for key
+    /// ranges proven to return at most `row_count_upper_bound` rows (every
+    /// range a point on a unique key). A Scan -> Limit DAG keeps the normal
+    /// concurrency when the bound is not larger than the limit.
+    pub fn set_dag_request_bytes_with_row_count_upper_bound(
+        &mut self,
+        dag: &RequestEnvelope,
+        data: Bytes,
+        row_count_upper_bound: u64,
+    ) -> &mut Self {
+        if self.error.is_some() {
+            return self;
+        }
+        self.attach_dag_request(dag, data, Some(row_count_upper_bound))
+    }
+
+    fn attach_dag_request(&mut self, dag: &RequestEnvelope, data: Bytes, row_count_upper_bound: Option<u64>) -> &mut Self {
         let partition_count = if dag.partition_count == 0 {
             self
                 .request
@@ -274,7 +290,7 @@ impl RequestBuilder {
         } else {
             dag.partition_count
         };
-        if let Some(concurrency) = dag.small_limit_concurrency_for(partition_count) {
+        if let Some(concurrency) = dag.small_limit_concurrency_for(partition_count, row_count_upper_bound) {
             self.request.concurrency = concurrency as isize;
         }
         self.request.request_type = RequestType::Dag;
@@ -291,7 +307,7 @@ impl RequestBuilder {
             return self;
         }
         let data = self.request.data.take().unwrap_or_default();
-        self.attach_dag_request(&dag, data)
+        self.attach_dag_request(&dag, data, None)
     }
 
     /// Applies Analyze's source request defaults to opaque encoded bytes.
@@ -558,6 +574,18 @@ impl RequestBuilder {
             self.error = Some(error);
         }
     }
+}
+
+/// Go `ScanLimitWithMinimalConcurrency`: the limit of a Scan -> Limit DAG
+/// that `SetDAGRequest` sends with minimal concurrency. Only for such a DAG
+/// can `SetDAGRequestWithRowCountUpperBound` change the concurrency.
+#[must_use]
+pub fn scan_limit_with_minimal_concurrency(dag: &tidb_proto::tipb::DagRequest) -> Option<u64> {
+    if dag.executors.len() != 2 {
+        return None;
+    }
+    let limit = dag.executors[1].limit.as_ref()?.limit();
+    (limit < crate::ESTIMATED_REGION_ROW_COUNT).then_some(limit)
 }
 
 /// Encodes signed table-handle ranges with exact exclusion adjustments.

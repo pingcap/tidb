@@ -23,6 +23,7 @@ tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-model = { path = "../tidb-model" }
 
 [dev-dependencies]
 tidb-planner-init = { path = "../tidb-planner-init" }

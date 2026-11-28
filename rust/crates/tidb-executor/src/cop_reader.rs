@@ -241,6 +241,9 @@ impl PreparedTableReadDag {
 pub(crate) enum TableReadDag<'a> {
     Protobuf(tidb_proto::tipb::DagRequest),
     Prepared(&'a PreparedTableReadDag),
+    /// Go `SetDAGRequestWithRowCountUpperBound`: the DAG over key ranges
+    /// proven to return at most this many rows.
+    WithRowCountUpperBound(Box<TableReadDag<'a>>, u64),
 }
 
 impl From<tidb_proto::tipb::DagRequest> for TableReadDag<'_> {
@@ -250,6 +253,15 @@ impl From<tidb_proto::tipb::DagRequest> for TableReadDag<'_> {
 }
 
 impl TableReadDag<'_> {
+    /// Go `SetDAGRequestWithRowCountUpperBound` in place of `SetDAGRequest`
+    /// when `bound` is set.
+    pub(crate) fn with_row_count_upper_bound(self, bound: Option<u64>) -> Self {
+        match bound {
+            Some(bound) => Self::WithRowCountUpperBound(Box::new(self), bound),
+            None => self,
+        }
+    }
+
     fn attach(self, builder: &mut RequestBuilder) {
         match self {
             Self::Protobuf(dag) => {
@@ -258,6 +270,19 @@ impl TableReadDag<'_> {
             Self::Prepared(dag) => {
                 builder.set_dag_request_bytes(&dag.envelope, dag.data.clone());
             }
+            Self::WithRowCountUpperBound(dag, bound) => match *dag {
+                Self::Protobuf(dag) => {
+                    builder.set_dag_request_bytes_with_row_count_upper_bound(
+                        &dag_envelope(&dag),
+                        dag.encode_to_vec().into(),
+                        bound,
+                    );
+                }
+                Self::Prepared(dag) => {
+                    builder.set_dag_request_bytes_with_row_count_upper_bound(&dag.envelope, dag.data.clone(), bound);
+                }
+                Self::WithRowCountUpperBound(..) => unreachable!("a row count bound is set once"),
+            },
         }
     }
 }

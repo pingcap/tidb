@@ -9435,6 +9435,7 @@ dependencies = [
  "tidb-go-strconv",
  "tidb-goruntime",
  "tidb-hack",
+ "tidb-model",
  "tidb-parser",
  "tidb-planner-init",
  "tidb-tablecodec",

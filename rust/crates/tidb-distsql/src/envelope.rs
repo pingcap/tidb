@@ -185,10 +185,19 @@ impl RequestEnvelope {
     /// partition count. Deferring the rule to Build loses builder call order.
     #[must_use]
     pub fn small_limit_concurrency(&self) -> Option<u64> {
-        self.small_limit_concurrency_for(self.partition_count)
+        self.small_limit_concurrency_for(self.partition_count, None)
     }
 
-    pub(crate) fn small_limit_concurrency_for(&self, partition_count: usize) -> Option<u64> {
+    /// `row_count_upper_bound` is Go `SetDAGRequestWithRowCountUpperBound`'s
+    /// proven bound of the rows the key ranges can return (e48ac5fef19): a
+    /// Scan -> Limit DAG keeps the normal concurrency when the bound is not
+    /// larger than the limit, since the limit can never be reached before
+    /// every cop task finishes.
+    pub(crate) fn small_limit_concurrency_for(
+        &self,
+        partition_count: usize,
+        row_count_upper_bound: Option<u64>,
+    ) -> Option<u64> {
         if self.executors.len() < 2 {
             return None;
         }
@@ -201,7 +210,9 @@ impl RequestEnvelope {
             .filter(|index| *index > 0)
             .and_then(|index| self.executors.get(index))
             .is_some_and(|executor| executor.kind == ExecutorKind::IndexLookup);
-        (small_limit && (self.executors.len() == 2 || index_lookup_pushdown))
+        let scan_limit = self.executors.len() == 2
+            && row_count_upper_bound.is_none_or(|bound| second.limit.is_some_and(|limit| bound > limit));
+        (small_limit && (scan_limit || (self.executors.len() > 2 && index_lookup_pushdown)))
             .then_some(partition_count.max(1) as u64)
     }
 

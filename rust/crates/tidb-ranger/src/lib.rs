@@ -52,6 +52,7 @@ pub mod detacher;
 mod go_cases;
 pub mod points;
 pub mod ranger;
+pub mod row_count_bound;
 pub mod types;
 
 pub use ranger::{range_single_col_to_string, ranges_to_string};
