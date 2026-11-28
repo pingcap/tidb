@@ -532,14 +532,32 @@ const TIMING_DEPENDENT_RECORDINGS: &[&str] = &[
 /// Statements whose recording is older than the Go this rewrite follows,
 /// each confirmed against that Go: Go now prints `USE_INDEX(`t`)` where the
 /// recording has `USE_INDEX(`t` )`, and Go master's `executor/show` result
-/// lists SOUNDEX (7844a33138d) in `SHOW BUILTINS`. Exact: a statement that
-/// stops diverging leaves the list.
+/// lists SOUNDEX (7844a33138d) in `SHOW BUILTINS`; Go master's
+/// `ddl/column_modify` result (307fb3d6ead) allows converting a binary
+/// column to utf8, utf8mb4 and latin1, leaving it `varchar(10) CHARACTER SET
+/// latin1 COLLATE latin1_bin`. An entry starting with `[topic]` matches that
+/// topic's statement only. Exact: a statement that stops diverging leaves
+/// the list.
 const STALE_RECORDINGS: &[&str] = &[
     "batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t;",
     "batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t on duplicate key update t1.b=t.b;",
     "batch on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t;",
     "show builtins;",
+    "[ddl/column_modify] alter table t modify column a varchar(10) charset utf8 collate utf8_bin;",
+    "[ddl/column_modify] alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin;",
+    "[ddl/column_modify] alter table t modify column a varchar(10) charset latin1 collate latin1_bin;",
+    "[ddl/column_modify] show create table t;",
 ];
+
+/// Whether a divergence `headline` (`--- [topic] statement`) is the stale
+/// recording `entry`.
+fn stale_recording_matches(headline: &str, entry: &str) -> bool {
+    if entry.starts_with('[') {
+        headline.ends_with(entry)
+    } else {
+        headline.ends_with(&format!("] {entry}"))
+    }
+}
 
 /// The gate: every enrolled topic replays to its end and matches TiDB's
 /// recording, except [`STALE_RECORDINGS`], and no statement TiDB answered is
@@ -631,7 +649,7 @@ fn integration_corpus_matches_recordings() {
     let is_stale = |headline: &String| {
         STALE_RECORDINGS
             .iter()
-            .any(|sql| headline.ends_with(&format!("] {sql}")))
+            .any(|entry| stale_recording_matches(headline, entry))
     };
     let is_timing_dependent = |headline: &String| {
         TIMING_DEPENDENT_RECORDINGS.iter().any(|line| headline.ends_with(line))
@@ -642,7 +660,7 @@ fn integration_corpus_matches_recordings() {
         .collect();
     let still_stale = STALE_RECORDINGS
         .iter()
-        .filter(|sql| divergences.iter().any(|headline| headline.ends_with(&format!("] {sql}"))))
+        .filter(|entry| divergences.iter().any(|headline| stale_recording_matches(headline, entry)))
         .count();
     eprintln!(
         "integration corpus: {} topics, {} divergences ({} stale recordings), {} refused",
