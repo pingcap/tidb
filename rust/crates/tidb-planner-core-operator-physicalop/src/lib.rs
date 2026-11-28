@@ -189,7 +189,7 @@ impl BasePhysicalPlan {
     /// Go `GetChildReqProps(idx)` (`<4th>`).
     #[must_use]
     pub fn child_req_prop(&self, idx: usize) -> Option<&PhysicalProperty> {
-        self.children_req_props.get(idx).and_then(Option::as_ref)
+        self.children_req_props[idx].as_ref()
     }
 
     /// Go `SetChildrenReqProps(reqProps)` (`base_physical_plan.go:356`).
