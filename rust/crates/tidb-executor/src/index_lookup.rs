@@ -149,8 +149,43 @@ struct LookupTask {
     done: SyncSender<Result<TaskRows, ExecError>>,
 }
 
-/// One task on the result channel: Go `lookupTableTask.doneCh`.
-type TaskDone = Receiver<Result<TaskRows, ExecError>>;
+/// One task on the result channel: Go `lookupTableTask.doneCh`, with the
+/// task's `adaptiveLimitReservation` and `len(task.handles)`.
+struct TaskDone {
+    rows: Receiver<Result<TaskRows, ExecError>>,
+    /// Go `adaptiveLimitReservation`: the admitted handles this task owns. It
+    /// must be completed or aborted, then cleared, on every exit path.
+    adaptive_limit_reservation: usize,
+    handles: usize,
+}
+
+impl From<Receiver<Result<TaskRows, ExecError>>> for TaskDone {
+    fn from(rows: Receiver<Result<TaskRows, ExecError>>) -> Self {
+        Self { rows, adaptive_limit_reservation: 0, handles: 0 }
+    }
+}
+
+/// Go `resultCurr`: the task `Next` reads its rows from.
+struct ResultTask {
+    rows: TaskRows,
+    /// Go `task.cursor`.
+    cursor: usize,
+    adaptive_limit_reservation: usize,
+    handles: usize,
+}
+
+/// Go `lookupTableTask.abortAdaptiveLimitReservation`.
+fn abort_adaptive_limit_reservation(
+    controller: Option<&tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitController>,
+    reservation: &mut usize,
+) {
+    let taken = std::mem::take(reservation);
+    if let Some(controller) = controller {
+        if taken > 0 {
+            controller.abort_lookup(taken);
+        }
+    }
+}
 
 /// Go `IndexLookUpExecutor`.
 pub struct IndexLookUpExecutor {
@@ -208,7 +243,18 @@ pub struct IndexLookUpExecutor {
     kv_ranges: Vec<Vec<tidb_txnkv::KeyRange>>,
     /// Go `resultCh`, `resultCurr` and its cursor.
     result_ch: Option<Receiver<TaskDone>>,
-    result_curr: Option<(TaskRows, usize)>,
+    result_curr: Option<ResultTask>,
+    /// Go `adaptiveLimitController`: shared with the owning `LimitExec` and
+    /// set only for an eligible reader. The `LimitExec` controls its
+    /// lifecycle.
+    adaptive_limit_controller: Option<Arc<tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitController>>,
+    /// Go `reportAdaptiveLimitStats`: only a direct IndexLookUp reports the
+    /// adaptive snapshot here; an IndexJoin reports the shared snapshot
+    /// through its own runtime stats.
+    report_adaptive_limit_stats: bool,
+    /// Go `cancelFunc` of `workerCtx`, which an index worker waiting for
+    /// adaptive admission listens on.
+    worker_cancel: Option<tidb_gocontext::CancelFunc>,
     workers: Vec<std::thread::JoinHandle<()>>,
     worker_started: bool,
     /// Go `dummy`: not a real reader, only the KV ranges a union scan reads
@@ -479,6 +525,9 @@ impl IndexLookUpExecutor {
             kv_ranges: Vec::new(),
             result_ch: None,
             result_curr: None,
+            adaptive_limit_controller: None,
+            report_adaptive_limit_stats: false,
+            worker_cancel: None,
             workers: Vec::new(),
             worker_started: false,
             dummy,
@@ -743,7 +792,20 @@ impl IndexLookUpExecutor {
         }
         let need_merge = self.shared.keep_order && !by_items.is_empty() && kv_ranges.len() > 1;
         let max_batch_size = self.index_lookup_size;
-        let batch_size = self.calculate_batch_size(init_batch_size, max_batch_size);
+        // Go `startIndexWorker`: a single lookup worker cannot run the index
+        // and table workers at the same time, so it keeps legacy admission.
+        let adaptive_limit_controller = if self.index_lookup_concurrency <= 1 {
+            None
+        } else {
+            self.adaptive_limit_controller.clone()
+        };
+        let batch_size = match &adaptive_limit_controller {
+            Some(controller) => controller.suggested_batch_size(max_batch_size),
+            None => self.calculate_batch_size(init_batch_size, max_batch_size),
+        };
+        // Go `e.workerCtx, e.cancelFunc = context.WithCancel(ctx)`.
+        let (worker_ctx, worker_cancel) = tidb_gocontext::Context::with_cancel(&tidb_gocontext::Context::background());
+        self.worker_cancel = Some(worker_cancel);
         let (result_tx, result_rx) = sync_channel::<TaskDone>(LOOKUP_TABLE_TASK_CHANNEL_SIZE);
         self.result_ch = Some(result_rx);
         // Go's workerPool: up to `indexLookupConcurrency` table workers.
@@ -813,6 +875,10 @@ impl IndexLookUpExecutor {
             index_paging: self.index_paging,
             index_look_up_push_down: self.index_look_up_push_down,
             tbl_scan_idx_for_rewrite_partition_id,
+            ctx: worker_ctx,
+            adaptive_limit_controller,
+            pending_handles: Vec::new(),
+            pending_handles_mem_usage: 0,
         };
         self.workers.push(std::thread::spawn(tidb_executor_internal_exec::ruv2::inherit_goroutine(move || {
             index_worker.run(&result_tx, &work_tx);
@@ -823,9 +889,10 @@ impl IndexLookUpExecutor {
 
     /// Go `getResultTask`.
     fn get_result_task(&mut self) -> Result<bool, ExecError> {
-        if self.result_curr.as_ref().is_some_and(|(rows, cursor)| *cursor < rows.order.len()) {
+        if self.result_curr.as_ref().is_some_and(|task| task.cursor < task.rows.order.len()) {
             return Ok(true);
         }
+        self.complete_adaptive_lookup_task();
         let Some(result_ch) = self.result_ch.as_ref() else {
             return Ok(false);
         };
@@ -834,20 +901,89 @@ impl IndexLookUpExecutor {
             return Ok(false);
         };
         let index_fetched = std::time::Instant::now();
-        let rows = done
-            .recv()
-            .map_err(|_| ExecError::Internal("an index lookup table task ended without its rows".into()))??;
+        let TaskDone { rows, mut adaptive_limit_reservation, handles } = done;
+        let rows = match rows.recv() {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => {
+                abort_adaptive_limit_reservation(self.adaptive_limit_controller.as_deref(), &mut adaptive_limit_reservation);
+                return Err(error);
+            }
+            Err(_) => {
+                abort_adaptive_limit_reservation(self.adaptive_limit_controller.as_deref(), &mut adaptive_limit_reservation);
+                return Err(ExecError::Internal("an index lookup table task ended without its rows".into()));
+            }
+        };
         // Go: release the memory usage of the last task before handling a
         // new one.
-        if let Some((curr, _)) = &self.result_curr {
-            curr.mem_tracker.consume(-curr.mem_usage);
+        if let Some(curr) = &self.result_curr {
+            curr.rows.mem_tracker.consume(-curr.rows.mem_usage);
         }
         // Go `getResultTask`'s `NextWaitIndexScan` / `NextWaitTableLookUpResp`.
         if let Some(stats) = self.shared.stats.as_ref() {
             stats.stats.record_next_wait(index_fetched - start, std::time::Duration::ZERO, index_fetched.elapsed());
         }
-        self.result_curr = Some((rows, 0));
+        self.result_curr = Some(ResultTask { rows, cursor: 0, adaptive_limit_reservation, handles });
+        self.complete_adaptive_lookup_task();
         Ok(true)
+    }
+
+    /// Go `completeAdaptiveLookupTask` of `resultCurr`: a fully consumed task
+    /// is the smallest reliable lookup-yield sample. A task that is only
+    /// built or fetched may never be observed by the LIMIT consumer.
+    fn complete_adaptive_lookup_task(&mut self) {
+        let (Some(controller), Some(task)) = (self.adaptive_limit_controller.as_deref(), self.result_curr.as_mut()) else {
+            return;
+        };
+        if task.adaptive_limit_reservation == 0 || task.cursor < task.rows.order.len() {
+            return;
+        }
+        controller.complete_lookup(task.adaptive_limit_reservation, task.handles, task.rows.order.len());
+        task.adaptive_limit_reservation = 0;
+    }
+
+    /// Go `adaptiveLimitIndexLookupEligible` (`builder.go`): merge-sort double
+    /// reads create all SelectResults before rolling handle admission,
+    /// `PushedLimit` already applies its own index-side offset/count
+    /// boundary, pushed-down lookup does not preserve order, and concurrency
+    /// 1 cannot run the index and table workers at the same time.
+    pub(crate) fn adaptive_limit_eligible(&self) -> bool {
+        self.adaptive_limit_controller.is_none()
+            && self.pushed_limit.is_none()
+            && self.shared.keep_order
+            && self.index_lookup_concurrency > 1
+            && !self.adaptive_limit_may_need_merge_sort()
+            && !self.index_look_up_push_down
+    }
+
+    /// Go `adaptiveLimitIndexLookupMayNeedMergeSort`.
+    fn adaptive_limit_may_need_merge_sort(&self) -> bool {
+        if self.partition_table_mode || !self.grouped_ranges.is_empty() {
+            return true;
+        }
+        if self.by_items.is_empty() {
+            return false;
+        }
+        if self.index_plans.is_empty() {
+            return true;
+        }
+        // Correlated access can rebuild groupedRanges from GroupByColIdxs in
+        // Open.
+        !matches!(self.index_plans[0], PhysicalPlan::IndexScan(_)) || !self.group_by_col_idxs.is_empty()
+    }
+
+    /// Go `indexPaging`.
+    pub(crate) fn index_paging(&self) -> bool {
+        self.index_paging
+    }
+
+    /// Sets Go `adaptiveLimitController` and `reportAdaptiveLimitStats`.
+    pub(crate) fn set_adaptive_limit_controller(
+        &mut self,
+        controller: Arc<tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitController>,
+        report_stats: bool,
+    ) {
+        self.adaptive_limit_controller = Some(controller);
+        self.report_adaptive_limit_stats = report_stats;
     }
 }
 
@@ -898,6 +1034,26 @@ struct IndexWorker {
     /// Go `tblScanIdxForRewritePartitionID`: the pushed lookup's table scan,
     /// whose table id each partition's request rewrites.
     tbl_scan_idx_for_rewrite_partition_id: Option<usize>,
+    /// Go `workerCtx`.
+    ctx: tidb_gocontext::Context,
+    /// Go `adaptiveLimitController`: gates handle extraction into lookup
+    /// tasks. The owning `LimitExec` controls its lifecycle; `None` keeps
+    /// legacy admission.
+    adaptive_limit_controller: Option<Arc<tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitController>>,
+    /// Go `pendingHandles`: handles returned beyond the current adaptive
+    /// reservation. DistSQL may return more rows than `Chunk.RequiredRows`.
+    pending_handles: Vec<Handle>,
+    /// Go `pendingHandlesMemUsage`: the pending-handle bytes charged to
+    /// `mem_tracker`.
+    pending_handles_mem_usage: i64,
+}
+
+/// Go `extractedLookupTaskData`'s adaptive fields: the admitted handles an
+/// extraction owns until its task is dispatched.
+#[derive(Default)]
+struct AdaptiveExtraction {
+    /// Go `adaptiveLimitReservation`.
+    reservation: usize,
 }
 
 impl IndexWorker {
@@ -915,7 +1071,7 @@ impl IndexWorker {
             // Go `syncErr`: a failed task that carries the error.
             let (done_tx, done_rx) = sync_channel(1);
             let _ = done_tx.send(Err(error));
-            let _ = result_tx.send(done_rx);
+            let _ = result_tx.send(done_rx.into());
         };
         if self.index_look_up_push_down {
             if let Err(error) = self.run_push_down(ranges, result_tx, work_tx) {
@@ -971,6 +1127,7 @@ impl IndexWorker {
         for mut source in results {
             let _ = source.close();
         }
+        self.release_pending_handles();
     }
 
     /// The executor shape of one index result's rows.
@@ -1060,25 +1217,55 @@ impl IndexWorker {
         work_tx: &SyncSender<LookupTask>,
     ) -> Result<bool, ExecError> {
         loop {
-            if let Some(limit) = self.pushed_limit {
-                if self.scanned_keys >= limit.count + limit.offset {
-                    return Ok(false);
-                }
+            if self.reached_pushed_limit() {
+                return Ok(false);
             }
             let start = std::time::Instant::now();
-            let (handles, handles_cap, idx_rows) = self.extract_task_handles(source, chk, handle_offsets)?;
+            // Go `extractLookupTaskData`.
+            let Some(mut adaptive) = self.reserve_lookup()? else {
+                return Ok(false);
+            };
+            let extracted = self.extract_task_handles(source, chk, handle_offsets);
+            if let Some(controller) = self.adaptive_limit_controller.as_deref() {
+                self.batch_size = controller.suggested_batch_size(self.max_batch_size);
+            }
+            let (handles, handles_cap, idx_rows) = match extracted {
+                Ok(extracted) => extracted,
+                Err(error) => {
+                    self.abort_adaptive_limit_reservation(&mut adaptive);
+                    return Err(error);
+                }
+            };
+            self.trim_adaptive_limit_reservation(&mut adaptive, handles.len());
             let finish_fetch = std::time::Instant::now();
             if handles.is_empty() {
+                self.abort_adaptive_limit_reservation(&mut adaptive);
                 return Ok(true);
             }
-            if self.shared.finished.load(Ordering::Acquire) {
+            if self.shared.finished.load(Ordering::Acquire) || self.ctx.err().is_some() {
+                self.abort_adaptive_limit_reservation(&mut adaptive);
                 return Ok(false);
             }
             let finish_build = std::time::Instant::now();
             let (done_tx, done_rx) = sync_channel(1);
+            let handle_count = handles.len();
             let task = LookupTask { id: self.next_task_id, handles, handles_cap, partition, idx_rows, done: done_tx };
             self.next_task_id += 1;
-            if work_tx.send(task).is_err() || result_tx.send(done_rx).is_err() {
+            let done = TaskDone {
+                rows: done_rx,
+                adaptive_limit_reservation: std::mem::take(&mut adaptive.reservation),
+                handles: handle_count,
+            };
+            if work_tx.send(task).is_err() {
+                let mut reservation = done.adaptive_limit_reservation;
+                abort_adaptive_limit_reservation(self.adaptive_limit_controller.as_deref(), &mut reservation);
+                return Ok(false);
+            }
+            if let Err(std::sync::mpsc::SendError(mut done)) = result_tx.send(done) {
+                abort_adaptive_limit_reservation(
+                    self.adaptive_limit_controller.as_deref(),
+                    &mut done.adaptive_limit_reservation,
+                );
                 return Ok(false);
             }
             // Go `buildAndDispatchLookupTasks`' `FetchHandle`, `TaskWait`,
@@ -1142,7 +1329,7 @@ impl IndexWorker {
                         mem_usage: 0,
                         mem_tracker,
                     }));
-                    if result_tx.send(done_rx).is_err() {
+                    if result_tx.send(done_rx.into()).is_err() {
                         break 'results;
                     }
                 }
@@ -1151,7 +1338,7 @@ impl IndexWorker {
                     let handles_cap = handles.capacity();
                     let task = LookupTask { id: self.next_task_id, handles, handles_cap, partition, idx_rows: None, done: done_tx };
                     self.next_task_id += 1;
-                    if work_tx.send(task).is_err() || result_tx.send(done_rx).is_err() {
+                    if work_tx.send(task).is_err() || result_tx.send(done_rx.into()).is_err() {
                         break 'results;
                     }
                 }
@@ -1244,6 +1431,106 @@ impl IndexWorker {
         }
     }
 
+    /// Go `extractLookupTaskData`'s admission: reserve before extracting
+    /// handles so a large DistSQL chunk cannot be admitted directly into
+    /// table lookup tasks beyond the physical window. `None`: admission
+    /// stopped without an error (Go `adaptiveLimitStopped`).
+    fn reserve_lookup(&mut self) -> Result<Option<AdaptiveExtraction>, ExecError> {
+        let Some(controller) = self.adaptive_limit_controller.as_deref() else {
+            return Ok(Some(AdaptiveExtraction::default()));
+        };
+        let (reserved, ok) = controller
+            .reserve_lookup(&self.ctx, self.max_batch_size)
+            .map_err(|error| ExecError::Internal(error.to_string().into()))?;
+        if !ok {
+            return Ok(None);
+        }
+        // The controller applies its current batch limit after waking up.
+        self.batch_size = reserved;
+        Ok(Some(AdaptiveExtraction { reservation: reserved }))
+    }
+
+    /// Go `extractedLookupTaskData.abortAdaptiveLimitReservation`.
+    fn abort_adaptive_limit_reservation(&self, adaptive: &mut AdaptiveExtraction) {
+        abort_adaptive_limit_reservation(self.adaptive_limit_controller.as_deref(), &mut adaptive.reservation);
+    }
+
+    /// Go `extractedLookupTaskData.trimAdaptiveLimitReservation`.
+    fn trim_adaptive_limit_reservation(&self, adaptive: &mut AdaptiveExtraction, actual_handles: usize) {
+        if adaptive.reservation <= actual_handles {
+            return;
+        }
+        if let Some(controller) = self.adaptive_limit_controller.as_deref() {
+            controller.abort_lookup(adaptive.reservation - actual_handles);
+        }
+        adaptive.reservation = actual_handles;
+    }
+
+    /// Go `takePendingHandles`: a DistSQL chunk can contain more handles than
+    /// the current reservation. The excess is retained here and admitted
+    /// under later reservations; retained handles stay charged to the
+    /// executor memory tracker.
+    fn take_pending_handles(&mut self, handles: &mut Vec<Handle>) {
+        if self.adaptive_limit_controller.is_none() || self.pending_handles.is_empty() {
+            return;
+        }
+        let available = self.batch_size.saturating_sub(handles.len());
+        if available == 0 {
+            return;
+        }
+        let count = available.min(self.pending_handles.len());
+        let moved: Vec<Handle> = self.pending_handles.drain(..count).collect();
+        self.release_pending_handles_memory(&moved);
+        handles.extend(moved);
+    }
+
+    /// Go `reachedPushedLimit`.
+    fn reached_pushed_limit(&self) -> bool {
+        self.pushed_limit
+            .is_some_and(|limit| self.pending_handles.is_empty() && self.scanned_keys >= limit.count + limit.offset)
+    }
+
+    /// Go `appendExtractedHandle`: a handle beyond the batch is kept pending,
+    /// answering the bytes to charge for it.
+    fn append_extracted_handle(&mut self, handles: &mut Vec<Handle>, handle: Handle) -> i64 {
+        if self.adaptive_limit_controller.is_some() && handles.len() >= self.batch_size {
+            let usage = SIZEOF_INTERFACE as i64 + handle.mem_usage() as i64;
+            self.pending_handles.push(handle);
+            return usage;
+        }
+        handles.push(handle);
+        0
+    }
+
+    /// Go `consumePendingHandlesMemory`.
+    fn consume_pending_handles_memory(&mut self, usage: i64) {
+        if usage <= 0 {
+            return;
+        }
+        self.pending_handles_mem_usage += usage;
+        self.mem_tracker.consume(usage);
+    }
+
+    /// Go `releasePendingHandlesMemory`.
+    fn release_pending_handles_memory(&mut self, handles: &[Handle]) {
+        if self.pending_handles_mem_usage == 0 {
+            return;
+        }
+        let usage: i64 = handles.iter().map(|handle| SIZEOF_INTERFACE as i64 + handle.mem_usage() as i64).sum();
+        let usage = usage.min(self.pending_handles_mem_usage);
+        self.pending_handles_mem_usage -= usage;
+        self.mem_tracker.consume(-usage);
+    }
+
+    /// Go `releasePendingHandles`.
+    fn release_pending_handles(&mut self) {
+        if self.pending_handles_mem_usage > 0 {
+            self.mem_tracker.consume(-self.pending_handles_mem_usage);
+        }
+        self.pending_handles = Vec::new();
+        self.pending_handles_mem_usage = 0;
+    }
+
     /// Go `extractTaskHandles`.
     fn extract_task_handles(
         &mut self,
@@ -1251,12 +1538,33 @@ impl IndexWorker {
         chk: &mut Chunk,
         handle_offsets: &[usize],
     ) -> Result<(Vec<Handle>, usize, Option<Chunk>), ExecError> {
+        // A SelectResult may return more rows than requested. Excess handles
+        // are charged once per extraction on every return path.
+        let mut pending_handles_mem_usage = 0;
+        let extracted = self.extract_task_handles_inner(source, chk, handle_offsets, &mut pending_handles_mem_usage);
+        if self.adaptive_limit_controller.is_some() {
+            self.consume_pending_handles_memory(pending_handles_mem_usage);
+        }
+        extracted
+    }
+
+    fn extract_task_handles_inner(
+        &mut self,
+        source: &mut dyn Executor,
+        chk: &mut Chunk,
+        handle_offsets: &[usize],
+        pending_handles_mem_usage: &mut i64,
+    ) -> Result<(Vec<Handle>, usize, Option<Chunk>), ExecError> {
         let mut handles = Vec::new();
         // Go `retChk`: under `checkIndexValue`, every index row read.
         let mut ret_chk: Option<Chunk> = None;
         // Go `cap(handles)`: made at the first chunk's row count, then
         // grown by `append`.
         let mut handles_cap = 0;
+        self.take_pending_handles(&mut handles);
+        if !handles.is_empty() {
+            handles_cap = go_append_cap(handles.len(), 0, SIZEOF_INTERFACE);
+        }
         let max_chunk_size = self.meta.max_chunk_size();
         while handles.len() < self.batch_size {
             let mut required_rows = self.batch_size - handles.len();
@@ -1290,8 +1598,12 @@ impl IndexWorker {
                         return Ok((handles, handles_cap, ret_chk));
                     }
                 }
-                handles_cap = go_append_cap(handles.len() + 1, handles_cap, SIZEOF_INTERFACE);
-                handles.push(get_handle(&self.shared, chk.get_row(i), handle_offsets, GetHandleType::FromIndex)?);
+                let handle = get_handle(&self.shared, chk.get_row(i), handle_offsets, GetHandleType::FromIndex)?;
+                let before = handles.len();
+                *pending_handles_mem_usage += self.append_extracted_handle(&mut handles, handle);
+                if handles.len() > before {
+                    handles_cap = go_append_cap(handles.len(), handles_cap, SIZEOF_INTERFACE);
+                }
             }
             if let Some(check) = self.shared.check_index_value.as_ref() {
                 let ret = ret_chk.get_or_insert_with(|| Chunk::new(&check.idx_col_tps, self.batch_size, self.batch_size));
@@ -1745,6 +2057,10 @@ impl Executor for IndexLookUpExecutor {
         Some(self)
     }
 
+    fn adaptive_limit_node(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// Go `IndexLookUpExecutor.Open`: `memTracker` attached to the
     /// statement's, the key ranges built (charging it), then `open`'s reset
     /// and attach again; the workers start at the first `Next`.
@@ -1772,14 +2088,15 @@ impl Executor for IndexLookUpExecutor {
             if !self.get_result_task()? {
                 return Ok(());
             }
-            let Some((rows, cursor)) = self.result_curr.as_mut() else {
+            let Some(task) = self.result_curr.as_mut() else {
                 return Ok(());
             };
-            let num_to_append = (rows.order.len() - *cursor).min(req.required_rows() - req.num_rows());
-            for &(chunk, row) in &rows.order[*cursor..*cursor + num_to_append] {
-                req.append_row(rows.chunks[chunk].get_row(row));
+            let num_to_append = (task.rows.order.len() - task.cursor).min(req.required_rows() - req.num_rows());
+            for &(chunk, row) in &task.rows.order[task.cursor..task.cursor + num_to_append] {
+                req.append_row(task.rows.chunks[chunk].get_row(row));
             }
-            *cursor += num_to_append;
+            task.cursor += num_to_append;
+            self.complete_adaptive_lookup_task();
             if req.is_full() {
                 return Ok(());
             }
@@ -1789,6 +2106,11 @@ impl Executor for IndexLookUpExecutor {
     /// Go `IndexLookUpExecutor.Close`.
     fn close(&mut self) -> Result<(), ExecError> {
         self.shared.finished.store(true, Ordering::Release);
+        // Go `e.cancelFunc()`: wakes an index worker waiting for adaptive
+        // admission.
+        if let Some(cancel) = self.worker_cancel.take() {
+            cancel.cancel();
+        }
         // Go `channel.Clear(e.resultCh)`: drain so the index worker ends.
         if let Some(result_ch) = self.result_ch.take() {
             while result_ch.recv().is_ok() {}
@@ -1798,9 +2120,15 @@ impl Executor for IndexLookUpExecutor {
         }
         self.worker_started = false;
         self.result_curr = None;
-        // Go `RegisterStats(e.ID(), e.stats)`.
+        // Go `RegisterStats(e.ID(), e.stats)`, with the direct lookup's
+        // adaptive snapshot.
         if let Some(stats) = self.shared.stats.as_ref() {
-            stats.source.register_stats(stats.plan_id, Box::new(stats.stats.snapshot()));
+            let mut snapshot = stats.stats.snapshot();
+            if self.report_adaptive_limit_stats {
+                snapshot.adaptive_limit_snapshot =
+                    self.adaptive_limit_controller.as_deref().map(|controller| controller.snapshot());
+            }
+            stats.source.register_stats(stats.plan_id, Box::new(snapshot));
         }
         Ok(())
     }
@@ -1825,3 +2153,7 @@ impl Executor for IndexLookUpExecutor {
         self.meta.new_chunk()
     }
 }
+
+#[cfg(test)]
+#[path = "index_lookup_adaptive_tests.rs"]
+mod adaptive_tests;

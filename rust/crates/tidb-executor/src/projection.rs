@@ -561,6 +561,12 @@ impl<C: ProjectionContext> ProjectionExec<C> {
 }
 
 impl<C: ProjectionContext> Executor for ProjectionExec<C> {
+    /// Go `skipAdaptiveLimitProjections`: a projection preserves row
+    /// cardinality, so the adaptive LIMIT budget passes to its child.
+    fn adaptive_limit_node(&mut self) -> Option<&mut dyn std::any::Any> {
+        Arc::get_mut(&mut self.child)?.get_mut().ok()?.adaptive_limit_node()
+    }
+
     /// Go `ProjectionExec.Detach`: not when its `evaluatorSuit` requires any
     /// optional evaluation property, then its child.
     fn detach(&mut self) -> bool {

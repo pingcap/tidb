@@ -196,6 +196,10 @@ impl Executor for RegisterStatsOnClose {
         self.child.union_scan_reader()
     }
 
+    fn adaptive_limit_node(&mut self) -> Option<&mut dyn std::any::Any> {
+        self.child.adaptive_limit_node()
+    }
+
     fn agg_tree_input_empty(&self) -> bool {
         self.child.agg_tree_input_empty()
     }

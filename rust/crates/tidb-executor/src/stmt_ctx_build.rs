@@ -1783,6 +1783,13 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                             ),
                     )
                     .with_row_encoding_config(self.row_encoding_config())
+                    .with_enable_adaptive_limit_scan(
+                        self.session_vars()
+                            .system_value(tidb_vardef::tidb_vars::TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN)
+                            .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN, |value| {
+                                tidb_vardef::option_values::tidb_opt_on(&value)
+                            }),
+                    )
                     .with_sysdate_is_now(sysdate_is_now)
                     .with_replica_read(replica_read)
                     .with_read_consistency(read_replica_scope, is_staleness)
@@ -2007,6 +2014,13 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     self.session_vars()
                         .system_value(tidb_vardef::tidb_vars::TIDB_ENABLE_MUTATION_CHECKER)
                         .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_MUTATION_CHECKER, |value| {
+                            tidb_vardef::option_values::tidb_opt_on(&value)
+                        }),
+                )
+                .with_enable_adaptive_limit_scan(
+                    self.session_vars()
+                        .system_value(tidb_vardef::tidb_vars::TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN)
+                        .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN, |value| {
                             tidb_vardef::option_values::tidb_opt_on(&value)
                         }),
                 )

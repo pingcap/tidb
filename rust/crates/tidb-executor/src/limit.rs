@@ -24,6 +24,8 @@
 //! batch. Every later whole batch transfers column owners, including Limit's
 //! inline reordered/duplicate child-column projection.
 
+use std::sync::Arc;
+
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_chunk::chunk::Chunk;
@@ -108,6 +110,11 @@ pub struct LimitExec {
     meet_first_batch: bool,
     child: Box<dyn Executor>,
     child_result: Chunk,
+    /// Go `adaptiveLimitController`: the Limit owns the statement-local
+    /// controller lifecycle. Reaching LIMIT or EOF stops admission; Open
+    /// resets it after all prior workers have exited.
+    adaptive_limit_controller:
+        Option<Arc<tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitController>>,
 }
 
 impl LimitExec {
@@ -163,6 +170,7 @@ impl LimitExec {
             meet_first_batch: offset == 0,
             child,
             child_result,
+            adaptive_limit_controller: None,
         }
     }
 
@@ -221,22 +229,23 @@ impl LimitExec {
         }
         Ok(())
     }
-}
 
-impl Executor for LimitExec {
-    /// Go `Open`/`open`: opens the child and resets the window cursor.
-    fn open(&mut self) -> Result<(), ExecError> {
-        self.child.open()?;
-        // Go `open`: `childResult = exec.TryNewCacheChunk(e.Children(0))`.
-        self.child_result = self.child.new_chunk();
-        self.cursor = 0;
-        self.meet_first_batch = self.begin == 0;
-        Ok(())
+    /// Sets Go `adaptiveLimitController`.
+    pub(crate) fn set_adaptive_limit_controller(
+        &mut self,
+        controller: Arc<tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitController>,
+    ) {
+        self.adaptive_limit_controller = Some(controller);
     }
 
-    /// Go `Next`: the offset-skipping loop, then per-call pass-through with
-    /// end-of-window truncation.
-    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+    fn stop_adaptive_limit(&self) {
+        if let Some(controller) = &self.adaptive_limit_controller {
+            controller.stop();
+        }
+    }
+
+    /// Go `Next`'s body.
+    fn next_limit(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
         if self.inline_projection.invalid() {
             return Err(ExecError::internal(INVALID_INLINE_PROJECTION));
@@ -253,6 +262,7 @@ impl Executor for LimitExec {
             self.child.next(&mut self.child_result)?;
             let batch_size = u64::try_from(self.child_result.num_rows()).unwrap_or(u64::MAX);
             if batch_size == 0 {
+                self.stop_adaptive_limit();
                 return Ok(());
             }
             let new_cursor = self.cursor.saturating_add(batch_size);
@@ -280,6 +290,7 @@ impl Executor for LimitExec {
         self.child.next(&mut self.child_result)?;
         let mut batch_size = u64::try_from(self.child_result.num_rows()).unwrap_or(u64::MAX);
         if batch_size == 0 {
+            self.stop_adaptive_limit();
             return Ok(());
         }
         if self.cursor.saturating_add(batch_size) > self.end {
@@ -290,9 +301,36 @@ impl Executor for LimitExec {
         self.cursor = self.cursor.saturating_add(batch_size);
         self.transfer_full_batch(req)
     }
+}
+
+impl Executor for LimitExec {
+    /// Go `Open`/`open`: opens the child and resets the window cursor.
+    fn open(&mut self) -> Result<(), ExecError> {
+        if let Some(controller) = &self.adaptive_limit_controller {
+            controller.reset();
+        }
+        self.child.open()?;
+        // Go `open`: `childResult = exec.TryNewCacheChunk(e.Children(0))`.
+        self.child_result = self.child.new_chunk();
+        self.cursor = 0;
+        self.meet_first_batch = self.begin == 0;
+        Ok(())
+    }
+
+    /// Go `Next`: the offset-skipping loop, then per-call pass-through with
+    /// end-of-window truncation. Reaching the LIMIT, or the child's end,
+    /// stops adaptive admission.
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        let result = self.next_limit(req);
+        if self.cursor >= self.end {
+            self.stop_adaptive_limit();
+        }
+        result
+    }
 
     /// Go `Close` (minus the slow-close logging/tracing, deferred).
     fn close(&mut self) -> Result<(), ExecError> {
+        self.stop_adaptive_limit();
         self.child.close()
     }
 

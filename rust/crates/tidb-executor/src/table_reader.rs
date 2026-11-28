@@ -190,6 +190,43 @@ pub struct TableReaderExecutor {
     dummy: bool,
 }
 
+impl TableReaderExecutor {
+    /// Go `adaptiveLimitSingleReadEligible`'s `*TableReaderExecutor` arm.
+    pub(crate) fn adaptive_limit_single_read_eligible(&self) -> bool {
+        if !self.keep_order
+            || self.dummy
+            || self.store_type != tidb_kv::store_type::StoreType::TiKv
+            || self.batch_cop
+            || self.partitions.is_some()
+            || !self.grouped_ranges.is_empty()
+            || !self.group_by_col_idxs.is_empty()
+            || !self.by_items.is_empty()
+        {
+            return false;
+        }
+        let Some(table) = scanned_table(&self.table_plan) else {
+            return false;
+        };
+        if !crate::index_reader::adaptive_limit_single_read_table(Some(&table)) {
+            return false;
+        }
+        let meta = table.read();
+        if !meta.pk_is_handle {
+            return true;
+        }
+        // A keep-order scan of unsigned integer handles can open two results.
+        meta.get_pk_col_info().is_some_and(|pk| !pk.read().field_type.is_unsigned())
+    }
+}
+
+/// Go `e.table`: the table the reader's table scan reads.
+fn scanned_table(plan: &PhysicalPlan) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
+    match plan {
+        PhysicalPlan::TableScan(scan) => scan.table.clone(),
+        _ => plan.children().iter().find_map(scanned_table),
+    }
+}
+
 /// What Go's `IndexLookUpExecutor.buildTableReader` puts in the
 /// `TableReaderExecutor` a table task reads its handles through.
 pub(crate) struct TableReaderForHandles<'a> {
@@ -866,6 +903,10 @@ impl Executor for TableReaderExecutor {
     }
 
     fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn adaptive_limit_node(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
     }
 

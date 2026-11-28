@@ -17,6 +17,7 @@
 // (or `src/<name>/mod.rs`) and keep their module paths, so every test keeps
 // its name.
 
+mod tests_adaptive_limit_scan;
 mod tests_admin_check;
 mod tests_affinity_storage_class;
 mod tests_alter_column;

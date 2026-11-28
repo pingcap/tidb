@@ -61,6 +61,11 @@ pub(crate) fn get_partition_ids_after_pruning(
     Ok(idx_arr.iter().map(|&idx| definitions[idx].id).collect())
 }
 
+/// Go `adaptiveLimitSingleReadTable`: an unpartitioned table's metadata.
+pub(crate) fn adaptive_limit_single_read_table(table: Option<&tidb_model::GoShared<tidb_model::TableInfo>>) -> bool {
+    table.is_some_and(|table| table.read().partition.is_none())
+}
+
 /// Go `IndexReaderExecutor`.
 pub struct IndexReaderExecutor {
     meta: ExecutorMeta,
@@ -117,6 +122,27 @@ pub struct IndexReaderExecutor {
 }
 
 impl IndexReaderExecutor {
+    /// Go `adaptiveLimitSingleReadEligible`'s `*IndexReaderExecutor` arm: a
+    /// keep-order read of one unpartitioned table's ranges, without grouped
+    /// ranges, a merge or partitions.
+    pub(crate) fn adaptive_limit_single_read_eligible(&self) -> bool {
+        if !self.keep_order
+            || self.dummy
+            || !self.grouped_ranges.is_empty()
+            || !self.by_items.is_empty()
+            || self.table_ids.len() != 1
+            || self.part_range_map.as_ref().is_some_and(|map| !map.is_empty())
+            || !self.partition_id_map.is_empty()
+        {
+            return false;
+        }
+        match &self.index_plan {
+            PhysicalPlan::IndexScan(scan) => {
+                adaptive_limit_single_read_table(scan.table.as_ref()) && scan.group_by_col_idxs.is_empty()
+            }
+            _ => false,
+        }
+    }
     /// Go `buildIndexReader` for a `kv.TiKV` reader: `buildNoRangeIndexReader`,
     /// then, for a dynamically pruned partitioned table, its partitions -- a
     /// `TableDualExec` when none survive.
@@ -402,6 +428,10 @@ impl Executor for IndexReaderExecutor {
     }
 
     fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn adaptive_limit_node(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
     }
 

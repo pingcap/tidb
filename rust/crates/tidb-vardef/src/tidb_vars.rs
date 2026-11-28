@@ -499,6 +499,9 @@ pub const TIDB_INDEX_JOIN_BATCH_SIZE: &str = "tidb_index_join_batch_size";
 /// Large value may do more work than needed if the query has a limit.
 /// Go `TiDBIndexLookupSize`.
 pub const TIDB_INDEX_LOOKUP_SIZE: &str = "tidb_index_lookup_size";
+/// TiDBEnableAdaptiveLimitScan enables statement-local adaptive admission for early-stop LIMIT scans.
+/// Go `TiDBEnableAdaptiveLimitScan`.
+pub const TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN: &str = "tidb_enable_adaptive_limit_scan";
 /// TiDBIndexLookupConcurrency is used for index lookup executor.
 /// A lookup task may have 'tidb_index_lookup_size' of handles at maximum, the handles may be distributed
 /// in many TiKV nodes, we execute multiple concurrent index lookup tasks concurrently to reduce the time

@@ -112,6 +112,7 @@ impl IndexLookUpJoinRuntimeStats {
             fetch: self.inner_worker.fetch.load(Ordering::Relaxed),
             build: self.inner_worker.build.load(Ordering::Relaxed),
             join: self.inner_worker.join.load(Ordering::Relaxed),
+            adaptive_limit_snapshot: None,
         }
     }
 }
@@ -127,6 +128,11 @@ pub struct IndexLookUpJoinRuntimeStatsSnapshot {
     fetch: i64,
     build: i64,
     join: i64,
+    /// Go `adaptiveLimitSnapshot`: the close-time diagnostic snapshot
+    /// rendered by EXPLAIN ANALYZE. Runtime-stat merges retain one copy
+    /// instead of adding it.
+    pub(crate) adaptive_limit_snapshot:
+        Option<tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitSnapshot>,
 }
 
 fn fmt(nanos: i64) -> String {
@@ -161,8 +167,35 @@ impl RuntimeStats for IndexLookUpJoinRuntimeStatsSnapshot {
             buf.push('}');
         }
         if self.probe > 0 {
-            buf.push_str(", probe:");
+            if !buf.is_empty() {
+                buf.push_str(", ");
+            }
+            buf.push_str("probe:");
             buf.push_str(&fmt(self.probe));
+        }
+        if let Some(snapshot) = &self.adaptive_limit_snapshot {
+            if !buf.is_empty() {
+                buf.push_str(", ");
+            }
+            buf.push_str("adaptive:{outer:");
+            buf.push_str(&format!("{}/{}", snapshot.outer_fetched, snapshot.outer_consumed));
+            if snapshot.has_lookup_stage {
+                buf.push_str(&format!(", lookup:{}/{}", snapshot.lookup_handles, snapshot.lookup_rows));
+            }
+            buf.push_str(", outstanding:");
+            buf.push_str(&snapshot.outer_outstanding_at_stop.to_string());
+            if snapshot.has_lookup_stage {
+                buf.push('/');
+                buf.push_str(&snapshot.lookup_outstanding_at_stop.to_string());
+                buf.push_str(", blocked:outer=");
+                buf.push_str(&format_duration(snapshot.outer_admission_blocked));
+                buf.push_str(",lookup=");
+                buf.push_str(&format_duration(snapshot.lookup_admission_blocked));
+            } else {
+                buf.push_str(", blocked:");
+                buf.push_str(&format_duration(snapshot.outer_admission_blocked));
+            }
+            buf.push('}');
         }
         buf
     }
@@ -182,6 +215,11 @@ impl RuntimeStats for IndexLookUpJoinRuntimeStatsSnapshot {
         self.fetch += tmp.fetch;
         self.build += tmp.build;
         self.join += tmp.join;
+        // The snapshot describes one executor lifecycle, so retain the first
+        // copy instead of accumulating the same statement-local counters.
+        if self.adaptive_limit_snapshot.is_none() {
+            self.adaptive_limit_snapshot = tmp.adaptive_limit_snapshot;
+        }
     }
 
     fn clone_box(&self) -> Box<dyn RuntimeStats> {
@@ -216,5 +254,43 @@ mod tests {
              build:5.63µs}, probe:18.1µs"
         );
         assert_eq!(IndexLookUpJoinRuntimeStats::new(0).snapshot().string(), "");
+    }
+
+    /// Go `TestIndexJoinRuntimeStats`' adaptive LIMIT half (0b505ecc58b):
+    /// the snapshot renders after the probe, survives a clone and a merge as
+    /// one copy, and a probe-only stats has no leading separator.
+    #[test]
+    fn test_index_join_runtime_stats_adaptive_snapshot() {
+        let stats = IndexLookUpJoinRuntimeStats::new(5);
+        stats.record_probe(Duration::from_secs(2));
+        let mut stats = stats.snapshot();
+        assert_eq!(stats.string(), "probe:2s");
+        stats.adaptive_limit_snapshot = Some(tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitSnapshot {
+            has_lookup_stage: true,
+            output_rows: 1000,
+            outer_fetched: 1413,
+            outer_consumed: 1000,
+            outer_outstanding_at_stop: 413,
+            lookup_handles: 1256,
+            lookup_rows: 1000,
+            lookup_outstanding_at_stop: 256,
+            stopped: true,
+            ..Default::default()
+        });
+        let adaptive = "adaptive:{outer:1413/1000, lookup:1256/1000, outstanding:413/256, blocked:outer=0s,lookup=0s}";
+        let cloned = stats.clone_box();
+        assert!(cloned.string().contains(adaptive), "{}", cloned.string());
+        let mut merged = IndexLookUpJoinRuntimeStatsSnapshot::default();
+        merged.merge(cloned.as_ref());
+        assert!(merged.string().contains(adaptive), "{}", merged.string());
+        merged.merge(&stats);
+        assert!(merged.string().contains("outer:1413/1000"), "{}", merged.string());
+        let mut outer_only = IndexLookUpJoinRuntimeStatsSnapshot::default();
+        outer_only.adaptive_limit_snapshot = Some(tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitSnapshot {
+            outer_fetched: 3,
+            outer_consumed: 3,
+            ..Default::default()
+        });
+        assert_eq!(outer_only.string(), "adaptive:{outer:3/3, outstanding:0, blocked:0s}");
     }
 }

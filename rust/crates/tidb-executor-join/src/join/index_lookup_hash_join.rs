@@ -315,6 +315,7 @@ impl<C: Columns> HashJoinOuterWorker<C> {
                 &mut self.batch_size,
                 self.max_batch_size,
                 0,
+                None,
             )?;
             if outer.rows.len() == 0 {
                 return Ok(());

@@ -102,6 +102,7 @@ impl IndexLookUpRunTimeStats {
             next_wait_index_scan: self.next_wait_index_scan.load(Ordering::Relaxed),
             next_wait_table_lookup_build: self.next_wait_table_lookup_build.load(Ordering::Relaxed),
             next_wait_table_lookup_resp: self.next_wait_table_lookup_resp.load(Ordering::Relaxed),
+            adaptive_limit_snapshot: None,
         }
     }
 }
@@ -118,6 +119,11 @@ pub struct IndexLookUpRunTimeStatsSnapshot {
     next_wait_index_scan: i64,
     next_wait_table_lookup_build: i64,
     next_wait_table_lookup_resp: i64,
+    /// Go `adaptiveLimitSnapshot`: the close-time diagnostic snapshot
+    /// rendered by EXPLAIN ANALYZE. Runtime-stat merges retain one copy
+    /// instead of adding it.
+    pub(crate) adaptive_limit_snapshot:
+        Option<tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitSnapshot>,
 }
 
 impl RuntimeStats for IndexLookUpRunTimeStatsSnapshot {
@@ -157,6 +163,16 @@ impl RuntimeStats for IndexLookUpRunTimeStatsSnapshot {
                 fmt(self.next_wait_table_lookup_resp),
             ));
         }
+        if let Some(snapshot) = &self.adaptive_limit_snapshot {
+            let separator = if buf.is_empty() { "" } else { ", " };
+            buf.push_str(&format!(
+                "{separator}adaptive:{{lookup:{}/{}, outstanding:{}, blocked:{}}}",
+                snapshot.lookup_handles,
+                snapshot.lookup_rows,
+                snapshot.lookup_outstanding_at_stop,
+                format_duration(snapshot.lookup_admission_blocked),
+            ));
+        }
         buf
     }
 
@@ -176,6 +192,11 @@ impl RuntimeStats for IndexLookUpRunTimeStatsSnapshot {
         self.next_wait_index_scan += tmp.next_wait_index_scan;
         self.next_wait_table_lookup_build += tmp.next_wait_table_lookup_build;
         self.next_wait_table_lookup_resp += tmp.next_wait_table_lookup_resp;
+        // The snapshot describes one executor lifecycle, so retain the first
+        // copy instead of accumulating the same statement-local counters.
+        if self.adaptive_limit_snapshot.is_none() {
+            self.adaptive_limit_snapshot = tmp.adaptive_limit_snapshot;
+        }
     }
 
     fn clone_box(&self) -> Box<dyn RuntimeStats> {
@@ -452,6 +473,27 @@ impl IndexMergeStatsHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `TestIndexLookUpAdaptiveLimitRuntimeStats` (0b505ecc58b).
+    #[test]
+    fn test_index_look_up_adaptive_limit_runtime_stats() {
+        let stats = IndexLookUpRunTimeStatsSnapshot {
+            adaptive_limit_snapshot: Some(tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitSnapshot {
+                lookup_handles: 32,
+                lookup_rows: 4,
+                lookup_outstanding_at_stop: 8,
+                lookup_admission_blocked: Duration::from_secs(1),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(stats.string().contains("adaptive:{lookup:32/4, outstanding:8, blocked:1s}"), "{}", stats.string());
+        let clone = stats.clone_box();
+        assert_eq!(clone.string(), stats.string());
+        let mut stats = stats;
+        stats.merge(clone.as_ref());
+        assert_eq!(stats.string(), "adaptive:{lookup:32/4, outstanding:8, blocked:1s}");
+    }
 
     /// Go's `index_task: {total_time: 495.6µs, fetch_handle: 491.2µs, build:
     /// 874ns, wait: 3.54µs}, table_task: {total_time: 546.9µs, num: 1,

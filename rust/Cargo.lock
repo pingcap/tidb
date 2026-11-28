@@ -7121,6 +7121,7 @@ dependencies = [
 name = "tidb-executor-internal-exec"
 version = "0.0.0"
 dependencies = [
+ "crossbeam-channel",
  "tidb-ast",
  "tidb-charset",
  "tidb-chunk",
@@ -7131,6 +7132,7 @@ dependencies = [
  "tidb-execdetails",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-gocontext",
  "tidb-kv",
  "tidb-model",
  "tidb-ppcpuusage",
@@ -7189,6 +7191,7 @@ dependencies = [
  "tidb-executor-internal-vecgroupchecker",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-gocontext",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-memory",

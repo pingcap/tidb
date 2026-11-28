@@ -804,41 +804,54 @@ fn build_outer_task<C: Columns>(
     batch_size: &mut usize,
     max_batch_size: usize,
     parent_required_rows: usize,
+    mut adaptive: Option<&mut AdaptiveOuter>,
 ) -> Result<OuterBatch, ExecError> {
     let (init_cap, max_chunk_size) = (outer_child.init_cap(), outer_child.max_chunk_size());
     let mut outer = OuterBatch::new(outer_types, init_cap, max_chunk_size);
-    if *batch_size < max_batch_size {
-        *batch_size *= 2;
-    }
-    *batch_size = (*batch_size).min(max_batch_size);
-    let required_rows = if parent_required_rows != 0 {
-        parent_required_rows
-    } else {
-        *batch_size
-    };
-    let mut next_chunk_cap = if init_cap == 0 {
-        tidb_chunk::chunk::INITIAL_CAPACITY
-    } else {
-        init_cap
-    };
-    while outer.rows.len() < required_rows {
-        let fetch_required_rows = (required_rows - outer.rows.len()).min(max_chunk_size);
-        let chk_cap = next_chunk_cap.min(fetch_required_rows);
-        let mut chk = Chunk::new(outer_types, chk_cap, max_chunk_size);
-        chk.set_required_rows(
-            isize::try_from(fetch_required_rows).unwrap_or(isize::MAX),
-            max_chunk_size,
-        );
-        outer_child.next(&mut chk)?;
-        let rows = chk.num_rows();
-        if rows == 0 {
-            break;
+    let mut reserved_rows = 0;
+    let mut required_rows = match adaptive.as_deref() {
+        Some(adaptive) => {
+            let (reserved, ok) = adaptive
+                .controller
+                .reserve_outer(&adaptive.ctx, max_batch_size)
+                .map_err(|error| ExecError::internal(error.to_string()))?;
+            if !ok {
+                return Ok(outer);
+            }
+            reserved_rows = reserved;
+            reserved
         }
-        outer.add_chunk(chk, outer_not_null)?;
-        if rows >= chk_cap && next_chunk_cap < max_chunk_size {
-            next_chunk_cap = (next_chunk_cap * 2).max(rows).min(max_chunk_size);
+        None => {
+            if *batch_size < max_batch_size {
+                *batch_size *= 2;
+            }
+            *batch_size = (*batch_size).min(max_batch_size);
+            *batch_size
         }
+    };
+    if parent_required_rows != 0 {
+        required_rows = if adaptive.is_some() {
+            required_rows.min(parent_required_rows)
+        } else {
+            parent_required_rows
+        };
     }
+    let filled = fill_outer_rows(
+        outer_child,
+        outer_types,
+        outer_not_null,
+        &mut outer,
+        required_rows,
+        init_cap,
+        max_chunk_size,
+        adaptive.as_deref_mut(),
+    );
+    // Go: commit converts the reservation to the actual fetched row count on
+    // every exit path, releasing unused capacity after EOF or an error.
+    if let Some(adaptive) = adaptive {
+        adaptive.controller.commit_outer(reserved_rows, outer.rows.len());
+    }
+    filled?;
     if !outer_filter.is_empty() {
         outer.outer_match = (0..outer.rows.num_chunks())
             .map(|chk_idx| {
@@ -851,6 +864,110 @@ fn build_outer_task<C: Columns>(
     }
     outer.settle_bytes();
     Ok(outer)
+}
+
+/// Go `outerWorker`'s adaptive LIMIT state: the controller it reserves outer
+/// rows from, the worker context a blocked reservation listens on, and
+/// `pendingOuterChunk` / `pendingOuterRow`.
+pub(crate) struct AdaptiveOuter {
+    pub(crate) controller: Arc<tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitController>,
+    pub(crate) ctx: tidb_gocontext::Context,
+    /// Go `parentMemTracker`, which a pending chunk is charged to.
+    pub(crate) tracker: Arc<Tracker>,
+    /// A chunk the child returned beyond the admitted window: its next row,
+    /// and its charge (released when it drains or the worker exits).
+    pending: Option<(Chunk, usize, TrackerCharge)>,
+}
+
+impl AdaptiveOuter {
+    pub(crate) fn new(
+        controller: Arc<tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitController>,
+        ctx: tidb_gocontext::Context,
+        tracker: Arc<Tracker>,
+    ) -> Self {
+        Self { controller, ctx, tracker, pending: None }
+    }
+
+    /// Go `appendPendingOuterRows`.
+    fn append_pending_outer_rows(
+        &mut self,
+        outer: &mut OuterBatch,
+        outer_types: &[FieldType],
+        not_null: &[usize],
+        max_rows: usize,
+        max_chunk_size: usize,
+    ) -> Result<(), ExecError> {
+        let Some((pending, pending_row, _)) = self.pending.as_mut() else {
+            return Ok(());
+        };
+        let end = (*pending_row + max_rows).min(pending.num_rows());
+        let mut part = Chunk::new(outer_types, end - *pending_row, max_chunk_size);
+        for row in *pending_row..end {
+            part.append_row(pending.get_row(row));
+        }
+        *pending_row = end;
+        if end == pending.num_rows() {
+            // Go `releasePendingOuterChunk`.
+            self.pending = None;
+        }
+        outer.add_chunk(part, not_null)
+    }
+}
+
+/// Go `buildTask`'s fetch loop. Under adaptive admission the window is
+/// strict: a chunk larger than the remaining task capacity is admitted as a
+/// prefix and its tail saved for later reservations.
+#[allow(clippy::too_many_arguments)]
+fn fill_outer_rows(
+    outer_child: &mut dyn Executor,
+    outer_types: &[FieldType],
+    outer_not_null: &[usize],
+    outer: &mut OuterBatch,
+    required_rows: usize,
+    init_cap: usize,
+    max_chunk_size: usize,
+    mut adaptive: Option<&mut AdaptiveOuter>,
+) -> Result<(), ExecError> {
+    let mut next_chunk_cap = if init_cap == 0 {
+        tidb_chunk::chunk::INITIAL_CAPACITY
+    } else {
+        init_cap
+    };
+    while outer.rows.len() < required_rows {
+        let fetch_required_rows = (required_rows - outer.rows.len()).min(max_chunk_size);
+        if let Some(adaptive) = adaptive.as_deref_mut() {
+            if adaptive.pending.is_some() {
+                if let Some(error) = adaptive.ctx.err() {
+                    return Err(ExecError::internal(error.to_string()));
+                }
+                adaptive.append_pending_outer_rows(outer, outer_types, outer_not_null, fetch_required_rows, max_chunk_size)?;
+                continue;
+            }
+        }
+        let chk_cap = next_chunk_cap.min(fetch_required_rows);
+        let mut chk = Chunk::new(outer_types, chk_cap, max_chunk_size);
+        chk.set_required_rows(
+            isize::try_from(fetch_required_rows).unwrap_or(isize::MAX),
+            max_chunk_size,
+        );
+        outer_child.next(&mut chk)?;
+        let rows = chk.num_rows();
+        if rows == 0 {
+            break;
+        }
+        match adaptive.as_deref_mut() {
+            Some(adaptive) if rows > fetch_required_rows => {
+                let charge = TrackerCharge::new(&adaptive.tracker, chk.memory_usage());
+                adaptive.pending = Some((chk, 0, charge));
+                adaptive.append_pending_outer_rows(outer, outer_types, outer_not_null, fetch_required_rows, max_chunk_size)?;
+            }
+            _ => outer.add_chunk(chk, outer_not_null)?,
+        }
+        if rows >= chk_cap && next_chunk_cap < max_chunk_size {
+            next_chunk_cap = (next_chunk_cap * 2).max(rows).min(max_chunk_size);
+        }
+    }
+    Ok(())
 }
 
 /// The lookup-content shape of one index join, what

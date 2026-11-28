@@ -8,11 +8,31 @@
 //
 //! Go master's optimizer variables beyond this branch's Go (`sysvar.go`'s
 //! `TiDBOptRangeMaxCount`, from Go master `93a01d31f6d`), ported with
-//! `compareEqOrIn`'s range-count threshold.
+//! `compareEqOrIn`'s range-count threshold, and `TiDBEnableAdaptiveLimitScan`
+//! (Go master `0b505ecc58b`), ported with its adaptive LIMIT controller.
 
 use super::super::{SysVarDef, TypeFlag};
 
-pub(super) static ENTRIES: [SysVarDef; 1] = [
+pub(super) static ENTRIES: [SysVarDef; 2] = [
+    SysVarDef {
+        name: "tidb_enable_adaptive_limit_scan",
+        global_config_name: "",
+        scope: 3,
+        value: "OFF",
+        var_type: TypeFlag::Bool,
+        read_only: false,
+        allow_auto_value: false,
+        min_value: 0,
+        max_value: 0,
+        possible_values: &[],
+        auto_convert_negative_bool: false,
+        validation: None,
+        set_session: None,
+        set_global: None,
+        get_session: None,
+        get_global: None,
+        get_state_value: None,
+    },
     SysVarDef {
         name: "tidb_opt_range_max_count",
         global_config_name: "",

@@ -1643,6 +1643,8 @@ pub struct StmtContextData {
     pessimistic_check_in_prewrite: bool,
     /// Go `SessionVars.EnableMutationChecker` (`@@tidb_enable_mutation_checker`).
     enable_mutation_checker: bool,
+    /// Go `SessionVars.EnableAdaptiveLimitScan` (`@@tidb_enable_adaptive_limit_scan`).
+    enable_adaptive_limit_scan: bool,
     /// Go `SessionVars.ConstraintCheckInPlace` (`@@tidb_constraint_check_in_place`).
     /// `optimizeDupKeyCheckForNormalInsert` (`pkg/executor/insert.go:331-337`)
     /// combines this with the transaction mode to select lazy checking.
@@ -3305,6 +3307,13 @@ context_configuration! {
         self
     }
 
+    /// Sets `@@tidb_enable_adaptive_limit_scan` for this statement.
+    #[must_use]
+    pub fn with_enable_adaptive_limit_scan(mut self, enabled: bool) -> Self {
+        self.enable_adaptive_limit_scan = enabled;
+        self
+    }
+
     /// Sets `@@tidb_constraint_check_in_place` for this statement.
     #[must_use]
     pub fn with_constraint_check_in_place(mut self, enabled: bool) -> Self {
@@ -3842,6 +3851,7 @@ impl StmtContext {
             optimistic_transaction: false,
             pessimistic_check_in_prewrite: false,
             enable_mutation_checker: false,
+            enable_adaptive_limit_scan: false,
             constraint_check_in_place: false,
             allow_remove_auto_inc: false,
             clustered_index_def_mode: tidb_vardef::modes::ClusteredIndexDefMode(
@@ -5585,6 +5595,12 @@ impl StmtContext {
     #[must_use]
     pub fn index_lookup_size(&self) -> usize {
         self.cost_session.index_lookup_size.max(1.0) as usize
+    }
+
+    /// Go `SessionVars.EnableAdaptiveLimitScan`.
+    #[must_use]
+    pub fn enable_adaptive_limit_scan(&self) -> bool {
+        self.enable_adaptive_limit_scan
     }
 
     /// Go `SessionVars.ProjectionConcurrency()`: `tidb_projection_concurrency`

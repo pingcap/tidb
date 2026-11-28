@@ -683,6 +683,10 @@ impl Executor for SqlKillerCheckExec {
         self.child.union_scan_reader()
     }
 
+    fn adaptive_limit_node(&mut self) -> Option<&mut dyn std::any::Any> {
+        self.child.adaptive_limit_node()
+    }
+
     fn agg_tree_input_empty(&self) -> bool {
         self.child.agg_tree_input_empty()
     }
@@ -1804,6 +1808,135 @@ fn embedded_index_scan(plan: &PhysicalPlan) -> Option<&PhysicalIndexScan> {
         PhysicalPlan::IndexScan(scan) => Some(scan),
         _ => plan.children().iter().find_map(embedded_index_scan),
     }
+}
+
+/// Go `executorBuilder.attachAdaptiveLimitController`: the controller the
+/// Limit over `child` shares with an eligible ordered IndexLookUpJoin or
+/// IndexLookUp, attached to them; `None` when the shape is not supported.
+fn attach_adaptive_limit_controller(
+    demand_rows: u64,
+    child: &mut dyn Executor,
+    ctx: &crate::StmtContext,
+) -> Option<Arc<tidb_executor_internal_exec::adaptive_limit_controller::AdaptiveLimitController>> {
+    use tidb_executor_internal_exec::adaptive_limit_controller::{AdaptiveLimitConfig, AdaptiveLimitController};
+    if !ctx.enable_adaptive_limit_scan() {
+        return None;
+    }
+    let (init_chunk_size, max_chunk_size) = ctx.executor_chunk_sizes();
+    let index_lookup_size = ctx.index_lookup_size();
+    // Go `buildAdaptiveLimitConfig`.
+    let lookup_config = |index_paging: bool| {
+        let initial_lookup_window = adaptive_limit_initial_window(demand_rows, index_lookup_size);
+        AdaptiveLimitConfig {
+            demand_rows,
+            initial_lookup_window,
+            max_lookup_window: index_lookup_size as u64 * ctx.index_lookup_concurrency() as u64,
+            initial_lookup_batch_size: adaptive_limit_initial_lookup_batch_size(
+                initial_lookup_window,
+                index_paging,
+                max_chunk_size,
+                index_lookup_size,
+            ),
+            max_lookup_batch_size: index_lookup_size as u64,
+            ..AdaptiveLimitConfig::default()
+        }
+    };
+    // Only projections may intervene between Limit and an eligible join or
+    // reader.
+    let root = child.adaptive_limit_node()?;
+    if let Some(index_join) = root.downcast_mut::<tidb_executor_join::join::IndexLookUpJoin<crate::StmtContext>>() {
+        if !index_join.adaptive_limit_eligible() {
+            return None;
+        }
+        let index_join_batch_size = ctx.index_join_batch_size();
+        let initial_outer_window = adaptive_limit_initial_window(demand_rows, index_join_batch_size);
+        let max_outer_window = index_join_batch_size as u64 * ctx.index_lookup_join_concurrency() as u64;
+        let outer = index_join.outer_child_mut()?.adaptive_limit_node()?;
+        let controller = if outer.is::<crate::index_lookup::IndexLookUpExecutor>() {
+            let index_lookup = outer.downcast_mut::<crate::index_lookup::IndexLookUpExecutor>()?;
+            if !index_lookup.adaptive_limit_eligible() {
+                return None;
+            }
+            let mut config = lookup_config(index_lookup.index_paging());
+            config.initial_outer_window = initial_outer_window;
+            config.max_outer_window = max_outer_window;
+            let controller = Arc::new(AdaptiveLimitController::new(config));
+            index_lookup.set_adaptive_limit_controller(Arc::clone(&controller), false);
+            controller
+        } else if adaptive_limit_single_read_eligible(outer) {
+            Arc::new(AdaptiveLimitController::new_outer_join(AdaptiveLimitConfig {
+                demand_rows,
+                initial_outer_window: initial_outer_window.min(max_chunk_size as u64),
+                max_outer_window,
+                ..AdaptiveLimitConfig::default()
+            }))
+        } else {
+            return None;
+        };
+        index_join.set_adaptive_limit_controller(Arc::clone(&controller));
+        return Some(controller);
+    }
+    let index_lookup = root.downcast_mut::<crate::index_lookup::IndexLookUpExecutor>()?;
+    if !index_lookup.adaptive_limit_eligible() {
+        return None;
+    }
+    let mut config = lookup_config(index_lookup.index_paging());
+    if index_lookup.index_paging() {
+        let batch_floor = (init_chunk_size as u64).min(config.max_lookup_batch_size);
+        if config.initial_lookup_batch_size < batch_floor {
+            config.no_output_lookup_batch_size = batch_floor;
+            config.no_output_lookup_window = batch_floor * ctx.index_lookup_concurrency() as u64;
+        }
+    }
+    let controller = Arc::new(AdaptiveLimitController::new_lookup(config));
+    index_lookup.set_adaptive_limit_controller(Arc::clone(&controller), true);
+    Some(controller)
+}
+
+/// Go `adaptiveLimitInitialWindow`.
+fn adaptive_limit_initial_window(demand_rows: u64, ceiling: usize) -> u64 {
+    if demand_rows == 0 || ceiling <= 1 {
+        return 1;
+    }
+    demand_rows.min(ceiling as u64)
+}
+
+/// Go `adaptiveLimitInitialLookupBatchSize`: paging tasks stay aligned with
+/// the initial logical window; without paging, at least one chunk of
+/// execution granularity within the configured lookup batch limit.
+fn adaptive_limit_initial_lookup_batch_size(
+    initial_window: u64,
+    index_paging: bool,
+    max_chunk_size: usize,
+    max_batch_size: usize,
+) -> u64 {
+    if index_paging {
+        return initial_window;
+    }
+    initial_window.max(max_chunk_size as u64).min(max_batch_size as u64)
+}
+
+/// Go `TestAdaptiveLimitEligibility`'s window and batch helpers.
+#[cfg(test)]
+#[test]
+fn test_adaptive_limit_eligibility_windows() {
+    assert_eq!(adaptive_limit_initial_window(7, 1024), 7);
+    assert_eq!(adaptive_limit_initial_window(100_001, 1024), 1024);
+    assert_eq!(adaptive_limit_initial_lookup_batch_size(1, true, 32, 20000), 1);
+    assert_eq!(adaptive_limit_initial_lookup_batch_size(1, false, 32, 20000), 32);
+    assert_eq!(adaptive_limit_initial_lookup_batch_size(1000, false, 32, 20000), 1000);
+    assert_eq!(adaptive_limit_initial_lookup_batch_size(1000, false, 32, 128), 128);
+}
+
+/// Go `adaptiveLimitSingleReadEligible`.
+fn adaptive_limit_single_read_eligible(executor: &dyn std::any::Any) -> bool {
+    if let Some(reader) = executor.downcast_ref::<crate::index_reader::IndexReaderExecutor>() {
+        return reader.adaptive_limit_single_read_eligible();
+    }
+    if let Some(reader) = executor.downcast_ref::<crate::table_reader::TableReaderExecutor>() {
+        return reader.adaptive_limit_single_read_eligible();
+    }
+    false
 }
 
 fn embedded_table_scan(plan: &PhysicalPlan) -> Option<&PhysicalTableScan> {
@@ -3176,6 +3309,10 @@ fn build_index_look_up_join(
         concurrency: ctx.index_lookup_join_concurrency(),
         max_batch_size: ctx.index_join_batch_size(),
         index_ranges: join.ranges.clone(),
+        // Go `AdaptiveLimitEligible`: the outer physical property keeps order.
+        adaptive_limit_eligible: plan
+            .child_req_prop(1 - join.inner_child_idx)
+            .is_some_and(tidb_planner_property::PhysicalProperty::need_keep_order),
         runtime_stats: ctx
             .executor_runtime_stats_source()
             .filter(|_| !state.untraced)
@@ -6404,7 +6541,9 @@ fn build_with_state(
         }
         PhysicalPlan::Limit(limit) => {
             let child_plan = only_child(plan)?;
-            let child = build_with_state(child_plan, catalog, ctx, state)?;
+            let mut child = build_with_state(child_plan, catalog, ctx, state)?;
+            let adaptive_limit_controller =
+                attach_adaptive_limit_controller(limit.offset.saturating_add(limit.count), child.as_mut(), ctx);
             let schema = unary_schema(plan, child.as_ref());
             let max_chunk_size = ctx.executor_chunk_sizes().1;
             let init_cap = limit.count.min(max_chunk_size as u64) as usize;
@@ -6420,6 +6559,10 @@ fn build_with_state(
                 limit.count,
                 child,
             );
+            let mut executor = executor;
+            if let Some(controller) = adaptive_limit_controller {
+                executor.set_adaptive_limit_controller(controller);
+            }
             Ok(Box::new(executor) as Box<dyn Executor>)
         }
         PhysicalPlan::Sort(sort) => {

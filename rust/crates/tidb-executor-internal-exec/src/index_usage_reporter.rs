@@ -416,6 +416,10 @@ impl Executor for CopIndexUsageExec {
     fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
         self.child.union_scan_reader()
     }
+
+    fn adaptive_limit_node(&mut self) -> Option<&mut dyn std::any::Any> {
+        self.child.adaptive_limit_node()
+    }
 }
 
 #[cfg(test)]

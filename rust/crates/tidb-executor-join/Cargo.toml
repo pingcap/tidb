@@ -11,6 +11,7 @@ description = "TiDB pkg/executor/join (Rust)."
 workspace = true
 
 [dependencies]
+tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-cpuprofile = { path = "../tidb-cpuprofile" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-executor-internal-vecgroupchecker = { path = "../tidb-executor-internal-vecgroupchecker" }

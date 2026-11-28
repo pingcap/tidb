@@ -15,6 +15,7 @@
 //! `pkg/executor/internal/exec`: the [`Executor`] trait and the [`ExecutorMeta`]
 //! shared base state.
 
+pub mod adaptive_limit_controller;
 pub mod fast_bytes_map;
 pub mod ruv2;
 pub mod table_access;
@@ -92,6 +93,16 @@ pub trait Executor: Send {
     /// `SelectionExec`, which Go looks through). `None` for any other
     /// operator.
     fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
+        None
+    }
+
+    /// Go `executorBuilder.attachAdaptiveLimitController`'s type switches:
+    /// this operator as an adaptive LIMIT candidate (`IndexLookUpJoin`,
+    /// `IndexLookUpExecutor`, `IndexReaderExecutor`, `TableReaderExecutor`),
+    /// seen through the wrappers the builder puts around it, and through a
+    /// `ProjectionExec` (Go `skipAdaptiveLimitProjections`). `None` for any
+    /// other operator: a Selection or a blocking operator stops the budget.
+    fn adaptive_limit_node(&mut self) -> Option<&mut dyn std::any::Any> {
         None
     }
 

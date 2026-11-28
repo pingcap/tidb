@@ -31,6 +31,8 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+crossbeam-channel = "0.5"
 
 [dev-dependencies]
 tidb-ast = { path = "../tidb-ast" }
