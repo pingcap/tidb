@@ -151,9 +151,14 @@ pub fn master_recordings(topic: &str) -> Result<std::collections::HashMap<(Strin
 }
 
 /// `tests/integrationtest` at the repository root: the scripts, the
-/// recordings and the files they load.
+/// recordings and the files they load. `INTEGRATIONTEST_DIR` points the
+/// replay at another corpus instead -- a Go master checkout's, to audit
+/// which recordings this branch's copy has fallen behind.
 pub fn integrationtest_dir() -> PathBuf {
-    difftest::parser_oracle::repo_root().join("tests/integrationtest")
+    std::env::var_os("INTEGRATIONTEST_DIR").map_or_else(
+        || difftest::parser_oracle::repo_root().join("tests/integrationtest"),
+        PathBuf::from,
+    )
 }
 
 /// Runs `replay` once per topic, `INTEGRATION_JOBS` at a time (half the cores

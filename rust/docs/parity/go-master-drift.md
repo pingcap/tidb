@@ -8,6 +8,18 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 
 ## Verified gaps
 
+Replay audit against Go master's corpus (`INTEGRATIONTEST_DIR=<gomaster>/tests/integrationtest`, the two topics Go master dropped copied in; 2026-11-28 at 727915525b9): each row below is a statement that diverges from, or is refused against, Go master's recording.
+- d152e4b78d3 (`planner/core/lateral_join`): LEFT JOIN LATERAL is refused ("Invalid use of LATERAL: LEFT JOIN is not supported with LATERAL"), 34 statements; 684ced8facb in the same topic.
+- 2bb0d68d5da (`expression/noop_functions`): native SQL_CALC_FOUND_ROWS / FOUND_ROWS(), 5 statements.
+- 72f98c5258b, 6bc5d4ccbac, cae12c19861 (`sessionctx/setvar`): `tidb_paging_size_bytes` (global budget applied to existing sessions), 5 statements.
+- 9e298833cf8, 7a3dacb52ef (`planner/core/indexjoin`): no index-join ranges below an aggregation on ungrouped columns, 4 statements.
+- 50f33bcf3ed (`planner/core/indexmerge_path`): ranges on a multi-valued index's trailing non-array column, 9 statements.
+- ece360bd7f5, 65ac2fad582 (`infoschema/infoschema`, `infoschema/tables`): LIKE filters kept after case-folded metadata extraction; TABLE_ROWS-only queries skip stats_histograms, 10 statements.
+- 7778eaf1a6b (`planner/cardinality/selectivity`): NDV for integer handles and composite unique keys, 5 statements.
+- 96f2b0da322 (`executor/union_scan`): transaction scan ranges for unsigned clustered primary keys, 2 statements.
+- a1d6054838a (`tpch`): outer filters propagated through IN subqueries with non-null keys, 1 statement.
+- d5f9ca5690c (`executor/import_into`): IMPORT INTO a TTL-enabled table is refused, 1 statement.
+
 - b82bed1eca2 / cfb54f9e87c remainder: Go's pre-Open `checkMaxExecutionTimeExceeded` (Rust's watchdog clock starts at executor build), `NormalizeStmtCancellationError` (finishStmt, recordSet.Next) and the non-batch cop request's deadline cause (Rust answers the transport's deadline text, Go `ErrMaxExecTimeExceeded`).
 - 47dc1214658: `tidb_redact_log` defaults ON (OFF in test builds). The default alone makes Rust's internal sessions redact plan text (restricted EXPLAIN, EXPLAIN EXPLORE, MV refresh EXPLAIN print `?`). Go keeps them literal through `rebuildSysVarCache` running every `SetGlobal` hook on a borrowed pooled session, `planGenerator.Generate` taking the caller's mode, and tests setting `EnableRedactLog = Off`. Blocked on Rust having no `sysSessionPool` reuse (`open_system_session` builds a fresh session per internal statement).
 - 35232111b23, dc52119f4a5: NextGen starter privilege reset and the redacted global-variables API.

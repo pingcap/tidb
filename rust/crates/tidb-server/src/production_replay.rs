@@ -669,6 +669,11 @@ fn integration_corpus_matches_recordings() {
         still_stale,
         refused.len(),
     );
+    // The refusals print before the divergence assertion fires, so one run
+    // reports both lists.
+    if !refused.is_empty() && !real.is_empty() {
+        eprintln!("{} statements TiDB answered were refused:\n  {}", refused.len(), refused.join("\n  "));
+    }
     assert!(
         real.is_empty(),
         "{} statements diverge from TiDB's recording:\n  {}",
