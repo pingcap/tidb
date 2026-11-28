@@ -1258,3 +1258,45 @@ func TestExpressionIndexMergeSort(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveGbyExprsNoInPlaceMutation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (b int, txt varchar(32))")
+	tk.MustExec("create table t2 (c int)")
+	tk.MustExec("insert into t1 values (1, 'hello')")
+	tk.MustExec("insert into t2 values (1)")
+
+	// Reproducer 1: repeated EXECUTE with prepared plan cache disabled.
+	tk.MustExec("set tidb_enable_new_only_full_group_by_check = ON")
+	tk.MustExec("set tidb_enable_prepared_plan_cache = OFF")
+	tk.MustExec("prepare st from 'select b, c as b from t1 join t2 on b = c group by 1'")
+	tk.MustQuery("execute st").Check(testkit.Rows("1 1"))
+	tk.MustQuery("execute st").Check(testkit.Rows("1 1"))
+
+	for _, groupBy := range []string{"(x)", "((x))"} {
+		tk.MustExec("prepare grouped_alias from 'select b, b as x, c as b from t1 join t2 on b = c group by " + groupBy + "'")
+		tk.MustQuery("execute grouped_alias").Check(testkit.Rows("1 1 1"))
+		tk.MustQuery("execute grouped_alias").Check(testkit.Rows("1 1 1"))
+	}
+
+	// Reproducer 2: alternative logical plan rebuilds the same AST.
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	tk.MustQuery("select b, c as b from t1 join t2 on b = c where match(txt) against ('hello') group by 1").
+		Check(testkit.Rows("1 1"))
+
+	// Legacy ONLY_FULL_GROUP_BY check must still see resolved GROUP BY expressions.
+	tk.MustExec("set tidb_enable_new_only_full_group_by_check = OFF")
+	tk.MustExec("prepare st2 from 'select b, max(c) as b from t1 join t2 on b = c group by 1'")
+	tk.MustQuery("execute st2").Check(testkit.Rows("1 1"))
+	tk.MustQuery("execute st2").Check(testkit.Rows("1 1"))
+	tk.MustExec("create table t3 (a int, d int)")
+	tk.MustExec("insert into t3 values (1, 2)")
+	tk.MustGetErrCode("select a, d from t3 group by 1", errno.ErrFieldNotInGroupBy)
+
+	// HAVING resolution must still see resolved GROUP BY column names.
+	tk.MustExec("create table t4 (a int, b int)")
+	tk.MustExec("insert into t4 values (1, 10), (2, 0)")
+	tk.MustQuery("select a as x, b as a from t4 group by 1, 2 having a > 1").Check(testkit.Rows("2 0"))
+}
